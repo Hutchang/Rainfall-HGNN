@@ -138,10 +138,17 @@ a genuine gauge-only environment is small.
 
 Ordered so each step is independently verifiable, per BR-004.
 
+0. **Fix the edge-weight normalisation** (`AUDIT_NIRAMAY.md` §8.0). **Do this first.**
+   Both trees divide edge weights by a *global* maximum; a single 0.1 m station pair in
+   the Sydney data drives 99.8% of edges to <1e-3, reducing the GNN to a per-node MLP.
+   Verified: the native run's RMSE sits inside the constant-predictor band. The paper's
+   per-node formula (Eq. 1) is immune. **Until this is fixed, neither implementation can
+   produce a meaningful Sydney number, so every later comparison is moot.**
 1. **Resolve the units question** (`AUDIT_NIRAMAY.md` §8.2). Everything downstream is
    scale-dependent. Needs human input — see §7.
 2. **Decide the de-duplication lane** (`AUDIT_NIRAMAY.md` §8.1). Affects what the
-   reference result *means*.
+   reference result *means*. Note it does **not** fix step 0 — the offending pair has two
+   different station IDs.
 3. **Build a working Jylow env** — install the four missing packages, or trim
    `src/utils.py`'s import-time dependencies for a 0D-only variant.
 4. **Apply the 5-item `datasources` change set** (`AUDIT_JYLOW.md` §2). Keeps 0D/1D/2D

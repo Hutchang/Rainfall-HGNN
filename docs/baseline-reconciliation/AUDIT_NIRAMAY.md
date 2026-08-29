@@ -208,6 +208,65 @@ random sign flip are unseeded, so **runs are not bitwise reproducible** (NFR-001
 
 ## 8. Findings
 
+### 8.0 🛑🛑 CRITICAL — the edge-weight normalisation reduces the GNN to a per-node MLP
+
+**This is the root cause of the baseline not learning, and it is independent of §8.1.**
+
+Two *distinct* station IDs sit 0.1 metres apart — the same physical gauge registered
+under two networks with **different** IDs, so de-duplication by ID cannot remove them:
+
+```
+212285  GREAVES CREEK DAM   (-33.654723, 150.308889)
+563086  Greaves Creek       (-33.654722, 150.308889)
+        separation = 4.506e-07 deg  (~0.1 m)  ->  1/d = 2,219,128.6
+```
+
+The next-closest pair is 571 m apart (`1/d = 194.3`), so this single pair is
+**~11,400× stronger than anything else in the graph**. `gauge_graph.py:172` then divides
+*every* edge weight by the **global** maximum:
+
+| | with duplicates (188 nodes) | de-duplicated (173 nodes) |
+|---|---|---|
+| median raw weight | 13.746 | 13.202 |
+| max raw weight | 2,219,128.6 | **2,219,128.6** (unchanged) |
+| median **normalised** weight | 6.19e-06 | 5.95e-06 |
+| edges < 1e-3 after normalisation | 928 / 940 (98.7%) | 863 / 865 (**99.8%**) |
+
+`GraphConv` computes `x'_i = W₁·x_i + W₂·Σ_j(e_ji · x_j)`. With `e_ji ≈ 6e-6`, the
+neighbour-aggregation term is **five orders of magnitude below the self term**. The
+network degenerates into a per-node MLP with effectively no message passing — which for a
+spatial-interpolation GNN is fatal. During training the target node's own features are
+zeroed, so that MLP can only emit a constant.
+
+**Confirmed empirically.** For the fold-0 test set (9 nodes × 2,191 timesteps = 19,719
+records, target mean 1.9642):
+
+| Predictor | RMSE |
+|---|---|
+| predict 0 everywhere | 9.0171 |
+| predict the mean | 8.8005 |
+| **bundled `experiments/smoketest/`** | **8.9024** |
+| **this reproduction** | **8.9645** |
+
+Both runs land **inside the constant-predictor band [8.801, 9.017]**, with
+Pearson r = −0.0131 (bundled: `NaN`). The model has learned nothing beyond a constant.
+This also explains why the two runs agree to 0.7% despite different code, batch size and
+pandas version — **the number is a property of the data, not the model.**
+
+**The paper is immune to this.** arXiv:2607.01621 §3.2 Eq. (1) specifies **per-node**
+normalisation, `w_ij = (1/d_ij) / max_{k∈N(j)} (1/d_kj)`, where each node normalises by
+its *own* neighbourhood maximum. One pathological pair cannot then crush the global graph.
+Both implementations deviate to a global max — a delta already noted in §7.4, here shown
+to be catastrophic on Sydney data.
+
+> **⚠️ This applies to Jylow too.** `src/graph/gaugegraphnew.py:172-173` uses the same
+> `max(edge_attr)` global normalisation. Porting Sydney gauges into Jylow will hit the
+> identical wall unless the formula is corrected first. See `SYSTEM_MAP.md` §6.
+
+**Minimal correction:** implement the paper's per-node normalisation. Note that the `1e6`
+guard at `gauge_graph.py:133` is a second-order concern — the real problem is that *any*
+very small distance dominates a global normaliser.
+
 ### 8.1 🛑 BLOCKER — duplicate metadata rows cause node inflation and train/test leakage
 
 `station_metadata.csv` has **425 rows but 409 unique IDs**. Fifteen duplicated IDs belong
