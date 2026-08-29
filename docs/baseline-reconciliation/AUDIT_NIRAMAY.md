@@ -267,6 +267,43 @@ to be catastrophic on Sydney data.
 guard at `gauge_graph.py:133` is a second-order concern — the real problem is that *any*
 very small distance dominates a global normaliser.
 
+#### 8.0.1 The Greaves Creek pair are NOT the same gauge
+
+Tested directly by comparing the two series over all 43,824 timestamps:
+
+| | 212285 | 563086 |
+|---|---|---|
+| bit-identical? | **No** | |
+| Pearson r | **0.9247** | |
+| rows differing | 3,211 (7.33%) | |
+| max abs difference | 144.0 | |
+| annual total | 7,497 units/yr | **10,895 units/yr (+45%)** |
+
+Contrast the 15 same-ID pairs of §8.1, which *are* bit-identical (`.equals()` True,
+r = 1.000000). Two truly co-located gauges would correlate above ~0.99, not 0.92, and
+would not differ by 45% in annual total.
+
+**So this is a coordinate-quality problem, not a duplication problem.** These are two
+genuinely distinct instruments, and one of them almost certainly carries the other's
+coordinates. It **cannot** be resolved by dropping a row — that would discard real
+observations. Resolution needs an external authority (BOM WaterData, the same source the
+paper cites as its reference [4]).
+
+#### 8.0.2 Closest distinct-ID station pairs
+
+| rank | separation | 1/d | stations |
+|---|---|---|---|
+| 1 | **~0.05 m** | **2,219,128.6** | 212285 GREAVES CREEK DAM ∥ 563086 Greaves Creek |
+| 2 | 571 m | 194.3 | 568045 W'GAMBA MET STATION ∥ 568044 WARRAGAMBA WFP |
+| 3 | 1,252 m | 88.6 | 568350 PICTON BOWLING CLUB ∥ 212053 STONEQUARRY @ PICTON |
+| 4 | 1,469 m | 75.6 | 212063 NERRIGORAN@THIRLMERE ∥ 568232 THIRLMERE RAINFALL 1 |
+| 5 | 1,497 m | 74.2 | 563086 Greaves Creek ∥ 563071 MEDLOW BATH |
+| 6 | 1,497 m | 74.2 | 212285 GREAVES CREEK DAM ∥ 563071 MEDLOW BATH |
+
+Rank 1 is **11,400× stronger than rank 2**, and ranks 2-6 are unremarkable for a real
+gauge network. The pathology is confined to a single pair — which is precisely why a
+*global* normaliser is so fragile here and a *per-node* one is not.
+
 ### 8.1 🛑 BLOCKER — duplicate metadata rows cause node inflation and train/test leakage
 
 `station_metadata.csv` has **425 rows but 409 unique IDs**. Fifteen duplicated IDs belong
@@ -299,6 +336,52 @@ to stations that have data — the same physical gauge registered under two netw
 **Impact:** a station used for training is also scored as held-out in 4 of 40
 test-station-fold instances (~10%). Any RMSE from this pipeline is optimistically biased,
 and FR-303 would propagate the contamination into the Jylow port.
+
+**Train/validation leakage is more widespread than train/test.** Because `_make_masks`
+maps a duplicated id to *both* node orders, stations hold conflicting roles in **all five
+folds** — up to 8 stations in fold 4:
+
+| fold | in train ∧ test | in train ∧ validation |
+|---|---|---|
+| 0 | 567102 | 567083, 567084 |
+| 1 | 567087 | 567100, 567102, 567163 |
+| 2 | 567102 | 563083, 567083, 567084, 567163, 568156 |
+| 3 | 567148 | 563061, 567076, 567083, 567084, 567100 |
+| 4 | — | 563061, 563083, 567083, 567084, 567163, 568149, 568156, 568168 |
+
+Validation leakage corrupts **early stopping and model selection**, not merely the
+reported test metric.
+
+#### 8.1.1 The 15 duplicated ids are not all the same kind of problem
+
+| id | name (row A) | name (row B) | separation | class |
+|---|---|---|---|---|
+| **563083** | BLACKHEATH G.C. | **NORTH RICHMOND WFP** | **39.436 km** | 🛑 **ID COLLISION** |
+| **567163** | REGENTVILLE | REGENTVILLE RFS | **1.239 km** | 🛑 **ID COLLISION** |
+| 568156 | CAMDEN GOLF COURSE | NARELLAN (LODGES RD) | 541 m | ⚠️ ambiguous |
+| 567148 | KINGS LANGLEY | KINGS LANGLEY | 363 m | dual registration |
+| 568168 | MENANGLE MET STATION | MENANGLE MET STATION | 272 m | dual registration |
+| 568149 | CAMDEN BROWNLOW HILL | CAMDEN-BROWNLOW HILL | 262 m | dual registration |
+| 568147 | CAMDEN-CAMDEN PK RES | CAMDEN-CAMDEN PK RES | 202 m | dual registration |
+| 567102 | DURAL (WPS14) | DURAL (WPS14) | 179 m | dual registration |
+| 568130 | WEST CAMDEN STP | WEST CAMDEN STP | 179 m | dual registration |
+| 567087 | ST MARYS STP | ST MARYS STP | 162 m | dual registration |
+| 567083 | PROSPECT RES | PROSPECT RESERVOIR | 17 m | dual registration |
+| 563061 | WENTWORTH FALLS BOD | WENTWORTH FALLS BOD | 12 m | dual registration |
+| 567076 | CASTLE HILL STP | CASTLE HILL STP | 0 m | dual registration |
+| 567084 | QUAKERS HILL STP | QUAKERS HILL STP | 0 m | dual registration |
+| 567100 | RIVERSTONE STP | RIVERSTONE STP | 0 m | dual registration |
+
+**`563083` is the serious one.** Two rows 39.4 km apart with entirely different names,
+sharing one id. Since `GaugeGraph` selects the series *by id*
+(`gauge_graph.py:54`), **the same rainfall record is placed at both Blackheath and North
+Richmond** — injecting a phantom gauge carrying another site's data 39 km away.
+
+**Consequence for the de-duplication decision:** a plain
+`drop_duplicates(subset=["id"])` keeps whichever row comes first, so for `563083` and
+`567163` it picks a location **arbitrarily**. Those two ids need external resolution
+(BOM WaterData) before de-duplication is safe. The remaining 13 are genuine dual-network
+registrations within 541 m and can be de-duplicated mechanically.
 
 ### 8.2 🛑 BLOCKER — `rainfall_mm` is almost certainly not millimetres
 
@@ -358,9 +441,17 @@ The data is otherwise clean: no duplicates, no negatives, near-complete coverage
 consistent hourly cadence. The problems are in the **metadata join** and the **units**,
 not the observations.
 
-Reproduce with the scripts in the scratchpad (`audit_niramay_data.py`,
-`audit_niramay_data2.py`, `verify_leakage.py`) — to be promoted into the repo as tests
-per T-001/T-002.
+Every result above is reproduced by the committed test suite (T-001/T-002):
+
+```bash
+.venv/bin/python -m pytest tests/ -q -rx      # 18 passed, 7 xfailed
+```
+
+Each xfail encodes one known, unfixed defect with a reason pointing back to this
+document. They are non-strict, so a genuine fix makes them start passing — that is the
+signal to promote them to ordinary tests. `tests/conftest.py` locates the data via
+`$SYDNEY_GAUGE_ROOT`, the `../COMP3888-niramay` worktree, or `./database/australia`, and
+skips cleanly if none resolve.
 
 ---
 
