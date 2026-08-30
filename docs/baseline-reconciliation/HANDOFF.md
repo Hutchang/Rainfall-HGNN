@@ -53,10 +53,9 @@ Recreate if missing:
 git worktree add ../COMP3888-niramay repro/niramay-native
 ```
 
-**Commits so far on `integration/sydney-gauge-baseline`:**
-- `c9843af` Phase 0 audit documentation
-- `a708cd1` FR-103/FR-104 reproduction result + root-cause finding
-- plus the run log and the `tests/` suite
+**Commits so far** — see the commit ledger in `STATUS.md`, which is kept current.
+At time of writing: `c9843af`, `a708cd1`, `e85a689`, `54656b5`, `d3bfb0d` on
+`integration/sydney-gauge-baseline`.
 
 **On `repro/niramay-native`:**
 - `c37c83b` `fix(compat)`: adds the missing `PerformanceLogger.log_stratum_metrics`.
