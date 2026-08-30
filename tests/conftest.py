@@ -71,8 +71,10 @@ def gauge_long(raw_files):
 @pytest.fixture(scope="session")
 def gauge_wide(gauge_long):
     """Pivoted [T x N] frame, as data/loader.py builds it."""
-    return gauge_long.pivot(index="timestamp", columns="station_id",
+    wide = gauge_long.pivot(index="timestamp", columns="station_id",
                             values="rainfall_mm")
+    wide.columns = wide.columns.astype(str)  # match loader.py:48
+    return wide
 
 
 @pytest.fixture(scope="session")

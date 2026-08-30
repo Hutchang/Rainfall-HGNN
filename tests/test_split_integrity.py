@@ -158,3 +158,53 @@ def test_per_node_normalisation_would_fix_it(station_meta):
         per_node_medians.append(np.median(w / w.max()))   # normalise per node
     median = float(np.median(per_node_medians))
     assert median > 1e-3, f"per-node normalisation still collapses: {median:.2e}"
+
+
+# ── Real GaugeGraph, edge_normalisation="global" vs "per_node" ──────────────
+# The two tests above are standalone reproductions of the maths; they never
+# call GaugeGraph itself, so they can't detect whether the real fix (added to
+# graph/gauge_graph.py, arXiv:2607.01621 sec 3.2 Eq. 1) is actually wired up.
+# These exercise the real class.
+
+@pytest.fixture(scope="module")
+def gauge_graph_cls():
+    """Niramay's GaugeGraph, imported from the worktree if importable;
+    otherwise skip rather than diverge (same policy as `splits`)."""
+    import sys
+    from pathlib import Path
+    from tests.conftest import DATA_ROOT
+    repo = Path(DATA_ROOT).parent.parent          # .../COMP3888-niramay
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    try:
+        from graph.gauge_graph import GaugeGraph
+    except Exception as e:                        # pragma: no cover
+        pytest.skip(f"cannot import niramay's GaugeGraph: {e}")
+    return GaugeGraph
+
+
+def test_global_normalisation_default_matches_baseline_defect(
+    gauge_graph_cls, gauge_wide, station_meta, splits
+):
+    """Regression guard: edge_normalisation defaults to 'global' and must
+    still reproduce the exact collapse in AUDIT_NIRAMAY.md sec 8.0 — the
+    unmodified baseline must stay unmodified by the fix below."""
+    graph = gauge_graph_cls(gauge_wide, station_meta, split_info=splits[0], knn=KNN)
+    ea = graph.get_train_heterodata()["raingauge", "connects", "raingauge"].edge_attr.numpy()
+    median = float(np.median(ea))
+    assert median < 1e-3, f"expected the known global-max collapse, got median={median:.2e}"
+
+
+def test_per_node_normalisation_fixes_the_real_graph(
+    gauge_graph_cls, gauge_wide, station_meta, splits
+):
+    """edge_normalisation='per_node' (arXiv:2607.01621 sec 3.2 Eq. 1),
+    exercised through the real GaugeGraph class rather than a standalone
+    reproduction of the formula."""
+    graph = gauge_graph_cls(
+        gauge_wide, station_meta, split_info=splits[0], knn=KNN,
+        edge_normalisation="per_node",
+    )
+    ea = graph.get_train_heterodata()["raingauge", "connects", "raingauge"].edge_attr.numpy()
+    median = float(np.median(ea))
+    assert median > 1e-3, f"per-node normalisation still collapses: median={median:.2e}"

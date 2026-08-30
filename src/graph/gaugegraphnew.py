@@ -18,16 +18,32 @@ config = read_config("config.yaml")
 
 class GaugeGraphNew():
 
-    def __init__(self, data_df: pd.DataFrame, mapping_df: pd.DataFrame, split_info: dict, knn: int):
+    def __init__(self, data_df: pd.DataFrame, mapping_df: pd.DataFrame, split_info: dict, knn: int,
+                 edge_normalisation: str = "global"):
         """
         node_feature_dict: contains information on heterogeneous node
         station_lists: reference to maintain mapping of stations to node orderings
+
+        edge_normalisation: "global" (unmodified baseline, default) divides every
+            edge weight by the single maximum weight in the graph — a lone
+            pathological close pair can crush every other edge (see
+            docs/baseline-reconciliation/AUDIT_NIRAMAY.md sec 8.0). "per_node"
+            implements the paper's Eq. 1 (Low, Kachhadiya, Herath, Rasnayaka &
+            Marshall, "Spatial Support Matters: Geometry-Aware Graph Fusion for
+            Rainfall Field Reconstruction", arXiv:2607.01621, sec 3.2):
+            w_ij = (1/d_ij) / max_{k in N(j)} (1/d_kj) — each node normalises by
+            its own neighbourhood's maximum instead of the global one.
         """
+        if edge_normalisation not in ("global", "per_node"):
+            raise ValueError(
+                f"edge_normalisation must be 'global' or 'per_node', got {edge_normalisation!r}"
+            )
         self.dtype = torch.float32
         self.raingauge_df = data_df[mapping_df['id'].values.tolist()]
         self.mapping_df = mapping_df
         self.split_info = split_info
         self.knn = knn
+        self.edge_normalisation = edge_normalisation
         self.train_gauges = split_info["ml"]['train']
         self.validation_gauges = split_info['ml']['validation']
         self.test_gauges = split_info['ml']['test']
@@ -110,13 +126,18 @@ class GaugeGraphNew():
             G.add_node(idx, lat=row['latitude'], lon=row['longitude'])
 
         for i, neighbors in enumerate(indices):
+            row_edges = []
             for j, neighbor_idx in enumerate(neighbors[1:]):
               dist = distances[i][j + 1]
+              w = 1/dist if self.inverse_weighted else dist
+              row_edges.append((neighbor_idx, w))
 
-              if self.inverse_weighted:
-                  G.add_edge(i, neighbor_idx, weight=1/dist)
-              else:
-                  G.add_edge(i, neighbor_idx, weight=dist)
+            if self.edge_normalisation == "per_node" and self.inverse_weighted:
+                row_max = max(w for _, w in row_edges)
+                row_edges = [(nidx, w / row_max) for nidx, w in row_edges]
+
+            for neighbor_idx, w in row_edges:
+                G.add_edge(i, neighbor_idx, weight=w)
 
         return G
 
@@ -169,8 +190,10 @@ class GaugeGraphNew():
             ])
             weight = data['weight']
             edge_attr.append(weight)
-        max_attr = max(edge_attr)
-        edge_attr = [x / max_attr for x in edge_attr]
+        if self.edge_normalisation == "global":
+            max_attr = max(edge_attr)
+            edge_attr = [x / max_attr for x in edge_attr]
+        # else "per_node": already normalised per node in build_graph
         heterodata['raingauge', 'connects', 'raingauge'].edge_index = torch.tensor(edge_index, dtype=int).T
         heterodata['raingauge', 'connects', 'raingauge'].edge_attr = torch.tensor(edge_attr, dtype=torch.float32)
         heterodata['raingauge'].num_nodes = torch.tensor(heterodata['raingauge'].x.shape[0], dtype=torch.int32)
@@ -294,12 +317,14 @@ class GaugeGraphNew():
             distances = cml_gdf.geometry.distance(gauge_pt)
             top_k = distances.nsmallest(K)
 
+            gauge_edges = []
+            gauge_weights = []
             for cml_idx, dist in top_k.items():
                 if cml_idx % 2 == 1:
                     cml_idx -= 1
                 row = cml_coords.iloc[cml_idx]
-                edge_list.append((gauge_idx, cml_idx))
-                edge_list.append((gauge_idx, cml_idx + 1))
+                gauge_edges.append((gauge_idx, cml_idx))
+                gauge_edges.append((gauge_idx, cml_idx + 1))
                 station_A = node_a_gdf.iloc[cml_idx]
                 station_B = node_b_gdf.iloc[cml_idx]
                 weight_A = gauge_pt.distance(station_A) / 1000 #downscale
@@ -307,11 +332,20 @@ class GaugeGraphNew():
                 if self.inverse_weighted:
                     weight_A = 1/weight_A
                     weight_B = 1/weight_B
-                weight_list.append(float(weight_A.item()))
-                weight_list.append(float(weight_B.item()))
+                gauge_weights.append(float(weight_A.item()))
+                gauge_weights.append(float(weight_B.item()))
 
-        max_weight = max(weight_list)
-        weight_list = [x / max_weight for x in weight_list]
+            if self.edge_normalisation == "per_node" and self.inverse_weighted:
+                row_max = max(gauge_weights)
+                gauge_weights = [w / row_max for w in gauge_weights]
+
+            edge_list.extend(gauge_edges)
+            weight_list.extend(gauge_weights)
+
+        if self.edge_normalisation == "global":
+            max_weight = max(weight_list)
+            weight_list = [x / max_weight for x in weight_list]
+        # else "per_node": already normalised per gauge above
 
         return edge_list, weight_list
 
@@ -331,15 +365,24 @@ class GaugeGraphNew():
         edge_list = []
         weight_list = []
         for i in range(len(raingauge_coords)):
+            row_weights = []
             for j in range(knn):
                 edge_list.append((i, indices[i, j]))
                 if self.inverse_weighted:
-                    weight_list.append(1/distances[i, j])
+                    row_weights.append(1/distances[i, j])
                 else:
-                    weight_list.append(distances[i, j])
+                    row_weights.append(distances[i, j])
 
-        max_weight = max(weight_list)
-        weight_list = [x/max_weight for x in weight_list]
+            if self.edge_normalisation == "per_node" and self.inverse_weighted:
+                row_max = max(row_weights)
+                row_weights = [w / row_max for w in row_weights]
+
+            weight_list.extend(row_weights)
+
+        if self.edge_normalisation == "global":
+            max_weight = max(weight_list)
+            weight_list = [x/max_weight for x in weight_list]
+        # else "per_node": already normalised per row above
 
         return edge_list, weight_list
 
