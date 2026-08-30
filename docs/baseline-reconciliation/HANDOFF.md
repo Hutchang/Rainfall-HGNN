@@ -36,31 +36,48 @@ Work item B (external verification) is pure investigation and needs no override.
 | Branch | Purpose | Rule |
 |---|---|---|
 | `main` | team baseline | — |
-| `niramay-clone` | imported researcher branch | **read-only** (BR-001) |
-| `jylow-clone` | imported researcher branch | **read-only** (BR-001) |
+| `niramay-clone` | Niramay code + Sydney gauge data | carries one team compat fix — see below |
+| `jylow-clone` | Jylow code, as imported | leave as-is |
 | `integration/sydney-gauge-baseline` | **the working branch**, off `jylow-clone` | all integration work |
-| `repro/niramay-native` | off `niramay-clone`, carries one compat fix | Niramay reproduction only |
+
+**Tag `niramay-inherited` (`8368cbf`) marks the inherited state** — the researcher's code
+before any team modification. This is the attribution reference the requirements document's
+§3 asks for; BR-001's intent is served by the tag rather than by freezing the branch:
+
+```bash
+git diff niramay-inherited..niramay-clone     # exactly what the team changed
+```
+
+At time of writing that diff is two team commits: `4fcb313` (README) and `c37c83b`
+(the compat fix in §2 below).
 
 **Worktrees** (BR-003 — both trees checked out simultaneously):
 
 ```
 <repo>/                      integration/sydney-gauge-baseline   (Jylow code)
-../COMP3888-niramay/         repro/niramay-native                (Niramay code + data)
+../COMP3888-niramay/         niramay-clone                       (Niramay code + data)
 ```
 
 Recreate if missing:
 ```bash
-git worktree add ../COMP3888-niramay repro/niramay-native
+git worktree add ../COMP3888-niramay niramay-clone
 ```
 
 **Commits so far** — see the commit ledger in `STATUS.md`, which is kept current.
 At time of writing: `c9843af`, `a708cd1`, `e85a689`, `54656b5`, `d3bfb0d` on
 `integration/sydney-gauge-baseline`.
 
-**On `repro/niramay-native`:**
+**On `niramay-clone`:**
+
 - `c37c83b` `fix(compat)`: adds the missing `PerformanceLogger.log_stratum_metrics`.
   **Required** — without it `train.py` raises `AttributeError` at `trainer.py:248` right
   after printing test metrics, so no run can complete. Purely additive; no science changed.
+
+> **Historical note.** This commit was originally made on a branch named
+> `repro/niramay-native`, which has since been fast-forwarded into `niramay-clone` and
+> deleted. `run_niramay_smoketest_native.log` still records that branch name in its
+> header — that is the correct provenance for the run as executed and is deliberately
+> left unedited. The commit hash `c37c83b` is unchanged.
 
 ---
 

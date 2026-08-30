@@ -39,7 +39,7 @@ Proof: the reproduction scored **RMSE 8.9645, Pearson r −0.0131**, and the con
 
 `integration/sydney-gauge-baseline` — 5 commits: audit docs, reproduction result + root cause, run log, tests + handoff, and your requirements doc.
 
-`repro/niramay-native` — `c37c83b`, one isolated compat fix (`train.py` couldn't complete a single fold without it). Both source branches untouched per BR-001.
+`niramay-clone` — `c37c83b`, one isolated compat fix (`train.py` couldn't complete a single fold without it). The inherited state is preserved by the tag `niramay-inherited` (`8368cbf`), so `git diff niramay-inherited..niramay-clone` still gives an exact statement of what the team changed.
 
 Tests: `.venv/bin/python -m pytest tests/ -q` → **18 passed, 7 xfailed**, each xfail encoding one known defect. `test_per_node_normalisation_would_fix_it` is a positive control that already passes — a green target for the fix.
 
@@ -67,10 +67,16 @@ Nothing downstream (adapter, Jylow 0D run on real data, golden fixture, common e
 | `54656b5` | `tests/` suite + `HANDOFF.md`; station-identity findings |
 | `d3bfb0d` | Requirements document |
 
-`repro/niramay-native` (branched from `niramay-clone` @ `4fcb313`):
+`niramay-clone`:
 
-| Commit | Contents |
+| Ref | Contents |
 |---|---|
-| `c37c83b` | `fix(compat)`: missing `PerformanceLogger.log_stratum_metrics` |
+| tag `niramay-inherited` → `8368cbf` | the researcher's code **as inherited**, before any team change |
+| `4fcb313` | README (team) |
+| `c37c83b` | `fix(compat)`: missing `PerformanceLogger.log_stratum_metrics` (team) |
 
-Read-only per BR-001: `main`, `niramay-clone`, `jylow-clone`.
+`git diff niramay-inherited..niramay-clone` is the exact statement of what the team
+changed — the attribution guarantee BR-001 was protecting, now carried by the tag rather
+than by freezing the branch.
+
+`jylow-clone` @ `1c2489a` is unmodified.
