@@ -1,218 +1,122 @@
 # Implementation handoff
 
-**Audience:** component owners and reviewers  
-**Branch:** `integration/sydney-gauge-baseline`  
-**Baseline study period:** 2021-01-01 through 2022-12-31 inclusive
+**Audience:** all component owners and reviewers
 
-## 1. What has already been established
+**Branch:** `integration/sydney-gauge-baseline`
 
-The archaeology phase is complete enough to begin component implementation:
+**Baseline period:** 2021-01-01 through 2022-12-31 inclusive
 
-- The Sydney/Niramay tree is gauge-only and its native pipeline was reproduced.
-- The Jylow framework can execute with genuine 0D gauge support and no fabricated CML
-  or radar nodes.
-- A transitional adapter and imported split proved that Jylow can train on real Sydney
-  station layouts.
-- Both inherited trees used graph-wide edge normalisation instead of the paper's
-  per-node equation. An explicit opt-in correction exists and was tested.
-- The hand-exported Sydney rainfall values are distorted by a time- and station-varying
-  export artefact. They cannot be repaired by one unit conversion and must not be used
-  for scientific error magnitudes.
-- BoM internal station ids resolve the public-number collisions and must be the
-  canonical identity.
+This is the operational handoff, not another requirements specification. The complete
+set of visible work packages and shared rules is in
+[requirements/README.md](requirements/README.md). Each component document remains the
+authority for its own `FRxx`, `OUTxx`, `TESTxx`, and `DOCSxx` items.
 
-The current Jylow smoke runs prove **runnability**, not scientific validity. Their data,
-training length, target coverage, validity handling, positional encoding, and random
-seeding do not satisfy the final architecture.
+## Current technical position
 
-## 2. Sources of truth
+- Both inherited pipelines have been audited.
+- The retained graph/model core can run a genuine Sydney gauge-only graph without
+  fabricated non-gauge nodes.
+- The transitional Sydney export and imported split prove interface compatibility only.
+- The inherited hand-exported rainfall values have time- and station-varying distortion;
+  they cannot support scientific millimetre-based results.
+- Production data must be regenerated from source-faithful Bureau of Meteorology (BoM)
+  records. The canonical station key is BoM's internal `station_id`.
+- Both inherited graph paths used graph-wide edge normalisation. Compatibility and
+  corrected per-node behaviour must remain explicitly labelled.
 
-Use this precedence when documents differ:
+The existing smoke runs prove runnability, not baseline validity. Detailed investigation
+and run records are retained in the [historical archive](archive/README.md).
 
-1. [requirements/README.md](requirements/README.md) and the assigned component brief;
-2. [requirements/AUTHORING_STANDARD.md](requirements/AUTHORING_STANDARD.md);
-3. this handoff;
-4. [baseline-reconciliation/STATUS.md](baseline-reconciliation/STATUS.md) and dated
-   supersession notes;
-5. older audit/handoff sections as historical evidence;
-6. [archive/](archive/README.md) only for planning provenance.
+## Work order
 
-`baseline-reconciliation/HANDOFF.md`, `SYSTEM_MAP.md`, and parts of `DATA_CONTRACT.md`
-describe earlier points in the investigation. Their evidence remains useful, but their
-old “not implemented” or “blocked” status lines are not current work instructions.
+All requirements are visible to everyone. Owners read their own document fully and the
+input/output contracts of adjacent components.
 
-## 3. Component work order
+| Component | Work that can start | Release dependency |
+|---|---|---|
+| [01 Collect source data](requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md) | Gauge settings, raw-data layout, source metadata, resume, and small validation queries | Full gauge retrieval needs approval; radar/satellite need NCI access |
+| [02 Prepare standard data](requirements/02_CANONICAL_DATA_REQUIREMENTS.md) | Raw-input checks, required table columns, hourly addition, daily-total checking, station table, and versioning | Production dataset needs 01 gauge output |
+| [03 Splits and seeds](requirements/03_STUDY_SPLIT_REQUIREMENTS.md) | Seed loader, schemas, algorithms, audit, and synthetic tests | Production split needs accepted 02 registry |
+| [04 Graph samples](requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md) | Interface extraction and compatibility/corrected regression tests | Production samples need accepted 02 and 03 files |
+| [06 Train/write predictions](requirements/06_MODEL_ADAPTER_REQUIREMENTS.md) | Common Python interface, run layout, restart, and prediction checks against stubs | Acceptance needs 03 targets and 04 samples |
+| [05 Small verified test data](requirements/05_GOLDEN_FIXTURE_REQUIREMENTS.md) | Selection/create tooling and offline system tests | Final truth needs accepted component outputs |
 
-| Component | Can start now? | Must wait for | Primary handoff |
-|---|---|---|---|
-| 01 source ingestion | Yes: implementation and small validation queries | Client approval before full baseline retrieval; NCI access for radar/satellite | acquisition index and source-faithful landing to 02 |
-| 02 canonical data | Yes against a small accepted 01 sample | Full baseline build waits for 01 gauge landing | versioned observations/registry to 03/04/05 |
-| 03 splits and seeds | Yes: schemas, seed loader, algorithms, synthetic tests | Production release waits for accepted 02 dataset | audited split and exact targets to 04/06/baselines |
-| 04 graph samples | Yes against legacy/fixture adapters | Production release waits for 02+03 | typed samples and manifest to 06 |
-| 06 model adapter | Yes against current graph objects/stubs | Exact prediction acceptance waits for 03+04 | validated predictions to future evaluation |
-| 05 golden fixture | Start selection/build tooling now | Final expectations need accepted outputs from 01–04/06 | offline system test to everyone |
+The first implementation target should be a narrow end-to-end gauge slice: acquire one
+real source window, write its data and JSON provenance, update progress state, and test
+resume and failure reporting.
 
-The table describes dependencies, not mandatory staffing. If the team has fewer owners,
-combine 03+04 or 05+CI before combining source ingestion with modelling; data provenance
-and model behaviour need independent review.
+## Repository boundaries
 
-## 4. Recommended parallel lanes
+Create a package only when its owner starts implementation:
 
-### Lane A — Data foundation
+| Component | Code | Configuration |
+|---|---|---|
+| 01 | `src/ingestion/` | `config/ingestion/` |
+| 02 | `src/canonical/` | `config/canonical/` |
+| 03 | `src/study/` | `config/splits/`, `config/seeds.yaml` |
+| 04 | `src/graphs/` | `config/graphs/` |
+| 05 | `src/fixtures/` or `tools/fixtures/` | `config/fixtures/` |
+| 06 | `src/models/adapters/` | `config/models/` |
 
-Owner 01 implements config validation, landing layout, provenance receipts, progress,
-resume, BoM discovery, representative series validation, and small test downloads.
-Owner 02 agrees the acquisition-index fields early and implements preflight, hourly UTC
-aggregation, daily-total verification, registry, exclusions, and dataset versioning.
+Useful inherited core remains in `train_fused.py`, `src/graph/gaugegraphnew.py`,
+`models/gnn.py`, and `training/logic_hetero.py`. Wrap and regression-test it; its current
+interfaces are not the target architecture.
 
-Do not run the complete 2021–2022 station acquisition until the client approves it.
-Small, rate-limited validation queries required by the component brief are permitted
-only under the documented BoM pacing policy.
+`adapters/legacy_sydney_gauge_export.py`, `database/sydney_gauge_legacy/`, and
+`database/sydney_split_info.json` are transitional regression files. They must not
+be accepted as component 01, 02, or 03 production outputs. See
+[LEGACY_CODE.md](LEGACY_CODE.md) for the retained and removed inherited entry points.
 
-### Lane B — Study and graph integrity
+## Owner workflow
 
-Owner 03 lands `config/seeds.yaml`, target-index schema, split audit, reference protocol,
-and corrected full-coverage protocol against a synthetic/legacy registry. Owner 04
-removes import-time config from the graph boundary, carries station/time mappings, and
-implements compatibility/corrected mode tests.
+1. Record the owner and reviewer at the top of the assigned component document.
+2. Confirm required input/output files and fields with adjacent component owners.
+3. Run the repository tests and preserve unrelated worktree changes.
+4. Map the implementation slice to existing `FRxx`, `OUTxx`, and `TESTxx` identifiers.
+5. Implement the smallest path that writes one real prescribed output.
+6. Test provenance, resume/failure behaviour, and rejection of invalid inputs.
+7. Have the next component's reviewer read the output without private parsing logic.
+8. Revise a requirement only when implementation evidence exposes a real contract gap.
 
-The owners must agree `station_id` dtype, target-index sorting, target hashes, and fold
-role names before either public interface is merged.
+Use one component or contract change per branch or pull request. Keep generated data,
+credentials, checkpoints, and experiment results out of Git, except for the explicitly
+approved small golden fixture. Preserve labelled compatibility behaviour when correcting
+an inherited numerical defect.
 
-### Lane C — Model/prediction boundary
+Singapore/NEA data handling and commercial microwave link support are not compatibility
+behaviours. They are permanently outside project scope and must not be reintroduced.
 
-Owner 06 wraps the existing HGNN training logic, defines the run directory, implements
-restart checkpoints, and lands the prediction validator first. Use a stub target index
-matching component 03's documented schema until the real artifact exists.
+Environment setup and the repository test command are in the root
+[README.md](../README.md). No additional onboarding document is required.
 
-No evaluation logic should be embedded here. A valid row-level prediction artifact is
-the deliverable.
+## Decisions and blockers
 
-### Lane D — Fixture and integration
+Decided:
 
-Owner 05 builds fixture selection, manifest, external truth, mutation tests, and offline
-bootstrap in parallel. Initially wire completed layers and skip unavailable layers with
-the precise output named. Turn each skip into a failure once that output exists.
+- Baseline period is 2021–2022.
+- Canonical rainfall is millimetres and time is timezone-aware UTC.
+- Station identity uses BoM internal `station_id`.
+- Every method predicts the same row-level target index.
+- Official file sets carry input identifiers or hashes, complete settings,
+  code revision, exclusions, and failure information.
 
-## 5. Repository boundaries
+External blockers:
 
-### Active implementation locations
+- Complete BoM baseline retrieval awaits approval.
+- Radar and satellite product confirmation and access await National Computational
+  Infrastructure (NCI) access.
+- The paper's exact 75-station Sydney list is unavailable, so reproducing that table is
+  not an acceptance criterion for the regenerated dataset.
 
-New component code should use these packages and config roots:
+These blockers do not prevent gauge ingestion design, schemas, split/graph algorithms,
+the model boundary, or gauge-only fixture tooling.
 
-```text
-src/ingestion/             config/ingestion/
-src/canonical/             config/canonical/
-src/study/                 config/splits/ and config/seeds.yaml
-src/graphs/                config/graphs/
-src/models/adapters/       config/models/
-src/fixtures/ or tools/fixtures/   config/fixtures/
-```
+## Component handoff is complete when
 
-Create a package only when its owner begins the component; do not scaffold empty
-architectural layers solely to match the diagram.
+- required inputs, outputs, paths, and schemas are implemented;
+- required tests pass, with external blockers explicitly recorded;
+- outputs contain the prescribed source information, settings, identifiers, and exclusions;
+- the runbook works from a fresh supported environment; and
+- the next component's reviewer reads a real output without undocumented fixes.
 
-### Transitional code
-
-`train_fused.py`, `src/graph/gaugegraphnew.py`, `models/gnn.py`, and
-`training/logic_hetero.py` are the useful inherited core. Wrap and regression-test them;
-do not assume their current interfaces are the target architecture.
-
-`adapters/niramay_to_jylow.py` is evidence for the transitional CSV and split shapes.
-It reads the compromised hand export and therefore cannot become the new ingestion or
-canonical pipeline by renaming it.
-
-See [LEGACY_CODE.md](LEGACY_CODE.md) for retained research variants and removed stale
-entry points. The complete imported source remains on `jylow-clone`.
-
-## 6. First-day checklist for every owner
-
-1. Read [requirements/README.md](requirements/README.md), the glossary, and the assigned
-   component document fully.
-2. Put owner and reviewer names at the document top without changing requirements.
-3. Confirm the upstream/downstream schema with those owners; record a blocking mismatch
-   before coding around it.
-4. Run `git status --short --branch` and preserve unrelated local changes.
-5. Run the existing test command and record passes, failures, and data-dependent skips.
-6. Create a small implementation plan mapped to `FRxx`, `OUTxx`, `TESTxx`, and `DOCSxx`.
-7. Implement the narrowest end-to-end slice that writes the real prescribed artifact.
-8. Add component-level acceptance tests before source-specific edge cases.
-9. Demonstrate failure behaviour and provenance, not just the happy path.
-10. Ask the downstream reviewer to consume the output before declaring the component
-    complete.
-
-## 7. Branch and integration discipline
-
-- Keep one component or contract change per branch/PR; do not mix model science with
-  repository formatting.
-- Do not rewrite `jylow-clone`, `niramay-clone`, or tag `niramay-inherited`.
-- Generated data, checkpoints, and experiments stay ignored. Commit only small approved
-  fixture data.
-- Never delete or reset unrelated dirty-worktree changes.
-- If an inherited numerical defect is corrected, preserve a labelled compatibility mode
-  and add a before/after regression test.
-- A requirements change that affects another component needs that downstream owner's
-  review before implementation merges.
-- Update documentation and artifact schemas in the same component change.
-
-## 8. Environment and verification
-
-The recorded environment is Python 3.13 with focused dependencies in root
-`requirements.txt` and `requirements-dev.txt`. The inherited `requirements.txt` was a
-non-portable conda freeze and has been replaced.
-
-```powershell
-py -3.13 -m venv .venv
-.venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
-.venv\Scripts\python.exe -m pytest tests -q -rx
-```
-
-GPU is not required for component onboarding or the golden fixture. Install a matching
-official PyTorch CUDA wheel separately for full training and record the build/device.
-
-The transitional Jylow smoke runner additionally needs generated ignored data under
-`database/`; follow
-[baseline-reconciliation/JYLOW_0D_CHANGES.md](baseline-reconciliation/JYLOW_0D_CHANGES.md)
-only when reproducing that historical path.
-
-## 9. Current decisions and blockers
-
-### Decided
-
-- Baseline period: 2021–2022.
-- Gauge identity: BoM internal station id.
-- Canonical units/time: millimetres and timezone-aware UTC.
-- Source data: regenerate from quality-controlled BoM tip records.
-- Comparison boundary: exact shared target index and row-level prediction artifacts.
-- Corrected graph path: haversine distance, directed KNN, per-node incoming
-  normalisation, preserved validity, physical-zero masking, full-graph LPE.
-- Inherited behaviour remains available under explicit compatibility labels.
-
-### External blockers
-
-- Full BoM baseline retrieval awaits client approval.
-- Radar product confirmation and access await NCI project access.
-- Satellite product confirmation and access await NCI project access.
-- The paper's exact 75-station Sydney list is unavailable; paper-table reproduction is
-  not an acceptance criterion for this dataset.
-
-### Not blockers
-
-- NCI access does not block gauge ingestion/canonical design, splits, graph integrity,
-  model adapter work, or the gauge-only golden fixture.
-- The missing Singapore dataset does not block a Sydney integration, but it prevents a
-  native Jylow paper-result reproduction and remains a stated limitation.
-
-## 10. Definition of component handoff
-
-A component is ready for downstream use only when:
-
-- every required input and output is implemented with the documented schema/path;
-- all `TESTxx` cases pass or an external blocker is explicitly accepted;
-- produced artifacts contain provenance, config, ids/hashes, and exclusions/failures;
-- the operator runbook works from a fresh supported environment;
-- the downstream reviewer consumes a real artifact without private parsing or fixes;
-- current technical findings are updated if implementation evidence overturned them;
-- no official result depends on the distorted inherited rainfall export.
-
+No official result may depend on the distorted inherited rainfall export.

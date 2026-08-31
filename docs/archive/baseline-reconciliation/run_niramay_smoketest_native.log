@@ -1,0 +1,90 @@
+=== FR-103 NATIVE NIRAMAY REPRODUCTION ===
+utc          : 2026-08-29T08:03:32Z
+worktree     : /Users/rickhonda/Documents/university/COMP3888/COMP3888-niramay
+branch       : repro/niramay-native
+commit       : c37c83b843ef0fc606a52eec1b1e31748588d961
+tree clean   : yes
+python       : Python 3.12.0
+torch        : 2.13.0
+torch_geom   : 2.8.0.post1
+pandas       : 3.0.5
+numpy        : 2.5.2
+sklearn      : 1.9.0
+device       : cpu (no CUDA on darwin; train.py does not use MPS)
+host RAM     : 8.6 GB
+input csv    : all_stations_rainfall_hourly_combined.csv
+input sha256 : 93e692ca97c15c98f6c21abeada4f0eb7100d8c54d3d03aba0b3cece9941c097
+split_seed   : 123 (config.yaml)
+experiment   : smoketest_native
+args         : --hidden 32 --layers 4 --knn 5 --lr 0.001 --epochs 20 --patience 10 --folds 1 --fraction 0.05 --batch_size 128 --include_lpe
+==========================================
+
+Experiment : smoketest_native
+Device     : cpu
+hidden=32  layers=4  knn=5  lr=0.001  batch_size=128  epochs=20  patience=10  folds=1
+LPE: enabled (8 features per node)
+Data fraction: 5.0% (smoke-test mode)
+
+Loaded 43,824 timesteps × 173 stations
+After uptime filter (≥90%): 173 stations
+Station metadata: 188 stations matched
+Trimmed to 2,191 timesteps
+
+Spatial K-Fold: 188 stations, 8 clusters, 1 folds
+  Fold 0: train=149  val=31  test=8
+
+============================================================
+FOLD 0
+============================================================
+
+
+  Epoch    1/20  train=79.6336  val=72.9478  patience=0/10  (116.5s)
+
+
+  Epoch    2/20  train=78.9326  val=74.7718  patience=1/10  (110.1s)
+
+
+  Epoch    3/20  train=78.0739  val=88.9140  patience=2/10  (101.3s)
+
+
+  Epoch    4/20  train=77.1101  val=141.3876  patience=3/10  (96.6s)
+
+
+  Epoch    5/20  train=76.4600  val=175.0686  patience=4/10  (102.3s)
+
+
+  Epoch    6/20  train=75.9911  val=172.2301  patience=5/10  (108.6s)
+
+
+  Epoch    7/20  train=75.5623  val=175.8612  patience=6/10  (108.0s)
+
+
+  Epoch    8/20  train=75.2770  val=179.4942  patience=7/10  (99.3s)
+
+
+  Epoch    9/20  train=75.1008  val=179.2051  patience=8/10  (103.8s)
+
+
+  Epoch   10/20  train=75.0076  val=206.7238  patience=9/10  (105.2s)
+
+
+  Epoch   11/20  train=74.9596  val=200.9063  patience=10/10  (102.0s)
+  Early stop at epoch 11
+
+Fold 0 done in 1153.7s  |  best val: 72.9478
+
+Fold 0 | Test RMSE: 8.9645  Pearson r: -0.0131
+  Stratum      Count      RMSE      Bias
+  --------------------------------------
+  dry          17308    0.2574   +0.2574
+  light          107    0.2697   -0.2520
+  moderate      1300    5.5485   -5.0964
+  heavy         1004   39.2091  -31.3333
+
+============================================================
+All folds done.
+  Fold 0: RMSE = 8.9645
+  Mean  : RMSE = 8.9645
+
+=== EXIT CODE: 0 ===
+=== WALL CLOCK: 1164s ===
