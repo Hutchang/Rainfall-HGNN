@@ -5,10 +5,11 @@ non-empty records, consistent timestamp parsing, finite coordinates,
 documented rainfall validity rules, and stable station IDs.
 
 Findings encoded here are documented in
-docs/baseline-reconciliation/AUDIT_NIRAMAY.md sections 8 and 9.
+docs/archive/baseline-reconciliation/AUDIT_NIRAMAY.md sections 8 and 9.
 
-Tests marked xfail record KNOWN, UNFIXED defects. When a fix lands they
-begin passing (xfail is non-strict), which is the signal to promote them.
+Tests marked xfail record known defects in the inherited hand export and metadata.
+The new source/canonical components replace that data rather than mutating this legacy
+regression fixture.
 """
 import re
 
@@ -50,16 +51,14 @@ def test_timestamps_parse_consistently(gauge_long):
 
 
 def test_temporal_cadence_is_hourly(gauge_long):
-    """Cadence matters: Jylow's loader assumes 5-minute data and multiplies by 12
-    (src/raingauge/utils.py:33). See DATA_INVENTORY.md section 5."""
+    """The inherited Sydney observations are hourly and must not be rescaled."""
     one = gauge_long[gauge_long["station_id"] == gauge_long["station_id"].iloc[0]]
     deltas = one.sort_values("timestamp")["timestamp"].diff().dropna().unique()
     assert list(deltas) == [pd.Timedelta(hours=1)], f"non-hourly cadence: {deltas[:5]}"
 
 
 def test_timestamps_are_timezone_naive(gauge_long):
-    """Documents the contract. Jylow's loader hard-parses a '+08:00' offset
-    (src/raingauge/utils.py:30-32), so the adapter must add one."""
+    """Documents the inherited source defect; Component 02 replaces it with UTC."""
     assert gauge_long["timestamp"].dt.tz is None
 
 
@@ -95,11 +94,10 @@ def test_uptime_filter_is_a_noop(gauge_wide):
 
 
 @pytest.mark.xfail(
-    reason="AUDIT_NIRAMAY.md section 8.2 — UNRESOLVED. Column is named "
-           "rainfall_mm but median station annual total is ~9,300 units/yr "
-           "against a Sydney climatology of ~1,210 mm/yr. Values are quantised "
-           "to 0.5 and 1% of rainy hours exceed 99. Very likely 0.1 mm units. "
-           "Needs provenance from Niramay or the client.",
+    reason="LEGACY DATA REGRESSION — AUDIT_NIRAMAY.md section 8.2 supersession "
+           "note. Direct BoM comparison proved time- and station-varying export "
+           "distortion; no global scale factor can repair rainfall_mm. Components "
+           "01/02 replace it with source-faithful tips and verified true millimetres.",
     strict=False,
 )
 def test_units_are_plausibly_millimetres(gauge_long):
@@ -131,10 +129,11 @@ def test_coordinates_are_in_greater_sydney(station_meta):
 
 
 @pytest.mark.xfail(
-    reason="AUDIT_NIRAMAY.md section 8.1 — UNFIXED. station_metadata.csv holds "
+    reason="LEGACY DATA REGRESSION — AUDIT_NIRAMAY.md section 8.1. station_metadata.csv holds "
            "425 rows for 409 unique ids; data/loader.py:53 filters with .isin() "
            "but never de-duplicates, so the graph gets 188 nodes for 173 real "
-           "stations.",
+           "stations. Components 01/02 key the replacement data on unique BoM "
+           "internal station_id.",
     strict=False,
 )
 def test_station_ids_are_unique_after_filtering(station_meta, gauge_wide):
@@ -145,10 +144,10 @@ def test_station_ids_are_unique_after_filtering(station_meta, gauge_wide):
 
 
 @pytest.mark.xfail(
-    reason="AUDIT_NIRAMAY.md section 8.1 — UNFIXED. Ids 563083 and 567163 are "
-           "ID COLLISIONS between genuinely different stations (39.4 km and "
-           "1.24 km apart), not dual-network registrations. De-duplicating by "
-           "id would pick a location arbitrarily.",
+    reason="LEGACY PUBLIC-ID REGRESSION — AUDIT_NIRAMAY.md section 8.1. Public "
+           "numbers 563083 and 567163 each identify two real stations. The BoM "
+           "API provides distinct internal station_id values, which components "
+           "01/02 use instead of de-duplicating public numbers.",
     strict=False,
 )
 def test_duplicate_ids_refer_to_the_same_place(station_meta):

@@ -5,17 +5,18 @@ is reachable by a permitted predictor, and that the edge-weight scheme actually
 lets messages flow.
 
 Findings encoded here are documented in
-docs/baseline-reconciliation/AUDIT_NIRAMAY.md sections 8.0 and 8.1.
+docs/archive/baseline-reconciliation/AUDIT_NIRAMAY.md sections 8.0 and 8.1.
 
-Tests marked xfail record KNOWN, UNFIXED defects (non-strict, so they begin
-passing once fixed). These are the executable form of the two blockers.
+Tests marked xfail record defects in the inherited Niramay data/path. New component
+contracts fix them with internal station ids, audited split artifacts, and explicit
+graph modes; these tests remain as legacy regression evidence.
 """
 import numpy as np
 import pytest
 from sklearn.neighbors import NearestNeighbors
 
-KNN = 5          # config default, train.py --knn
-SPLIT_SEED = 123 # config.yaml data.split_seed
+KNN = 5          # inherited Niramay config/CLI default
+SPLIT_SEED = 123 # inherited Niramay config.yaml split_seed
 N_SPLITS = 5
 
 
@@ -49,8 +50,9 @@ def test_splits_are_produced(splits):
 
 
 @pytest.mark.xfail(
-    reason="AUDIT_NIRAMAY.md section 8.1 — UNFIXED, and broader than the "
-           "train/test overlap alone. Because _make_masks maps a duplicated id "
+    reason="LEGACY DATA REGRESSION — AUDIT_NIRAMAY.md section 8.1. The "
+           "component 03 split contract retires this behaviour. Inherited "
+           "_make_masks maps a duplicated public id "
            "to BOTH node orders, train/validation overlap occurs in ALL 5 folds "
            "(up to 8 stations in fold 4) and train/test in 4 of 5. Validation "
            "leakage corrupts early stopping and model selection, not just the "
@@ -69,9 +71,10 @@ def test_every_target_belongs_to_exactly_one_role_per_fold(splits):
 
 
 @pytest.mark.xfail(
-    reason="AUDIT_NIRAMAY.md section 8.1 — UNFIXED. Duplicated metadata rows put "
+    reason="LEGACY DATA REGRESSION — AUDIT_NIRAMAY.md section 8.1. Duplicated metadata rows put "
            "the same station in train and test. 4 of 5 folds are affected; the "
-           "sampler prints its own fold-overlap warning at runtime.",
+           "sampler prints its own fold-overlap warning at runtime. Component 03 "
+           "requires unique internal ids and an audited target index.",
     strict=False,
 )
 def test_no_station_is_both_trained_on_and_tested(splits):
@@ -85,9 +88,10 @@ def test_no_station_is_both_trained_on_and_tested(splits):
 
 
 @pytest.mark.xfail(
-    reason="AUDIT_NIRAMAY.md section 8.1 — UNFIXED. stratified_spatial_kfold's "
+    reason="LEGACY DATA REGRESSION — AUDIT_NIRAMAY.md section 8.1. stratified_spatial_kfold's "
            "docstring guarantees disjoint test sets across folds; duplicated "
-           "ids break it (id 567102 appears in folds 0 and 2).",
+           "ids break it (id 567102 appears in folds 0 and 2). Component 03's "
+           "corrected protocol requires full, disjoint test coverage.",
     strict=False,
 )
 def test_test_sets_are_disjoint_across_folds(splits):
@@ -122,14 +126,15 @@ def _edge_weights(meta_subset):
 
 
 @pytest.mark.xfail(
-    reason="AUDIT_NIRAMAY.md section 8.0 — UNFIXED, and the root cause of the "
-           "baseline not learning. Stations 212285 and 563086 sit 0.1 m apart, "
+    reason="LEGACY GLOBAL-MODE REGRESSION — AUDIT_NIRAMAY.md section 8.0. "
+           "The opt-in per-node correction is implemented and has separate passing "
+           "tests; global remains reproducible by design. In the inherited metadata, "
+           "stations 212285 and 563086 sit 0.1 m apart, "
            "giving 1/d = 2,219,128 against a median of 13.7. Because "
            "graph/gauge_graph.py:172 divides by the GLOBAL max, 99.8% of edges "
            "fall below 1e-3 and GraphConv's neighbour term sits ~5 orders of "
            "magnitude under its self term. The paper's per-node normalisation "
-           "(arXiv:2607.01621 Eq. 1) is immune. Jylow shares the same formula "
-           "at src/graph/gaugegraphnew.py:172-173.",
+           "(arXiv:2607.01621 Eq. 1) is immune.",
     strict=False,
 )
 def test_normalised_edge_weights_permit_message_passing(station_meta):

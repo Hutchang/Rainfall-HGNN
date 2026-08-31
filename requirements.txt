@@ -15,9 +15,12 @@ matplotlib==3.11.1
 PyYAML==6.0.3
 tqdm==4.70.0
 
-# Imported at module scope by the inherited Jylow graph/data path.
+# Imported by restored inherited reference modules. These dependencies do not make
+# Singapore/CML paths supported; they remain until reusable geospatial code is separated.
 geopandas==1.1.4
 shapely==2.1.2
+
+# Used by retained generic file readers and future Australian NCI product work.
 rasterio==1.5.1
 xarray==2026.7.0
 netCDF4==1.7.4
