@@ -4,8 +4,6 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import torch
 
-import geopandas as gpd
-from shapely import STRtree, LineString, Point
 from torch_geometric.data import HeteroData, Data
 from torch_geometric.transforms import ToUndirected, AddLaplacianEigenvectorPE
 from torch.utils.data import Dataset
@@ -27,7 +25,7 @@ class GaugeGraphNew():
         edge_normalisation: "global" (unmodified baseline, default) divides every
             edge weight by the single maximum weight in the graph — a lone
             pathological close pair can crush every other edge (see
-            docs/baseline-reconciliation/AUDIT_NIRAMAY.md sec 8.0). "per_node"
+            docs/archive/baseline-reconciliation/AUDIT_NIRAMAY.md sec 8.0). "per_node"
             implements the paper's Eq. 1 (Low, Kachhadiya, Herath, Rasnayaka &
             Marshall, "Spatial Support Matters: Geometry-Aware Graph Fusion for
             Rainfall Field Reconstruction", arXiv:2607.01621, sec 3.2):
@@ -248,14 +246,9 @@ class GaugeGraphNew():
         test_raingauge_coords = list(zip(self.mapping_df['longitude'],
                                          self.mapping_df['latitude']))
 
-        if layer_name == "cml":
-            train_connecting_edges, train_connecting_edge_weight = self.connect_cml_graph(train_raingauge_coords, coords, knn)
-            val_connecting_edges, val_connecting_edge_weight = self.connect_cml_graph(val_raingauge_coords, coords, knn)
-            test_connecting_edges, test_connecting_edge_weight = self.connect_cml_graph(test_raingauge_coords, coords, knn)
-        else:
-            train_connecting_edges, train_connecting_edge_weight = self.connect_graphs(train_raingauge_coords, coords, knn)
-            val_connecting_edges, val_connecting_edge_weight = self.connect_graphs(val_raingauge_coords, coords, knn)
-            test_connecting_edges, test_connecting_edge_weight = self.connect_graphs(test_raingauge_coords, coords, knn)
+        train_connecting_edges, train_connecting_edge_weight = self.connect_graphs(train_raingauge_coords, coords, knn)
+        val_connecting_edges, val_connecting_edge_weight = self.connect_graphs(val_raingauge_coords, coords, knn)
+        test_connecting_edges, test_connecting_edge_weight = self.connect_graphs(test_raingauge_coords, coords, knn)
 
 
 
@@ -278,78 +271,16 @@ class GaugeGraphNew():
 
         return self.fused_train_heterodata, self.fused_validation_heterodata, self.fused_test_heterodata
 
-    def connect_cml_graph(self, raingauge_coords, cml_coords: pd.DataFrame, knn:int) -> tuple[list,list]:
-        gauge_gdf = gpd.GeoDataFrame(
-            geometry=[Point(lon, lat) for lon, lat
-             in raingauge_coords],
-            crs="EPSG:4326"
-        ).to_crs("EPSG:3857")
-
-        cml_gdf = gpd.GeoDataFrame(
-            cml_coords,
-            geometry=[
-                LineString([(row['site_a_longitude'], row['site_a_latitude']),
-                            (row['site_b_longitude'], row['site_b_latitude'])])
-                for _, row in cml_coords.iterrows()
-            ],
-            crs="EPSG:4326"
-        ).to_crs("EPSG:3857")
-
-        node_a_gdf = gpd.GeoDataFrame(
-            geometry=gpd.points_from_xy(cml_coords['site_a_longitude'], cml_coords['site_a_latitude']),
-            crs="EPSG:4326"
-        ).to_crs("EPSG:3857")
-
-        node_b_gdf = gpd.GeoDataFrame(
-            geometry=gpd.points_from_xy(cml_coords['site_b_longitude'], cml_coords['site_b_latitude']),
-            crs="EPSG:4326"
-        ).to_crs("EPSG:3857")
-
-
-        tree = STRtree(cml_gdf.geometry)
-        K = knn
-        edge_list = []
-        weight_list = []
-
-        for gauge_idx, gauge_row in gauge_gdf.iterrows():
-            gauge_pt = gauge_row.geometry
-
-            distances = cml_gdf.geometry.distance(gauge_pt)
-            top_k = distances.nsmallest(K)
-
-            gauge_edges = []
-            gauge_weights = []
-            for cml_idx, dist in top_k.items():
-                if cml_idx % 2 == 1:
-                    cml_idx -= 1
-                row = cml_coords.iloc[cml_idx]
-                gauge_edges.append((gauge_idx, cml_idx))
-                gauge_edges.append((gauge_idx, cml_idx + 1))
-                station_A = node_a_gdf.iloc[cml_idx]
-                station_B = node_b_gdf.iloc[cml_idx]
-                weight_A = gauge_pt.distance(station_A) / 1000 #downscale
-                weight_B  = gauge_pt.distance(station_B) / 1000 #downscale
-                if self.inverse_weighted:
-                    weight_A = 1/weight_A
-                    weight_B = 1/weight_B
-                gauge_weights.append(float(weight_A.item()))
-                gauge_weights.append(float(weight_B.item()))
-
-            if self.edge_normalisation == "per_node" and self.inverse_weighted:
-                row_max = max(gauge_weights)
-                gauge_weights = [w / row_max for w in gauge_weights]
-
-            edge_list.extend(gauge_edges)
-            weight_list.extend(gauge_weights)
-
-        if self.edge_normalisation == "global":
-            max_weight = max(weight_list)
-            weight_list = [x / max_weight for x in weight_list]
-        # else "per_node": already normalised per gauge above
-
-        return edge_list, weight_list
-
     def connect_graphs(self, raingauge_coords, other_coords: pd.DataFrame, knn=16) -> tuple[list, list]:
+        """Connect inherited gauge and point-layer nodes for regression runs.
+
+        BLOCKED (Component 04 FR03 / TEST10): ``raingauge_coords`` currently arrives
+        as ``(longitude, latitude)``, while ``B_coords`` below is constructed as
+        ``(latitude, longitude)``. This inherited coordinate-order mismatch can change
+        nearest neighbours. Preserve it only for transitional regression; do not use
+        this function for scientific gauge/radar/satellite graph output until the
+        Component 04 implementation fixes and tests the public coordinate contract.
+        """
         edges = []
         A_coords = np.radians(np.array(raingauge_coords))
         B_coords = np.radians(np.array(list(zip(other_coords['latitude'], other_coords['longitude']))))

@@ -222,9 +222,9 @@ def stratified_spatial_sampling_dual(
 
     # Create visualization if requested
     if plot:
-        from src.visualization.sampling import create_dual_sampling_visualization
-        create_dual_sampling_visualization(
-            results, station_coords, station_ids, cluster_labels, centroids, output_path=output_path
+        raise NotImplementedError(
+            "The inherited region-specific plotting path was removed; Component 03 "
+            "must provide an Australian study-area plot if one is required."
         )
 
     return results
@@ -416,11 +416,9 @@ def stratified_spatial_kfold_dual(
         print(f"  ML validation: {len(ml_val_stations)} ({len(ml_val_stations)/n_stations*100:.1f}%)")
 
         if plot:
-            from src.visualization.sampling import create_dual_sampling_visualization
-            create_dual_sampling_visualization(
-                fold_result, raingauge_coords, raingauge_ids, cluster_labels,
-                kmeans.cluster_centers_,
-                output_path=f"fold_{fold_idx+1}_sampling_results.png"
+            raise NotImplementedError(
+                "The inherited region-specific plotting path was removed; Component 03 "
+                "must provide an Australian study-area plot if one is required."
             )
 
     # --- Verification: Ensure no station appears in multiple test sets
