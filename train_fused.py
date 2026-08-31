@@ -44,50 +44,90 @@ def train_fused(config):
     uptime_threshold = config['filters']['uptime_threshold']
     start_year = config['dataset_parameters']['start_year']
     end_year = config['dataset_parameters']['end_year']
-    raingauge_df, raingauge_station_mappings_df = load_raingauge_dataset(start = start_year, end = end_year, uptime_threshold=uptime_threshold)
+    # 60/accumulation_minutes scales readings to mm/hr: 5 (default) preserves the
+    # original Singapore x12; 60 passes hourly Sydney depths through unscaled.
+    accumulation_minutes = config['dataset_parameters'].get('gauge_accumulation_minutes', 5)
+    raingauge_df, raingauge_station_mappings_df = load_raingauge_dataset(start = start_year, end = end_year, uptime_threshold=uptime_threshold, accumulation_minutes=accumulation_minutes)
 
     # Raingauge data is at 5-min intervals; radar/CML are at 15-min.
     # Resample to 15-min averages before the inner join so timestamps align
     # and readings represent the correct accumulation period.
-    raingauge_df = raingauge_df.resample('15min', closed='left', label='left').mean()
+    # '15min' (default) preserves Singapore behaviour; hourly Sydney data must
+    # use '60min' (an identity binning) or upsampling would produce mostly-NaN rows.
+    resample_interval = config['dataset_parameters'].get('resample_interval', '15min')
+    raingauge_df = raingauge_df.resample(resample_interval, closed='left', label='left').mean()
     raingauge_df = raingauge_df[raingauge_df.index.minute % 15 == 0]
-
-    radar_df = load_processed_dataset("database/processed_radar_dataset.pkl")
-#radar_df = load_radar_dataset(folder_name='database/sg_radar_data_cropped', cropped=True)
 
 
 # 4. INNER JOIN tables based on timestamp
-    radar_cols = radar_df.columns
     raingauge_cols = raingauge_df.columns
-    merged_df = radar_df.merge(raingauge_df, on=['timestamp'], how='inner')
+    if 'radar' in datasources:
+        radar_df = load_processed_dataset("database/processed_radar_dataset.pkl")
+#radar_df = load_radar_dataset(folder_name='database/sg_radar_data_cropped', cropped=True)
+        radar_cols = radar_df.columns
+        merged_df = radar_df.merge(raingauge_df, on=['timestamp'], how='inner')
+    else:
+        # Gauge-only: the gauge frame itself defines the timestamp axis
+        # (originally the radar∩CML inner join defined it).
+        merged_df = raingauge_df.reset_index()
 
-    cml_df, cml_coordinates_df = load_cml_dataset(config['dataset_parameters']['cml_folder'])
-    cml_df = cml_df.fillna(0)
-    cml_cols = cml_df.columns
-    merged_df = merged_df.merge(cml_df, on=['timestamp'], how='inner')
-    cml_df = merged_df[cml_cols]
+    if 'cml' in datasources:
+        cml_df, cml_coordinates_df = load_cml_dataset(config['dataset_parameters']['cml_folder'])
+        cml_df = cml_df.fillna(0)
+        cml_cols = cml_df.columns
+        merged_df = merged_df.merge(cml_df, on=['timestamp'], how='inner')
+        cml_df = merged_df[cml_cols]
+        cml_df = cml_df.drop_duplicates()
 
-    raingauge_df = merged_df[raingauge_cols]
-    radar_df = merged_df[radar_cols]
     raingauge_df = pd.concat([merged_df['timestamp'], merged_df[raingauge_cols]], axis=1).drop_duplicates().reset_index(drop=True)
-    radar_df = radar_df.drop_duplicates(subset=['timestamp'], keep='first')
-
-    cml_df = cml_df.drop_duplicates()
+    if 'radar' in datasources:
+        radar_df = merged_df[radar_cols]
+        radar_df = radar_df.drop_duplicates(subset=['timestamp'], keep='first')
+        print(radar_df.shape)
+    if 'cml' in datasources:
+        print(cml_df.shape)
 
     print(raingauge_df.shape)
-    print(radar_df.shape)
-    print(cml_df.shape)
 
 # 5. Stratified sampling
-    split_info = stratified_spatial_kfold_dual(
-        raingauge_station_mappings_df, seed=123, plot=False, n_splits = fold_count
-    )
+    # training_params.split_file (optional) imports a precomputed fold assignment
+    # (e.g. Niramay's reference split exported by adapters/niramay_to_jylow.py)
+    # instead of regenerating with the Singapore-tuned KMeans sampler — FR-303.
+    split_file = config['training_params'].get('split_file')
+    if split_file:
+        import json
+        with open(split_file) as f:
+            split_payload = json.load(f)
+        split_info = split_payload['folds']
+        if len(split_info) < fold_count:
+            raise ValueError(f"{split_file} has {len(split_info)} folds, need {fold_count}")
+        available_ids = set(raingauge_station_mappings_df['id'].astype(str))
+        for fold in split_info[:fold_count]:
+            for key in ('train', 'validation', 'test'):
+                ids = [s for s in fold['ml'][key] if str(s) in available_ids]
+                dropped = len(fold['ml'][key]) - len(ids)
+                if dropped:
+                    print(f"split_file fold {fold['fold_index']} {key}: {dropped} station(s) not in loaded data, dropped")
+                if not ids:
+                    raise ValueError(f"split_file fold {fold['fold_index']} {key} is empty after intersecting with loaded stations")
+                # match the dtype pandas inferred for the station id column
+                fold['ml'][key] = pd.Series(ids).astype(raingauge_station_mappings_df['id'].dtype).tolist()
+        print(f"Using imported split assignment from {split_file}")
+    else:
+        split_info = stratified_spatial_kfold_dual(
+            raingauge_station_mappings_df, seed=123, plot=False, n_splits = fold_count
+        )
 
 
 # 6. Build graphs
+    # DATA_CONTRACT.md: the normalisation mode must be stated explicitly, never
+    # defaulted silently. "global" = unmodified baseline; "per_node" = the
+    # paper's Eq. 1 (arXiv:2607.01621 section 3.2), the validated fix.
+    edge_normalisation = config['layer_connect'].get('edge_normalisation', 'global')
+    print(f"Edge normalisation mode: {edge_normalisation}")
     gauge_graph_arr = []
     for i in range(fold_count):
-      gauge_graph = GaugeGraphNew(raingauge_df, raingauge_station_mappings_df, split_info = split_info[i], knn=config['layer_connect']['gauge_gauge'])
+      gauge_graph = GaugeGraphNew(raingauge_df, raingauge_station_mappings_df, split_info = split_info[i], knn=config['layer_connect']['gauge_gauge'], edge_normalisation=edge_normalisation)
       if 'radar' in datasources:
           radar_graph = RadarGraph(radar_df)
           radar_heterodata = radar_graph.get_radar_heterodata()
@@ -100,44 +140,30 @@ def train_fused(config):
 
 
 # 7. Initialise HGNN model
-    if 'cml' in datasources:
-        cml_features = gauge_graph_arr[0].get_train_heterodata()['cml'].x.shape[2]
     hidden_channels = config['model']['hidden_channels']
     out_channels = 1
     num_layers = config['model']['num_layers']
     dropout = config['model'].get('dropout', 0.0)
     model_arr = []
-    raingauge_features = 6 if config['dataset_parameters']['include_lpe'] else 2
+    # Derive per-type feature counts from the built graph (train_st.py's pattern)
+    # instead of hand-writing them — the hand-written dict hardcoded "radar": 1
+    # even when radar was absent, and a wrong value went undetected because
+    # GNNInductiveHetero's convolutions are lazily shaped.
+    in_channels_dict = {
+        node_type: gauge_graph_arr[0].get_train_heterodata()[node_type].x.shape[2]
+        for node_type in gauge_graph_arr[0].get_train_heterodata().node_types
+    }
     for i in range(fold_count):
-      if 'cml' in datasources:
-          model_arr.append(
-            GNNInductiveHetero(
-              in_channels_dict = {
-                "raingauge": raingauge_features,
-                "radar": 1,
-                "cml": cml_features
-              },
-              hidden_channels = hidden_channels,
-              out_channels=out_channels,
-              num_layers = num_layers,
-              edge_types = gauge_graph_arr[i].get_train_heterodata().edge_types,
-              dropout=dropout,
-            ).to(device=device)
-          )
-      else:
-          model_arr.append(
-            GNNInductiveHetero(
-              in_channels_dict = {
-                "raingauge": raingauge_features,
-                "radar": 1,
-              },
-              hidden_channels = hidden_channels,
-              out_channels=out_channels,
-              num_layers = num_layers,
-              edge_types = gauge_graph_arr[i].get_train_heterodata().edge_types,
-              dropout=dropout,
-            ).to(device=device)
-          )
+      model_arr.append(
+        GNNInductiveHetero(
+          in_channels_dict = in_channels_dict,
+          hidden_channels = hidden_channels,
+          out_channels=out_channels,
+          num_layers = num_layers,
+          edge_types = gauge_graph_arr[i].get_train_heterodata().edge_types,
+          dropout=dropout,
+        ).to(device=device)
+      )
 
 #8. Batch the data
     def compute_norm_stats(heterodata):
@@ -289,5 +315,9 @@ def train_fused(config):
     return averaged_metrics_dict
 
 
-config = read_config("config.yaml")
-train_fused(config=config)
+if __name__ == "__main__":
+    # Guard added: this module previously executed a full 5-fold training run at
+    # import time, which fired before trial 0 of any Optuna search importing it
+    # (AUDIT_JYLOW.md section 3, confirmed defect). CLI behaviour is unchanged.
+    config = read_config("config.yaml")
+    train_fused(config=config)

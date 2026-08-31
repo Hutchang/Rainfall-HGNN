@@ -1,8 +1,15 @@
 {
+  # TRANSITIONAL 2022 smoke profile for train_fused.py, retained to reproduce the
+  # JYLOW_0D_CHANGES.md runs. This is not the new 2021-2022 component configuration.
+  # New implementations use scoped YAML files under config/ as defined by
+  # docs/requirements/. adapters/niramay_to_jylow.py generates the legacy files read
+  # here; those values are scientifically distorted and regression-only.
   dataset_parameters : {
     database_folder: 'database',
-    start_year: 2024,
-    end_year: 2025,
+    start_year: 2022,                    # Singapore: 2024
+    end_year: 2022,                      # Singapore: 2025
+    gauge_accumulation_minutes: 60,      # Sydney data is hourly depth -> x1. Singapore: 5 (-> x12). Omit for old behaviour.
+    resample_interval: '60min',          # identity binning for hourly data. Singapore: '15min'. Omit for old behaviour.
     cml_file: '',
     train_size: 0.7,
     test_size: 0.1,      #test set size
@@ -57,15 +64,23 @@
       epochs: 100,
       early_stop: 10,            # more patience: epoch 1 fast-drop is the lazy optimum, not convergence
       weighted_loss_alpha: 0.18,  # higher upweighting forces model to keep learning rain signal
+      # Imported fold assignment (FR-303): Niramay's reference split, exported by
+      # adapters/niramay_to_jylow.py. Remove/null to fall back to the built-in
+      # KMeans sampler (Singapore behaviour).
+      split_file: 'database/sydney_split_info.json',
   },
 
-  datasources: ['raingauge', 'cml'],
+  datasources: ['raingauge'],    # 0D gauge-only. Singapore fusion: ['raingauge', 'cml'] (+ 'radar')
 
   layer_connect: {
     gauge_gauge: 5, #hyper_param
     radar_gauge: 9, #hyper_param
     cml_gauge: 5, #hyper_param
-    is_directed: True
+    is_directed: True,
+    # 'global' = unmodified inherited baseline (divide by the single graph-wide max);
+    # 'per_node' = the paper's Eq. 1 (arXiv:2607.01621 sec 3.2), the validated fix.
+    # Must be stated explicitly per DATA_CONTRACT.md — never defaulted silently.
+    edge_normalisation: 'global',
   },
 
   model: {
