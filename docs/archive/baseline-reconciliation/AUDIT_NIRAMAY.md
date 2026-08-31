@@ -1,11 +1,17 @@
 # AUDIT — Niramay implementation (Australian / Sydney, 0D gauge-only)
 
+> **Audit snapshot:** Later dated notes inside this document supersede its opening
+> “not attempted” status. Native reproduction, the opt-in edge fix, and BoM source
+> investigation recorded here is complete. The hand-exported
+> data is regression evidence only, not an accepted scientific dataset.
+
 **Audited tree:** worktree `../COMP3888-niramay`, branch `niramay-clone` @ `4fcb313`
 (`4fcb313` = `8368cbf` + a docs-only README commit; no code differences).
 **Audit date:** 2026-08-29 · **Method:** read-only inspection + re-execution of the
 repo's own loader/sampler code paths against the bundled data.
-**Status:** Phase 0 (FR-001…FR-007) and Phase 1 data validation (FR-101, FR-102) complete.
-FR-103 (native run) **not yet attempted** — gated on the blockers in §8.
+**Current status:** Phase 0, native reproduction, the opt-in edge-normalisation
+correction, and BoM investigation are complete. The original pre-run status is retained
+in the dated narrative below; §8 contains the executed evidence.
 
 ---
 
@@ -15,7 +21,7 @@ This code corresponds to *"Spatial Support Matters: Geometry-Aware Graph Fusion 
 Rainfall Field Reconstruction"* (arXiv:2607.01621), whose author list includes
 Niramay Kachhadiya. **It implements only the paper's gauge-only ablation**
 (`HGNN (G)`, Table 1), not the multi-support fusion that is the paper's contribution.
-There are no 1D (CML) or 2D (radar/satellite) node types anywhere in this tree.
+There are no non-gauge node types anywhere in this tree.
 
 Deltas from the paper's stated method are recorded in §7.4. They matter because a
 result from this code cannot be compared to the paper's headline `HGNN (G+C+R)` number.
@@ -259,15 +265,117 @@ its *own* neighbourhood maximum. One pathological pair cannot then crush the glo
 Both implementations deviate to a global max — a delta already noted in §7.4, here shown
 to be catastrophic on Sydney data.
 
-> **⚠️ This applies to Jylow too.** `src/graph/gaugegraphnew.py:172-173` uses the same
-> `max(edge_attr)` global normalisation. Porting Sydney gauges into Jylow will hit the
-> identical wall unless the formula is corrected first. See `SYSTEM_MAP.md` §6.
+The retained `src/graph/gaugegraphnew.py` path inherited the same graph-wide
+normalisation defect, so it is covered by the same regression test and corrected mode.
 
 **Minimal correction:** implement the paper's per-node normalisation. Note that the `1e6`
 guard at `gauge_graph.py:133` is a second-order concern — the real problem is that *any*
 very small distance dominates a global normaliser.
 
+#### 8.0.2 ✅ IMPLEMENTED (2026-08-30) — per-node normalisation, authorised by operator
+
+Operator authorisation received (per the §1 override this document's companion
+`HANDOFF.md` requires) to implement arXiv:2607.01621 §3.2 Eq. 1 —
+Low, Kachhadiya, Herath, Rasnayaka & Marshall, *"Spatial Support Matters: Geometry-Aware
+Graph Fusion for Rainfall Field Reconstruction"* — as a separate, opt-in experiment
+alongside the unmodified baseline (FR-420 / BR-004).
+
+**What changed, both trees:** a new `edge_normalisation` parameter, `"global"` (default)
+or `"per_node"`. `"global"` is a no-op change — the exact original computation path,
+byte-for-byte, runs when the parameter is omitted or left at its default. `"per_node"`
+divides each node's own row of inverse-distance weights by that row's own maximum,
+instead of one scalar shared across the whole graph.
+
+- `../COMP3888-niramay/graph/gauge_graph.py` — `_build_knn_edges` and `_build_heterodata`;
+  `train.py` gained a matching `--edge_normalisation {global,per_node}` CLI flag (also
+  folds into the auto-generated experiment name and the performance-log config, so a
+  per-node run is never silently conflated with the baseline).
+- `src/graph/gaugegraphnew.py` (this repo) — the gauge-to-gauge edge calculation. The
+  correction is wired through the retained gauge-only driver and protected by tests.
+
+**Validation status — ✅ DONE (2026-08-30), full end-to-end.**
+
+A fresh venv was built in this session (`.venv`, Python 3.13, CPU-only torch —
+`pip install --index-url https://download.pytorch.org/whl/cpu torch`, then
+`torch_geometric numpy pandas scikit-learn scipy matplotlib optuna pyyaml tqdm pytest`),
+landing on the exact versions `HANDOFF.md` §3 documents (torch 2.13.0, PyG 2.8.0.post1,
+pandas 3.0.5, numpy 2.5.2, sklearn 1.9.0, pytest 9.1.1) — that committed venv was not
+present in this session's filesystem, so this one was built from `requirements.txt`
+instead of reused.
+
+- **Math confirmed standalone** (plain numpy against real `station_metadata.csv`, before
+  the venv existed):
+
+  | | median normalised weight | edges below 1e-3 |
+  |---|---|---|
+  | global (baseline) | 9.6e-06 | 99.1% |
+  | per_node (fix) | 0.593 | 0.6% |
+
+- **Both new tests pass** against the real `GaugeGraph` class:
+  `.venv/Scripts/python.exe -m pytest tests/ -q -rx` → **20 passed, 7 xfailed** (up from
+  18/7 — `test_global_normalisation_default_matches_baseline_defect` and
+  `test_per_node_normalisation_fixes_the_real_graph` both pass). Fixing this also
+  surfaced and fixed a real, pre-existing gap in `tests/conftest.py`'s `gauge_wide`
+  fixture: it pivoted `station_id` without casting to `str` the way the real
+  `data/loader.py:48` does, so it could never have been fed into `GaugeGraph` before —
+  no earlier test exercised that path.
+- **Full end-to-end re-run — HANDOFF.md §7's "done when" criterion, met:**
+  ```
+  PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe train.py --hidden 32 --layers 4 --knn 5 \
+      --lr 0.001 --epochs 20 --patience 10 --folds 1 --fraction 0.05 --batch_size 128 \
+      --include_lpe --edge_normalisation per_node --name smoketest_per_node_norm
+  ```
+  (same params as the reference native run, `run_niramay_smoketest_native.log`, plus the
+  new flag; `PYTHONIOENCODING=utf-8` works around an unrelated Windows console-encoding
+  crash in `data/loader.py`'s `≥` character — a platform issue, not a code defect, not
+  fixed in source). Full log: `smoketest_per_node_norm.log`.
+
+  | | RMSE | Pearson r | vs constant-predictor band `[8.801, 9.017]` |
+  |---|---|---|---|
+  | baseline (native reproduction) | 8.9645 | −0.0131 | inside — learned nothing |
+  | **per_node (this fix)** | **5.3024** | **0.7985** | **well outside — genuine learning** |
+
+  RMSE fell 41%; Pearson r went from ~zero to strong positive correlation. Stratified
+  breakdown (fold 0 test set): dry 2.05/+0.48, light 1.22/+0.10, moderate 5.78/+1.21,
+  heavy 20.88/**−7.87** (1,004 samples) — heavy-rain under-prediction bias is large and
+  worth a follow-up, but is a separate, pre-existing MSE-regression tendency, not a defect
+  introduced by this change.
+
+**Comparison to the paper's own Sydney numbers — NOT a validated reproduction, read
+carefully.** The paper reports (graph-only ablation, `HGNN(G)`, Table 1): IDW 0.667,
+HGNN(G) 0.686 mm/h. Our 5.3024 is in `rainfall_mm`'s raw, unconfirmed unit — if the §8.2
+÷10 hypothesis is right, that's ≈0.53mm, numerically *better* than both paper figures.
+**Do not read that as a successful reproduction.** Five independent reasons it isn't one:
+
+1. The ÷10 units hypothesis is unconfirmed (§8.2) — if wrong, the honest number is 5.3024,
+   far worse than the paper, not better.
+2. **Different station population AND different time period.** §11 item 3: the paper's
+   Sydney testbed is **2022 only, 75 gauges**; this dataset is **2021–2025, 173 stations**
+   (188 with duplicates) — confirmed by reading the paper itself, not inferred. Selection
+   rule undocumented for either. Not the same evaluation set, in two independent ways.
+3. Smoketest scale only — 5% of timesteps, 1 fold, not the paper's full data/full spatial
+   CV.
+4. Known architecture/hyperparameter deltas from §7.4 (dropout, weight decay, feature
+   normalisation, LPE defaults) — this run doesn't match the paper's setup.
+5. **§8.1's duplicate-metadata leakage is still present and unfixed in this run.** That
+   matters more here than it might elsewhere: some of the same near-duplicate stations
+   behind §8.1's train/test leakage now carry real, non-negligible edge weight (because of
+   *this* fix), so the GNN can exploit that leakage through the graph more than it could
+   under the old, collapsed weights. Part of the RMSE improvement could be leakage, not
+   genuine generalisation — not separable with the current run.
+
+Net: the fix demonstrably repairs the mechanism the paper's method depends on (solid,
+directly measured). The fact the resulting number lands in a plausible range under an
+unconfirmed unit correction is a mildly interesting coincidence worth mentioning to
+whoever resolves the units question — not evidence this is a working reproduction.
+
 #### 8.0.1 The Greaves Creek pair are NOT the same gauge
+
+> **✅ RESOLVED 2026-08-31 (BOM KiWIS API, back online).** `getStationList` returns
+> `563086` as "Greaves Ck TBRG" (internal `station_id` 49565602) with **true coordinate
+> (−33.654722, 150.308889)** — Blue Mountains, not the copy-pasted `212285` coordinate.
+> The exclusion can be lifted by substituting this coordinate; the analysis below stands
+> as the historical record of the metadata defect.
 
 Tested directly by comparing the two series over all 43,824 timestamps:
 
@@ -288,6 +396,30 @@ genuinely distinct instruments, and one of them almost certainly carries the oth
 coordinates. It **cannot** be resolved by dropping a row — that would discard real
 observations. Resolution needs an external authority (BOM WaterData, the same source the
 paper cites as its reference [4]).
+
+**Partial resolution (2026-08-30), via BOM's published rainfall station catalogue
+(`rainfall.json`, see §8.1.2 for source and outage caveat):**
+
+- `212285` — BOM lists `GREAVES CREEK AT GREAVES CREEK DAM`, Water NSW, at
+  `(−33.65472266, 150.30888921)` — an **exact match** to `station_metadata.csv`. **This
+  id's coordinates are confirmed correct.**
+- `563086` — **absent from BOM's catalogue entirely.** Checked directly (no `GREAVES` hit
+  under any other id; the neighbouring range `563085`–`563089` has no entries at all,
+  though `563084` and `563090` do). BOM cannot currently confirm or supply a coordinate
+  for this id.
+- However, `station_metadata.csv`'s existing coordinate for `563086`
+  (`−33.654722351, 150.308888882`) is now known to be **wrong regardless**: it differs
+  from `212285`'s coordinate only in the 8th decimal place — i.e. it is a copy of
+  `212285`'s location, not a real independent survey point. Combined with §8.0.1's proof
+  that the two series are genuinely different instruments (r=0.9247, +45% annual total),
+  the current coordinate for `563086` cannot be correct and should not be used as-is.
+
+**Still open:** `563086`'s true coordinates. BOM's public catalogue doesn't carry this id
+under the "Rainfall" parameter type — next step is direct contact with the data owner
+(`network` = Water NSW per the existing, now-suspect metadata row) rather than further
+scraping. **Do not substitute a guessed coordinate** — per FR-102/§17, this stays open for
+a human decision, though it's now narrowed to "what is 563086's real location" rather than
+"is this even a real distinct site."
 
 #### 8.0.2 Closest distinct-ID station pairs
 
@@ -335,7 +467,7 @@ to stations that have data — the same physical gauge registered under two netw
 
 **Impact:** a station used for training is also scored as held-out in 4 of 40
 test-station-fold instances (~10%). Any RMSE from this pipeline is optimistically biased,
-and FR-303 would propagate the contamination into the Jylow port.
+and any copied split would propagate the contamination into later components.
 
 **Train/validation leakage is more widespread than train/test.** Because `_make_masks`
 maps a duplicated id to *both* node orders, stations hold conflicting roles in **all five
@@ -383,7 +515,97 @@ Richmond** — injecting a phantom gauge carrying another site's data 39 km away
 (BOM WaterData) before de-duplication is safe. The remaining 13 are genuine dual-network
 registrations within 541 m and can be de-duplicated mechanically.
 
+#### 8.1.2 ⚠️ CORRECTED (2026-08-30) — `563083` is NOT resolved; the static snapshot was incomplete
+
+> **✅ RESOLVABLE 2026-08-31 (BOM KiWIS API, back online).** Both collisions confirmed
+> and disambiguated: BOM assigns each site a distinct **internal** `station_id` behind
+> the shared public number. `563083` → BLACKHEATH G.C. (`7730155`, −33.646, 150.2901)
+> and NORTH RICHMOND WFP (`49645132`, −33.5865, 150.7107). `567163` → REGENTVILLE
+> (`49662962`, −33.77028, 150.65917) and REGENTVILLE RFS (`7730470`, −33.7745,
+> 150.6716). The API serves each internal station's series separately, so our single
+> series per public number can be attributed by direct value comparison — no longer
+> blocked on the data owner. The durable fix is to key stations by **internal id** in
+> any regenerated dataset (`docs/requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md`).
+
+**Original claim (superseded, kept for the record):** a static export, `rainfall.json`
+(NSW open-data mirror of `water-regulations-data-bom-rainfall`,
+`datasets.seed.nsw.gov.au`, dataset id `47bb96b8-c7cb-4604-a594-c2dde2bbd44a`), showed
+exactly one record for `station_no` `563083` — BLACKHEATH GOLF COURSE — and one for
+`567163` — REGENTVILLE RURAL FIRE SERVICE — leading to a "settled, de-dup and move on"
+conclusion below.
+
+**That conclusion was wrong for `563083`.** Operator confirmation (2026-08-30): the live
+`bom.gov.au/waterdata` interactive portal genuinely shows **two distinct stations** under
+`563083` — **North Richmond Water Filtration Plant** and **Blackheath Golf Course** —
+i.e. exactly the same two names as `station_metadata.csv`'s colliding rows
+(`NORTH RICHMOND WFP` / `BLACKHEATH G.C.`). So this is **not** a `station_metadata.csv`
+compilation artifact after all — BOM's own live system carries both registrations under
+one number.
+
+**Root cause of my error:** the static NSW mirror export is not a complete dump of BOM's
+station register — it silently dropped the North Richmond WFP registration for `563083`
+(possibly filtered to active/current stations, or scoped to a subset of data owners; not
+established). I could not independently re-verify against the live KiWIS API myself
+because it returned `DatasourceError: Error connecting to WDP` / timed out on every
+request type tried across the session (total outage, not query-specific) — this
+correction rests on the operator's direct observation of the live portal, which is more
+authoritative than my snapshot.
+
+**Status:** `563083` de-duplication is **still blocked** — needs the live portal's own
+per-registration detail (`from`/`to` date ranges, `dataowner` codes, or an explicit
+"current" flag) to determine which of the two registrations is live vs superseded, or
+whether both are simultaneously active phantom nodes. Retry the live API before deciding,
+or read the two records directly off the portal page.
+
+**`567163` is also confirmed NOT resolved.** Operator confirmation (2026-08-30): the live
+portal shows two distinct stations under `567163` too — **Regentville Rural Fire Service**
+and **Regentville (Factory Road)** (BOM displays it as "Regentville" with "Factory Road" as
+a bracketed qualifier, not a separate station name). Naming now maps cleanly to both
+existing metadata rows:
+
+| BOM name | metadata row | network |
+|---|---|---|
+| Regentville Rural Fire Service | `REGENTVILLE RFS` | Sydney Water |
+| Regentville (Factory Road) | `REGENTVILLE` | Water NSW |
+
+So both rows are accounted for — this isn't a third unmapped site. It's still a genuine
+BOM-side id collision (two real, ~1.24 km-apart sites sharing `567163`), just no longer an
+open naming question.
+
+**Retracted:** the claim that "BOM's numbering space has no collisions" and the inference
+that the `station_metadata.csv` id collisions are purely a compilation artifact. **Both**
+`563083` and `567163` carry two genuinely distinct sites under one BOM station number on
+the live register — the collision is real on BOM's side, not manufactured by whoever built
+`station_metadata.csv`. This also means the earlier claim that BOM's own numbering is
+strictly 1:1 (used to explain away the `station_metadata.csv` duplicates) no longer holds
+in general — it was based on an incomplete static snapshot, not the authoritative live
+register.
+
+**Consequence for de-duplication:** both ids are back to fully blocked, same as before any
+of this session's investigation — a coin-flip `drop_duplicates` is still unsafe for either.
+Resolving which registration is the "right" one to keep (if either should be dropped at
+all, rather than treated as two real nodes) needs the live portal's per-registration detail
+(`from`/`to` date ranges, `dataowner` codes, active/historical status) — not yet obtained.
+
 ### 8.2 🛑 BLOCKER — `rainfall_mm` is almost certainly not millimetres
+
+> **⚠️ SUPERSEDED 2026-08-31 — the ÷10 hypothesis is OVERTURNED by direct comparison
+> against BOM's tip-level records (KiWIS API, back online).** BOM serves rainfall in
+> true mm (0.5 mm tips). For a verified January-2023 storm at `568163`, our hourly
+> values are **exactly 6× true mm** — the signature of an export that *summed* six
+> 10-minute intensity (mm/h) readings per hour instead of averaging them. But the factor
+> is **not constant**: June-2021 at the same station gives ~6.75–9.4× against BOM's
+> QC'd daily totals, and every station-year contains 0.5-quantum values impossible under
+> a constant ×6. Conclusion: the hand export's values are **internally inconsistent
+> (time- and station-varying distortion), not repairable by any global scale factor** —
+> worse than a unit mislabel, because the training targets themselves are inconsistently
+> scaled. Also found: **five all-zero stations** (`211010`, `212063`, `568057`,
+> `568232`, `568295`) — dead series that pass the uptime filter because zeros count as
+> present, while BOM shows those gauges live. Timestamps follow the **local Sydney
+> clock** (AEDT in summer, AEST in winter — verified +1 h vs BOM in January, aligned in
+> June). Remedy: regenerate from the API in true mm — verified feasible, specified in
+> `docs/requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md`. The climatology analysis
+> below stands as the record of how the problem was first detected.
 
 Median station annual total is **9,321 units/yr**. Sydney climatology is ~1,210 mm/yr;
 western-Sydney stations run 700–900 mm/yr. Values are quantised to exactly 0.5 steps,
@@ -395,8 +617,15 @@ forbids inferring meaning from the column name. The existing smoketest reported
 `RMSE 8.90`; ÷10 → 0.89, near the paper's Sydney figures (IDW 0.667, HGNN(G) 0.686 mm/h),
 consistent with but not proof of the hypothesis.
 
-**Impact:** gates any cross-implementation comparison. Feeding these values to Jylow,
-which works in mm/hr, would silently introduce a ~10× scale error.
+**Impact:** gates any cross-implementation comparison. Treating these values as mm/hr
+would silently introduce a large and time-varying scientific error.
+
+**Checked (2026-08-30) and still open:** BOM's public rainfall station catalogue (§8.1.2)
+is a metadata-only export (name/id/network/coordinates/date range) and carries no
+units-of-measure field; the live KiWIS API that might expose per-station parameter units
+was unreachable (`DatasourceError`, total outage as of this check, not station-specific).
+No external source settled this. Recommendation stands: ask Niramay or the client
+directly for `rainfall_mm`'s provenance.
 
 ### 8.3 ⚠️ Only 39 of 188 nodes are ever tested
 
@@ -476,7 +705,15 @@ Deterministic apart from row order, which `pivot` makes irrelevant.
 
 1. **Units of `rainfall_mm`** — needs provenance from Niramay or the client. Blocks §8.2.
 2. **Timezone** of `timestamp` — undocumented; matters for any future radar/satellite alignment.
-3. **Why 173 stations?** The paper's Sydney testbed uses 75 gauges. This is a different,
-   larger set; the selection rule is undocumented.
+3. **Why 173 stations over 2021–2025?** ✅ Partially answered 2026-08-31 by reading the
+   paper itself (`docs/2607.01621v1.md`): its Sydney testbed is **2022 only, 75 gauge
+   stations** (its reference [4] for that data is BOM WaterData, "Retrieved February
+   2026" — the same live portal §8.1.2 used). This dataset is **2021–2025 (5 years),
+   173/188 stations** — not a subset of the paper's testbed, a materially different
+   extraction: more stations, 5× the time span, no documented selection rule for either
+   difference. **This means any RMSE comparison to the paper's reported numbers
+   (§8.0.2) compares different populations over different periods, not the same
+   evaluation** — a stronger caveat than the "different station count" framing this item
+   previously had.
 4. **Was the duplicate-metadata defect present in the reported results?** If Niramay's
    published Sydney numbers came from this code path, they carry the §8.1 bias.
