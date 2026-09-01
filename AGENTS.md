@@ -130,13 +130,23 @@ invented scientific decisions.
   generated production datasets. The small per-component samples under `tests/data/` are
   the documented exception.
 
+## Dependency management
+
+- Use uv for project and development dependencies. `pyproject.toml` declares the direct
+  dependencies and `uv.lock` records the exact resolved environment.
+- Add and remove dependencies with `uv add` and `uv remove`; use `--dev` for development
+  tools. Do not install project packages directly with pip.
+- Treat `requirements.txt` and `requirements-dev.txt`, when present, as generated exports
+  for non-uv consumers. Do not edit them by hand or use them as dependency authority.
+
 ## Required verification
 
-Install and run the current repository tests with:
+Synchronise the locked environment, then run the current repository checks with:
 
-```powershell
-.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
-.venv\Scripts\python.exe -m pytest tests -q -rx
+```console
+uv sync --locked
+uv run --locked python -m pytest tests -q -rx
+uv run --locked ruff check .
 ```
 
 Also run the acceptance tests prescribed by the assigned component. The existing
