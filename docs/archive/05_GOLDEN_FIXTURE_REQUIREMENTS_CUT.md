@@ -1,3 +1,7 @@
+> **CUT on 2026-09-01.** This component no longer exists. Its useful part — a small
+> committed real sample so tests run offline — is now one checklist item in each of
+> Components 01, 02, 03, 04 and 06. Kept for reference only; not a current contract.
+
 # 05 — Small verified test dataset and offline system test
 
 **Owner:** _unassigned_ · **Reviewers:** one owner from every component
@@ -398,13 +402,13 @@ prediction row, and validation in plain English.
 
 ## 11. Resources / Glossary
 
-- [GLOSSARY.md](GLOSSARY.md) defines golden fixture, standard/canonical data, rain day,
+- [GLOSSARY.md](../requirements/GLOSSARY.md) defines golden fixture, standard/canonical data, rain day,
   held-out, LPE, and prediction table.
-- Related component requirements: [01](01_DATA_SOURCE_INGESTION_REQUIREMENTS.md),
-  [02](02_CANONICAL_DATA_REQUIREMENTS.md),
-  [03](03_STUDY_SPLIT_REQUIREMENTS.md),
-  [04](04_GRAPH_SAMPLE_REQUIREMENTS.md), and
-  [06](06_MODEL_ADAPTER_REQUIREMENTS.md).
+- Related component requirements: [01](../requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md),
+  [02](../requirements/02_CANONICAL_DATA_REQUIREMENTS.md),
+  [03](../requirements/03_STUDY_SPLIT_REQUIREMENTS.md),
+  [04](../requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md), and
+  [06](../requirements/06_MODEL_ADAPTER_REQUIREMENTS.md).
 - Existing test patterns: `tests/conftest.py`, `tests/test_sydney_gauge_loader.py`, and
   `tests/test_split_integrity.py`.
 - Evidence:

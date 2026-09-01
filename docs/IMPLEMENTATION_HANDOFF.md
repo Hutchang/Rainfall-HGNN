@@ -1,122 +1,78 @@
 # Implementation handoff
 
-**Audience:** all component owners and reviewers
+**Branch:** `integration/sydney-gauge-baseline` · **Updated:** 2026-09-01
 
-**Branch:** `integration/sydney-gauge-baseline`
+Sequencing and blockers. The contracts themselves are in
+[requirements/README.md](requirements/README.md) — read that first.
 
-**Baseline period:** 2021-01-01 through 2022-12-31 inclusive
+## Where the project actually is
 
-This is the operational handoff, not another requirements specification. The complete
-set of visible work packages and shared rules is in
-[requirements/README.md](requirements/README.md). Each component document remains the
-authority for its own `FRxx`, `OUTxx`, `TESTxx`, and `DOCSxx` items.
+- Both inherited codebases have been audited. The graph and model core runs a real
+  Sydney gauge-only graph.
+- The inherited hand-exported rainfall has time- and station-varying distortion. It is
+  regression evidence only. **No result quoted in millimetres may come from it.**
+- Everything therefore starts again from BoM source data: Component 01 downloads it,
+  Component 02 makes it trustworthy, and the first quotable number comes from a run on
+  Component 02 output.
+- Radar and satellite files for 2022 now exist locally, so the NCI access blocker is
+  gone. What replaces it is a provenance question — see below.
 
-## Current technical position
+## Order of work
 
-- Both inherited pipelines have been audited.
-- The retained graph/model core can run a genuine Sydney gauge-only graph without
-  fabricated non-gauge nodes.
-- The transitional Sydney export and imported split prove interface compatibility only.
-- The inherited hand-exported rainfall values have time- and station-varying distortion;
-  they cannot support scientific millimetre-based results.
-- Production data must be regenerated from source-faithful Bureau of Meteorology (BoM)
-  records. The canonical station key is BoM's internal `station_id`.
-- Both inherited graph paths used graph-wide edge normalisation. Compatibility and
-  corrected per-node behaviour must remain explicitly labelled.
+Components 01 and 02 are the critical path; nothing scientific is real until they land.
+03, 04 and 06 can all start immediately against small stub inputs of the documented
+shape, and should not wait.
 
-The existing smoke runs prove runnability, not baseline validity. Detailed investigation
-and run records are retained in the [historical archive](archive/README.md).
-
-## Work order
-
-All requirements are visible to everyone. Owners read their own document fully and the
-input/output contracts of adjacent components.
-
-| Component | Work that can start | Release dependency |
+| Component | Start now | Blocked until |
 |---|---|---|
-| [01 Collect source data](requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md) | Gauge settings, raw-data layout, source metadata, resume, and small validation queries | Full gauge retrieval needs approval; radar/satellite need NCI access |
-| [02 Prepare standard data](requirements/02_CANONICAL_DATA_REQUIREMENTS.md) | Raw-input checks, required table columns, hourly addition, daily-total checking, station table, and versioning | Production dataset needs 01 gauge output |
-| [03 Splits and seeds](requirements/03_STUDY_SPLIT_REQUIREMENTS.md) | Seed loader, schemas, algorithms, audit, and synthetic tests | Production split needs accepted 02 registry |
-| [04 Graph samples](requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md) | Interface extraction and compatibility/corrected regression tests | Production samples need accepted 02 and 03 files |
-| [06 Train/write predictions](requirements/06_MODEL_ADAPTER_REQUIREMENTS.md) | Common Python interface, run layout, restart, and prediction checks against stubs | Acceptance needs 03 targets and 04 samples |
-| [05 Small verified test data](requirements/05_GOLDEN_FIXTURE_REQUIREMENTS.md) | Selection/create tooling and offline system tests | Final truth needs accepted component outputs |
+| 01 | BoM calls, config, disk layout, index | nothing |
+| 02 | tips→hourly, UTC, dry-vs-missing, station table | real files from 01 |
+| 03 | the whole thing, on a synthetic station table | nothing |
+| 04 | point the loader at `database/standard/`; identity through batching; the four named fixes | 02 + 03 for real graphs |
+| 06 | prediction schema, checker, idw and network_mean baselines | 04 for real training |
 
-The first implementation target should be a narrow end-to-end gauge slice: acquire one
-real source window, write its data and JSON provenance, update progress state, and test
-resume and failure reporting.
+Radar and satellite work sits with whoever has capacity — realistically the person freed
+by cutting the golden-fixture component. Gauge-only is the first milestone; radar is the
+second; satellite is blocked.
+
+## Open blockers
+
+1. **Satellite node coordinates do not exist.** 726 nodes with no latitude or longitude
+   cannot be placed on the map or connected to gauges. Satellite fusion is blocked until
+   the file is found or regenerated. Owner: Component 01.
+2. **Radar and satellite provenance is unknown.** Which product, which units, and whether
+   the radar is gauge-corrected. If it was corrected using gauges that include our test
+   stations, radar results leak and are not publishable. Owner: Component 01, by asking
+   whoever produced the files.
+3. **Radar and satellite cover 2022 only**, and radar is missing 120 hours. Gauges will
+   cover 2021–2022. Confirm that fusion experiments are 2022-only.
+4. **The paper's exact 75-station Sydney list is unavailable.** Reproducing that table is
+   not an acceptance criterion.
 
 ## Repository boundaries
 
-Create a package only when its owner starts implementation:
+Create a package when its owner starts.
 
-| Component | Code | Configuration |
+| Component | Code | Config |
 |---|---|---|
 | 01 | `src/ingestion/` | `config/ingestion/` |
 | 02 | `src/canonical/` | `config/canonical/` |
 | 03 | `src/study/` | `config/splits/`, `config/seeds.yaml` |
 | 04 | `src/graphs/` | `config/graphs/` |
-| 05 | `src/fixtures/` or `tools/fixtures/` | `config/fixtures/` |
-| 06 | `src/models/adapters/` | `config/models/` |
+| 06 | `src/models/` | `config/models/` |
 
-Useful inherited core remains in `train_fused.py`, `src/graph/gaugegraphnew.py`,
-`models/gnn.py`, and `training/logic_hetero.py`. Wrap and regression-test it; its current
-interfaces are not the target architecture.
+Useful inherited code lives in `train_fused.py`, `src/graph/gaugegraphnew.py`,
+`models/gnn.py` and `training/logic_hetero.py`. Wrap and test it rather than rewriting
+it. `adapters/legacy_sydney_gauge_export.py`, `database/sydney_gauge_legacy/` and
+`database/sydney_split_info.json` are transitional regression paths, not production
+outputs. See [LEGACY_CODE.md](LEGACY_CODE.md).
 
-`adapters/legacy_sydney_gauge_export.py`, `database/sydney_gauge_legacy/`, and
-`database/sydney_split_info.json` are transitional regression files. They must not
-be accepted as component 01, 02, or 03 production outputs. See
-[LEGACY_CODE.md](LEGACY_CODE.md) for the retained and removed inherited entry points.
+## What changed on 2026-09-01
 
-## Owner workflow
-
-1. Record the owner and reviewer at the top of the assigned component document.
-2. Confirm required input/output files and fields with adjacent component owners.
-3. Run the repository tests and preserve unrelated worktree changes.
-4. Map the implementation slice to existing `FRxx`, `OUTxx`, and `TESTxx` identifiers.
-5. Implement the smallest path that writes one real prescribed output.
-6. Test provenance, resume/failure behaviour, and rejection of invalid inputs.
-7. Have the next component's reviewer read the output without private parsing logic.
-8. Revise a requirement only when implementation evidence exposes a real contract gap.
-
-Use one component or contract change per branch or pull request. Keep generated data,
-credentials, checkpoints, and experiment results out of Git, except for the explicitly
-approved small golden fixture. Preserve labelled compatibility behaviour when correcting
-an inherited numerical defect.
-
-Singapore/NEA data handling and commercial microwave link support are not compatibility
-behaviours. They are permanently outside project scope and must not be reintroduced.
-
-Environment setup and the repository test command are in the root
-[README.md](../README.md). No additional onboarding document is required.
-
-## Decisions and blockers
-
-Decided:
-
-- Baseline period is 2021–2022.
-- Canonical rainfall is millimetres and time is timezone-aware UTC.
-- Station identity uses BoM internal `station_id`.
-- Every method predicts the same row-level target index.
-- Official file sets carry input identifiers or hashes, complete settings,
-  code revision, exclusions, and failure information.
-
-External blockers:
-
-- Complete BoM baseline retrieval awaits approval.
-- Radar and satellite product confirmation and access await National Computational
-  Infrastructure (NCI) access.
-- The paper's exact 75-station Sydney list is unavailable, so reproducing that table is
-  not an acceptance criterion for the regenerated dataset.
-
-These blockers do not prevent gauge ingestion design, schemas, split/graph algorithms,
-the model boundary, or gauge-only fixture tooling.
-
-## Component handoff is complete when
-
-- required inputs, outputs, paths, and schemas are implemented;
-- required tests pass, with external blockers explicitly recorded;
-- outputs contain the prescribed source information, settings, identifiers, and exclusions;
-- the runbook works from a fresh supported environment; and
-- the next component's reviewer reads a real output without undocumented fixes.
-
-No official result may depend on the distorted inherited rainfall export.
+The six requirements documents were rewritten from ~3,800 lines to ~850. Cut: acquisition
+ids, progress state files, per-file metadata sidecars, hash-verification protocols,
+dataset and sample version derivation, manifest files, the separate prediction-target
+file, and the paired compatibility/corrected mode matrix in Component 04. Component 05
+(golden fixture) was cut entirely; the small committed test sample it was meant to
+produce is now a checklist item in each component. Kept: everything that decides what
+data enters the study or how a result is defined.

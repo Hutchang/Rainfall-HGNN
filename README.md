@@ -27,12 +27,14 @@ and the out-of-scope remainder is removed file by file.
 Everyone should be able to see the complete requirements set. Each owner reads their
 own document in full and reviews the input/output sections of adjacent components:
 
-- [01 — Collect and store source data](docs/requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md)
-- [02 — Prepare the standard rainfall dataset](docs/requirements/02_CANONICAL_DATA_REQUIREMENTS.md)
-- [03 — Choose train, validation, and test stations](docs/requirements/03_STUDY_SPLIT_REQUIREMENTS.md)
-- [04 — Graph/sample construction](docs/requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md)
-- [05 — Small verified test dataset and offline system test](docs/requirements/05_GOLDEN_FIXTURE_REQUIREMENTS.md)
-- [06 — Train models and write comparable predictions](docs/requirements/06_MODEL_ADAPTER_REQUIREMENTS.md)
+- [01 — Get the raw data onto disk](docs/requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md)
+- [02 — Build the standard tables](docs/requirements/02_CANONICAL_DATA_REQUIREMENTS.md)
+- [03 — Pick the train, validation and test stations](docs/requirements/03_STUDY_SPLIT_REQUIREMENTS.md)
+- [04 — Build the graph samples](docs/requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md)
+- [06 — Train the model and write predictions](docs/requirements/06_MODEL_ADAPTER_REQUIREMENTS.md)
+
+There is no 05. The golden-fixture component was cut on 2026-09-01 and its old document
+is in [docs/archive/](docs/archive/05_GOLDEN_FIXTURE_REQUIREMENTS_CUT.md).
 
 ## Current truth in one paragraph
 
@@ -53,7 +55,7 @@ through a common interface, and evaluating every method on identical targets.
 | `src/`, `models/`, `training/`, `benchmarks/` | Transitional Sydney gauge core plus restored inherited reference modules awaiting file-by-file classification |
 | `adapters/legacy_sydney_gauge_export.py` | Transitional Sydney legacy-data export; not a canonical ingestion pipeline |
 | `train_fused.py` | Validated transitional 2022 smoke runner; not the target architecture |
-| `tests/` | Existing audit/regression tests; component 05 will add an offline golden fixture |
+| `tests/` | Audit/regression tests; each component commits a small offline sample under `tests/data/` |
 | `database/`, `experiments/` | Local generated data/results; intentionally ignored by Git. Current adapter data is regression-only, not canonical. |
 
 ## Supporting references
@@ -93,9 +95,9 @@ Run the current tests with:
 .venv\Scripts\python.exe -m pytest tests -q -rx
 ```
 
-Some existing tests skip when the untracked legacy gauge data/worktree is absent. The
-golden-fixture component is responsible for replacing that dependency with an offline,
-committed test path.
+Some existing tests skip when the untracked legacy gauge data is absent. Each component
+replaces that dependency by committing a small real sample under `tests/data/`, so the
+suite runs on a fresh clone with no network.
 
 ## Important guardrails
 

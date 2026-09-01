@@ -48,9 +48,10 @@ instructions. Record the conflict and ask the project lead or relevant reviewer.
   assumptions, and commercial microwave link inputs are permanently out of scope.
 - Do not restore those capabilities as optional modes, compatibility flags, examples,
   abstractions, tests, or proposed future extensions.
-- Australian radar and satellite support may be implemented only from the validated NCI
-  products and contracts prescribed by Components 01 and 02. Restored inherited radar,
-  visualisation, benchmark, and CML files are review-only pending file-by-file
+- Australian radar and satellite data now exist locally as preprocessed 2022 files.
+  Their product, units, and gauge-correction status are unconfirmed; do not build
+  scientific claims on them until Component 01 records the answers. Restored inherited
+  radar, visualisation, benchmark, and CML files are review-only pending file-by-file
   classification: do not import or extend them as Australian production capability.
 
 ## Scientific and data rules
@@ -85,8 +86,7 @@ Create these packages and configuration directories only when their owner begins
 | 02 — standard dataset | `src/canonical/` | `config/canonical/` |
 | 03 — study splits | `src/study/`, `src/reproducibility/` | `config/splits/`, `config/seeds.yaml` |
 | 04 — graph samples | `src/graphs/` | `config/graphs/` |
-| 05 — verified test dataset | `src/fixtures/` or `tools/fixtures/` | `config/fixtures/` |
-| 06 — model adapters | `src/models/adapters/` | `config/models/` |
+| 06 — model adapters | `src/models/` | `config/models/` |
 
 An owner may use a clearly labelled stub or small test sample while an earlier component
 is incomplete. They must not invent a private production format to bypass that dependency.
@@ -127,8 +127,8 @@ invented scientific decisions.
 - Never use destructive resets or checkouts to clean a dirty worktree.
 - Keep one component or shared-contract change per pull request where practical.
 - Do not commit raw source data, credentials, checkpoints, experiment directories, or
-  generated production datasets. The small Component 05 fixture is the documented
-  exception.
+  generated production datasets. The small per-component samples under `tests/data/` are
+  the documented exception.
 
 ## Required verification
 

@@ -57,32 +57,23 @@ documents. Alphabetical within theme.
 ## Datasets & experiments
 
 - **Standard dataset / canonical data** — the single cleaned, checked dataset all
-  components read (Component 02's output). "Canonical" is retained in code paths such as
-  `database/canonical/`; it simply means "the one authoritative version".
+  components read (Component 02's output, in `database/standard/`). "Canonical" survives
+  in the package name `src/canonical/`; it just means "the one authoritative version".
 - **Raw source data** — files saved by Component 01 before scientific preprocessing.
   The requirements use this concrete phrase instead of the data-platform term "landing".
 - **Source-faithful data** — source records may be parsed, compressed or packaged for
   reliable storage, but their scientific values and meaning are not transformed.
   Hourly aggregation, interpolation, normalisation and feature engineering are not
   source-faithful ingestion operations.
-- **Acquisition id** — the stable name of one attempt to collect a specified region,
-  period, and source set, for example `sydney_2021_2022_v1`.
-- **Manifest** — the conventional filename `manifest.json` used for a machine-readable
-  dataset/sample/run record. It lists what the directory contains, which inputs and
-  settings produced it, row counts, versions, and file hashes. Each component document
-  explains why its own manifest is needed.
-- **dataset_version / split_id** — short identifier strings for "which exact data" and
-  "which exact split" a result used. Recorded everywhere so results are traceable.
-- **sample_version** — the version id of graph samples created from a particular dataset,
-  split, graph settings, and seeds.
-- **experiment_id / run_id** — `experiment_id` identifies one method/settings/input
-  combination; `run_id` identifies one concrete execution attempt that
-  may be resumed.
+- **index.csv** — Component 01's list of every raw file it wrote, with coverage and
+  status. Component 02 reads it instead of listing the directory, so a failed download
+  cannot be mistaken for a month with no rain.
 - **Content hash / SHA-256** — a deterministic fingerprint of bytes. If content changes,
-  the hash changes; manifests use hashes to detect corruption and hidden revisions.
-- **Acquisition file list / target list** — machine-readable rows defining,
-  respectively, every raw file expected from Component 01 and every held-out
-  station-hour a method must predict. The actual filenames retain `index` for brevity.
+  the hash changes. Recorded in `index.csv` so you can tell whether a changed result came
+  from changed data.
+- **Target rows** — the station-hours a method must predict: every row of
+  `gauge_hourly.csv` belonging to a fold's test stations. Defined by that rule rather
+  than by a file, so two people always get the same set.
 - **Split / fold** — the division of stations into training / validation / test sets.
   With 5-fold cross-validation there are 5 such divisions ("folds"); each station
   ideally appears in exactly one fold's test set.
@@ -91,8 +82,8 @@ documents. Alphabetical within theme.
 - **Leakage** — any path by which information about a held-out target sneaks into
   training (e.g. the same station appearing in both train and test under duplicate
   metadata — a real inherited bug we fixed).
-- **Golden fixture** — a small frozen dataset with known-correct expected outputs, used
-  to test the whole system quickly and catch regressions.
+- **Test sample** — the few kilobytes of real data each component commits under
+  `tests/data/` so its tests run on a fresh clone with no network.
 - **Held-out** — data hidden from the model during training and used only to test it.
 
 ## Graphs & the model
@@ -123,7 +114,7 @@ documents. Alphabetical within theme.
 - **HGNN** — Heterogeneous Graph Neural Network, the inherited model family.
 - **Checkpoint** — a `.pt` file containing model, optimiser, and random state so training
   can resume or predictions can be reproduced without training again.
-- **Prediction table** — `predictions.parquet`, containing one prediction row per
+- **Prediction table** — `predictions.csv`, containing one prediction row per
   held-out station-hour with the required columns in Component 06 FR06. Every method
   writes one.
 
