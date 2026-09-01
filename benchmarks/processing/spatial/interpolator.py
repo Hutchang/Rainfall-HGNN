@@ -1,19 +1,12 @@
-from __future__ import print_function
-from builtins import zip
-from builtins import range
-from builtins import object
 import abc
+from builtins import object, zip
+
 import numpy as np
-import scipy
 import pandas as pd
-import xarray as xr
-from tqdm import tqdm
+from future.utils import with_metaclass
 from pykrige import OrdinaryKriging
 
 from .idw import Invdisttree
-from ..util.temporal import aggregate_df_onto_DatetimeIndex
-
-from future.utils import with_metaclass
 
 
 class PointsToGridInterpolator(with_metaclass(abc.ABCMeta, object)):
@@ -189,9 +182,7 @@ def _parse_grid_kwargs(x_list, y_list, xgrid, ygrid, resolution):
 
     if (xgrid is None) or (ygrid is None):
         if resolution is None:
-            raise ValueError(
-                "`resolution must be set if `xgrid` " "or `ygrid` are None"
-            )
+            raise ValueError("`resolution must be set if `xgrid` or `ygrid` are None")
 
         xcoords = np.arange(
             min(x_list) - resolution, max(x_list) + resolution, resolution

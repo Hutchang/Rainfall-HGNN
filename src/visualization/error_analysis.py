@@ -23,13 +23,14 @@ analyze_station_errors  – run all four plots in one call and return the DataFr
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
+from matplotlib import cm
 from sklearn.neighbors import NearestNeighbors
-from pathlib import Path
 
 # Must match logic_hetero._DATA_FEATURE_DIM
 _DATA_FEATURE_DIM = 2
@@ -39,7 +40,8 @@ _DATA_FEATURE_DIM = 2
 # 0.  Config-driven scale loader
 # ---------------------------------------------------------------------------
 
-def get_viz_scales(config_path: str = 'config.yaml') -> dict:
+
+def get_viz_scales(config_path: str = "config.yaml") -> dict:
     """
     Load fixed visualisation scales from config.yaml and return two ready-to-use dicts.
 
@@ -65,20 +67,22 @@ def get_viz_scales(config_path: str = 'config.yaml') -> dict:
                            scale_params=scales['metric_scales'])
     """
     import yaml
+
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
-    vis = cfg.get('visualisation', {})
+    vis = cfg.get("visualisation", {})
     return {
-        'compare_metrics': vis.get('compare_metrics', ['rmse', 'pearson_r']),
-        'metric_scales':   vis.get('metrics', {}),
-        'rainfall':        vis.get('rainfall', {'vmin': 0, 'vmax': 20}),
+        "compare_metrics": vis.get("compare_metrics", ["rmse", "pearson_r"]),
+        "metric_scales": vis.get("metrics", {}),
+        "rainfall": vis.get("rainfall", {"vmin": 0, "vmax": 20}),
     }
 
 
 # ---------------------------------------------------------------------------
 # 1.  Data loading
 # ---------------------------------------------------------------------------
+
 
 def add_pearson_r(
     station_df: pd.DataFrame,
@@ -103,9 +107,9 @@ def add_pearson_r(
 
     r_map = {}
     for sid in predictions_df.columns:
-        pred   = predictions_df[sid].values.astype(float)
+        pred = predictions_df[sid].values.astype(float)
         actual = actuals_df[sid].values.astype(float)
-        mask   = ~(np.isnan(pred) | np.isnan(actual))
+        mask = ~(np.isnan(pred) | np.isnan(actual))
         if mask.sum() > 2:
             r, _ = pearsonr(actual[mask], pred[mask])
             r_map[str(sid)] = float(r)
@@ -113,7 +117,7 @@ def add_pearson_r(
             r_map[str(sid)] = np.nan
 
     out = station_df.copy()
-    out['pearson_r'] = out['id'].astype(str).map(r_map)
+    out["pearson_r"] = out["id"].astype(str).map(r_map)
     return out
 
 
@@ -144,32 +148,41 @@ def load_fold_metrics(
     frames = []
     for path in csv_paths:
         df = pd.read_csv(path)
-        df['source_fold'] = Path(path).stem   # e.g. "per_station_metrics_f0"
+        df["source_fold"] = Path(path).stem  # e.g. "per_station_metrics_f0"
         frames.append(df)
 
     raw = pd.concat(frames, ignore_index=True)
 
-    numeric_cols = ['mae', 'rmse', 'bias', 'pearson_r', 'precision', 'recall', 'f1',
-                    'support_pos', 'support_neg']
+    numeric_cols = [
+        "mae",
+        "rmse",
+        "bias",
+        "pearson_r",
+        "precision",
+        "recall",
+        "f1",
+        "support_pos",
+        "support_neg",
+    ]
     # Keep only columns that actually exist in the CSV
     numeric_cols = [c for c in numeric_cols if c in raw.columns]
 
-    agg_dict = {c: 'mean' for c in numeric_cols}
-    agg_dict['source_fold'] = 'count'
+    agg_dict = {c: "mean" for c in numeric_cols}
+    agg_dict["source_fold"] = "count"
 
     aggregated = (
-        raw.groupby('station_id')
-           .agg(agg_dict)
-           .rename(columns={'source_fold': 'n_folds'})
-           .reset_index()
+        raw.groupby("station_id")
+        .agg(agg_dict)
+        .rename(columns={"source_fold": "n_folds"})
+        .reset_index()
     )
 
     # Map local integer IDs to station info from mapping_df
     mapping_reset = mapping_df.reset_index(drop=True)
-    coord_df = mapping_reset[['id', 'longitude', 'latitude']].copy()
-    coord_df['station_id'] = coord_df.index
+    coord_df = mapping_reset[["id", "longitude", "latitude"]].copy()
+    coord_df["station_id"] = coord_df.index
 
-    merged = aggregated.merge(coord_df, on='station_id', how='left')
+    merged = aggregated.merge(coord_df, on="station_id", how="left")
     return merged
 
 
@@ -177,12 +190,13 @@ def load_fold_metrics(
 # 2.  Spatial error map
 # ---------------------------------------------------------------------------
 
+
 def plot_spatial_error_map(
     station_df: pd.DataFrame,
     bounds: dict,
-    metric: str = 'rmse',
+    metric: str = "rmse",
     top_n_labels: int = 5,
-    cmap: str = 'RdYlGn_r',
+    cmap: str = "RdYlGn_r",
     title: str | None = None,
     vmin: float | None = None,
     vmax: float | None = None,
@@ -218,20 +232,22 @@ def plot_spatial_error_map(
     ax : matplotlib Axes
     """
     if metric not in station_df.columns:
-        raise ValueError(f"Metric '{metric}' not found. Available: {list(station_df.columns)}")
+        raise ValueError(
+            f"Metric '{metric}' not found. Available: {list(station_df.columns)}"
+        )
 
     if ax is None:
         _, ax = plt.subplots(figsize=(10, 8))
 
-    valid = station_df.dropna(subset=[metric, 'longitude', 'latitude'])
+    valid = station_df.dropna(subset=[metric, "longitude", "latitude"])
     values = valid[metric].values
 
     # Choose colourmap direction: higher-is-better metrics use green at the top
     _cmap = cmap
-    if metric in ('f1', 'pearson_r'):
-        _cmap = 'RdYlGn'
-    elif metric == 'bias':
-        _cmap = 'RdBu_r'
+    if metric in ("f1", "pearson_r"):
+        _cmap = "RdYlGn"
+    elif metric == "bias":
+        _cmap = "RdBu_r"
 
     # Build norm — no silent auto-scaling: vmin/vmax must be set explicitly or
     # loaded from config via get_viz_scales().
@@ -246,50 +262,59 @@ def plot_spatial_error_map(
     if boundaries is not None:
         cmap_obj = cm.get_cmap(_cmap)
         norm = mcolors.BoundaryNorm(boundaries, ncolors=cmap_obj.N, clip=True)
-    elif metric == 'bias':
+    elif metric == "bias":
         norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
     else:
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 
     sc = ax.scatter(
-        valid['longitude'], valid['latitude'],
-        c=values, cmap=_cmap, norm=norm,
-        s=120, zorder=4, edgecolors='black', linewidths=0.5,
+        valid["longitude"],
+        valid["latitude"],
+        c=values,
+        cmap=_cmap,
+        norm=norm,
+        s=120,
+        zorder=4,
+        edgecolors="black",
+        linewidths=0.5,
     )
-    cbar_label = 'Pearson R' if metric == 'pearson_r' else metric.upper()
+    cbar_label = "Pearson R" if metric == "pearson_r" else metric.upper()
     plt.colorbar(sc, ax=ax, label=cbar_label, shrink=0.8)
 
     # Annotate the worst stations
     # "worst" = largest value for error metrics, smallest for skill metrics
-    if metric in ('f1', 'pearson_r'):
+    if metric in ("f1", "pearson_r"):
         worst = valid.nsmallest(top_n_labels, metric)
-    elif metric == 'bias':
-        worst = valid.reindex(valid['bias'].abs().nlargest(top_n_labels).index)
+    elif metric == "bias":
+        worst = valid.reindex(valid["bias"].abs().nlargest(top_n_labels).index)
     else:
         worst = valid.nlargest(top_n_labels, metric)
 
     for _, row in worst.iterrows():
         ax.annotate(
-            str(row['id']),
-            xy=(row['longitude'], row['latitude']),
-            xytext=(5, 5), textcoords='offset points',
-            fontsize=8, color='black',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7),
+            str(row["id"]),
+            xy=(row["longitude"], row["latitude"]),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=8,
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
         )
 
-    ax.set_xlim(bounds['left'],  bounds['right'])
-    ax.set_ylim(bounds['bottom'], bounds['top'])
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_title(title or f'Per-station {metric.upper()} — spatial distribution')
+    ax.set_xlim(bounds["left"], bounds["right"])
+    ax.set_ylim(bounds["bottom"], bounds["top"])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(title or f"Per-station {metric.upper()} — spatial distribution")
     ax.grid(True, alpha=0.3)
 
     if show_outline:
         from src.visualization.main import visualise_singapore_outline
+
         visualise_singapore_outline(ax=ax)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -297,14 +322,15 @@ def plot_spatial_error_map(
 # 3.  Spatial error map with CML overlay
 # ---------------------------------------------------------------------------
 
+
 def plot_spatial_error_map_with_cml(
     station_df: pd.DataFrame,
     cml_coordinates_df: pd.DataFrame,
     bounds: dict,
-    metric: str = 'rmse',
+    metric: str = "rmse",
     cml_influence_km: float = 5.0,
     top_n_labels: int = 5,
-    cmap: str = 'RdYlGn_r',
+    cmap: str = "RdYlGn_r",
     title: str | None = None,
     vmin: float | None = None,
     vmax: float | None = None,
@@ -337,8 +363,8 @@ def plot_spatial_error_map_with_cml(
     -------
     ax : matplotlib Axes
     """
-    from shapely.geometry import LineString, Point
     from shapely import STRtree
+    from shapely.geometry import LineString, Point
 
     # ── Base error map ────────────────────────────────────────────────────────
     ax = plot_spatial_error_map(
@@ -347,7 +373,7 @@ def plot_spatial_error_map_with_cml(
         metric=metric,
         top_n_labels=top_n_labels,
         cmap=cmap,
-        title=title or f'Per-station {metric.upper()} with CML overlay',
+        title=title or f"Per-station {metric.upper()} with CML overlay",
         vmin=vmin,
         vmax=vmax,
         boundaries=boundaries,
@@ -362,47 +388,57 @@ def plot_spatial_error_map_with_cml(
     cml_shapely = []
     for _, row in cml_links.iterrows():
         ax.plot(
-            [row['site_a_longitude'], row['site_b_longitude']],
-            [row['site_a_latitude'],  row['site_b_latitude']],
-            color='purple', linewidth=0.8, alpha=0.5, zorder=3,
+            [row["site_a_longitude"], row["site_b_longitude"]],
+            [row["site_a_latitude"], row["site_b_latitude"]],
+            color="purple",
+            linewidth=0.8,
+            alpha=0.5,
+            zorder=3,
         )
         cml_shapely.append(
-            LineString([
-                (row['site_a_longitude'], row['site_a_latitude']),
-                (row['site_b_longitude'], row['site_b_latitude']),
-            ])
+            LineString(
+                [
+                    (row["site_a_longitude"], row["site_a_latitude"]),
+                    (row["site_b_longitude"], row["site_b_latitude"]),
+                ]
+            )
         )
 
     # Dummy handle for CML lines in the legend
-    ax.plot([], [], color='purple', linewidth=0.8, alpha=0.7, label='CML links')
+    ax.plot([], [], color="purple", linewidth=0.8, alpha=0.7, label="CML links")
 
     # ── Per-gauge distance to nearest CML link ────────────────────────────────
     # Convert influence radius from km to approximate degrees (1 deg ≈ 111 km)
     influence_deg = cml_influence_km / 111.0
 
     tree = STRtree(cml_shapely)
-    valid = station_df.dropna(subset=[metric, 'longitude', 'latitude'])
+    valid = station_df.dropna(subset=[metric, "longitude", "latitude"])
 
     near_lon, near_lat = [], []
     for _, row in valid.iterrows():
-        pt = Point(row['longitude'], row['latitude'])
+        pt = Point(row["longitude"], row["latitude"])
         nearest_idx = tree.nearest(pt)
         dist = pt.distance(cml_shapely[nearest_idx])
         if dist <= influence_deg:
-            near_lon.append(row['longitude'])
-            near_lat.append(row['latitude'])
+            near_lon.append(row["longitude"])
+            near_lat.append(row["latitude"])
 
     if near_lon:
         ax.scatter(
-            near_lon, near_lat,
-            facecolors='none', edgecolors='teal', linewidths=2.0,
-            s=220, zorder=6, label=f'Within {cml_influence_km} km of CML',
+            near_lon,
+            near_lat,
+            facecolors="none",
+            edgecolors="teal",
+            linewidths=2.0,
+            s=220,
+            zorder=6,
+            label=f"Within {cml_influence_km} km of CML",
         )
 
-    ax.legend(fontsize=8, loc='lower right')
+    ax.legend(fontsize=8, loc="lower right")
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -410,9 +446,10 @@ def plot_spatial_error_map_with_cml(
 # 4.  Bar chart ranking
 # ---------------------------------------------------------------------------
 
+
 def plot_error_ranking(
     station_df: pd.DataFrame,
-    metric: str = 'mae',
+    metric: str = "mae",
     top_n: int = 15,
     title: str | None = None,
     ax=None,
@@ -439,43 +476,47 @@ def plot_error_ranking(
 
     valid = station_df.dropna(subset=[metric]).copy()
 
-    if metric == 'f1':
+    if metric == "f1":
         ranked = valid.nsmallest(top_n, metric)
-        colour = 'salmon'
-        xlabel = f'{metric.upper()} (lower = worse)'
+        colour = "salmon"
+        xlabel = f"{metric.upper()} (lower = worse)"
     else:
         ranked = valid.nlargest(top_n, metric)
-        colour = 'steelblue'
-        xlabel = f'{metric.upper()} (higher = worse)'
+        colour = "steelblue"
+        xlabel = f"{metric.upper()} (higher = worse)"
 
-    ranked = ranked.sort_values(metric, ascending=(metric == 'f1'))
-    labels = ranked['id'].astype(str).values
-    vals   = ranked[metric].values
+    ranked = ranked.sort_values(metric, ascending=(metric == "f1"))
+    labels = ranked["id"].astype(str).values
+    vals = ranked[metric].values
 
-    bars = ax.barh(labels, vals, color=colour, edgecolor='black', linewidth=0.4)
+    bars = ax.barh(labels, vals, color=colour, edgecolor="black", linewidth=0.4)
 
     # Value labels on bars
     for bar, val in zip(bars, vals):
         ax.text(
             bar.get_width() + 0.01 * vals.max(),
             bar.get_y() + bar.get_height() / 2,
-            f'{val:.3f}', va='center', ha='left', fontsize=8,
+            f"{val:.3f}",
+            va="center",
+            ha="left",
+            fontsize=8,
         )
 
     ax.set_xlabel(xlabel)
-    ax.set_ylabel('Station ID')
-    ax.set_title(title or f'Top {top_n} stations by {metric.upper()}')
+    ax.set_ylabel("Station ID")
+    ax.set_title(title or f"Top {top_n} stations by {metric.upper()}")
     ax.invert_yaxis()
-    ax.grid(axis='x', alpha=0.3)
+    ax.grid(axis="x", alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
 # ---------------------------------------------------------------------------
 # 4.  Bias map (over/under-prediction geography)
 # ---------------------------------------------------------------------------
+
 
 def plot_bias_map(
     station_df: pd.DataFrame,
@@ -506,14 +547,16 @@ def plot_bias_map(
     -------
     ax : matplotlib Axes
     """
-    if 'bias' not in station_df.columns:
-        raise ValueError("'bias' column not found. Re-run test_model with the updated logic_hetero.py.")
+    if "bias" not in station_df.columns:
+        raise ValueError(
+            "'bias' column not found. Re-run test_model with the updated logic_hetero.py."
+        )
 
     if ax is None:
         _, ax = plt.subplots(figsize=(10, 8))
 
-    valid = station_df.dropna(subset=['bias', 'longitude', 'latitude'])
-    biases = valid['bias'].values
+    valid = station_df.dropna(subset=["bias", "longitude", "latitude"])
+    biases = valid["bias"].values
     abs_max = vmax if vmax is not None else max(np.abs(biases).max(), 1e-6)
 
     # Size proportional to absolute bias (min 30 for visibility)
@@ -521,33 +564,44 @@ def plot_bias_map(
 
     norm = mcolors.TwoSlopeNorm(vmin=-abs_max, vcenter=0.0, vmax=abs_max)
     sc = ax.scatter(
-        valid['longitude'], valid['latitude'],
-        c=biases, cmap='RdBu_r', norm=norm,
-        s=sizes, zorder=4, edgecolors='black', linewidths=0.5,
+        valid["longitude"],
+        valid["latitude"],
+        c=biases,
+        cmap="RdBu_r",
+        norm=norm,
+        s=sizes,
+        zorder=4,
+        edgecolors="black",
+        linewidths=0.5,
     )
-    cbar = plt.colorbar(sc, ax=ax, label='Bias  (pred − actual, mm)', shrink=0.8)
-    cbar.ax.axhline(0, color='black', linewidth=1)   # zero-bias reference line
+    cbar = plt.colorbar(sc, ax=ax, label="Bias  (pred − actual, mm)", shrink=0.8)
+    cbar.ax.axhline(0, color="black", linewidth=1)  # zero-bias reference line
 
     # Annotate largest biases
-    worst = valid.reindex(valid['bias'].abs().nlargest(top_n_labels).index)
+    worst = valid.reindex(valid["bias"].abs().nlargest(top_n_labels).index)
     for _, row in worst.iterrows():
         ax.annotate(
             f"{row['id']} ({row['bias']:+.2f})",
-            xy=(row['longitude'], row['latitude']),
-            xytext=(6, 6), textcoords='offset points',
-            fontsize=7, color='black',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7),
+            xy=(row["longitude"], row["latitude"]),
+            xytext=(6, 6),
+            textcoords="offset points",
+            fontsize=7,
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
         )
 
-    ax.set_xlim(bounds['left'],  bounds['right'])
-    ax.set_ylim(bounds['bottom'], bounds['top'])
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_title(title or 'Prediction bias by station  (red = over-predict, blue = under-predict)')
+    ax.set_xlim(bounds["left"], bounds["right"])
+    ax.set_ylim(bounds["bottom"], bounds["top"])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(
+        title
+        or "Prediction bias by station  (red = over-predict, blue = under-predict)"
+    )
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -555,10 +609,11 @@ def plot_bias_map(
 # 5.  Error vs. spatial isolation
 # ---------------------------------------------------------------------------
 
+
 def plot_error_vs_isolation(
     station_df: pd.DataFrame,
     train_station_ids: list,
-    metric: str = 'mae',
+    metric: str = "mae",
     title: str | None = None,
     ax=None,
     save_path: str | None = None,
@@ -584,54 +639,67 @@ def plot_error_vs_isolation(
         _, ax = plt.subplots(figsize=(7, 5))
 
     # Separate train and test station coordinates
-    test_df  = station_df.dropna(subset=[metric, 'longitude', 'latitude'])
-    train_df = station_df[station_df['id'].isin(train_station_ids)].dropna(
-        subset=['longitude', 'latitude']
+    test_df = station_df.dropna(subset=[metric, "longitude", "latitude"])
+    train_df = station_df[station_df["id"].isin(train_station_ids)].dropna(
+        subset=["longitude", "latitude"]
     )
 
     if train_df.empty:
-        ax.text(0.5, 0.5, 'No training station coordinates available.',
-                transform=ax.transAxes, ha='center')
+        ax.text(
+            0.5,
+            0.5,
+            "No training station coordinates available.",
+            transform=ax.transAxes,
+            ha="center",
+        )
         return ax
 
     # Compute distance from each test station to nearest training station
-    train_latlon = np.radians(train_df[['latitude', 'longitude']].values)
-    test_latlon  = np.radians(test_df[['latitude', 'longitude']].values)
+    train_latlon = np.radians(train_df[["latitude", "longitude"]].values)
+    test_latlon = np.radians(test_df[["latitude", "longitude"]].values)
 
-    nbrs = NearestNeighbors(n_neighbors=1, metric='haversine')
+    nbrs = NearestNeighbors(n_neighbors=1, metric="haversine")
     nbrs.fit(train_latlon)
     dists_rad, _ = nbrs.kneighbors(test_latlon)
     dists_km = dists_rad.flatten() * 6371.0
 
     errors = test_df[metric].values
 
-    ax.scatter(dists_km, errors, alpha=0.7, edgecolors='black', linewidths=0.4, s=60)
+    ax.scatter(dists_km, errors, alpha=0.7, edgecolors="black", linewidths=0.4, s=60)
 
     # Trend line
     if len(dists_km) > 2:
         z = np.polyfit(dists_km, errors, 1)
         p = np.poly1d(z)
         x_line = np.linspace(dists_km.min(), dists_km.max(), 100)
-        ax.plot(x_line, p(x_line), 'r--', linewidth=1.5, label=f'Trend (slope={z[0]:.3f})')
+        ax.plot(
+            x_line, p(x_line), "r--", linewidth=1.5, label=f"Trend (slope={z[0]:.3f})"
+        )
         ax.legend(fontsize=8)
 
     # Pearson r annotation
     if len(dists_km) > 2:
         from scipy.stats import pearsonr
+
         r, pval = pearsonr(dists_km, errors)
         ax.text(
-            0.97, 0.95, f'r = {r:.3f}  (p={pval:.3f})',
-            transform=ax.transAxes, ha='right', va='top', fontsize=9,
-            bbox=dict(facecolor='white', alpha=0.7),
+            0.97,
+            0.95,
+            f"r = {r:.3f}  (p={pval:.3f})",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=9,
+            bbox=dict(facecolor="white", alpha=0.7),
         )
 
-    ax.set_xlabel('Distance to nearest training gauge (km)')
+    ax.set_xlabel("Distance to nearest training gauge (km)")
     ax.set_ylabel(metric.upper())
-    ax.set_title(title or f'{metric.upper()} vs. distance to nearest training gauge')
+    ax.set_title(title or f"{metric.upper()} vs. distance to nearest training gauge")
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -639,14 +707,15 @@ def plot_error_vs_isolation(
 # 6.  Combined entry point
 # ---------------------------------------------------------------------------
 
+
 def analyze_station_errors(
     csv_paths: list[str],
     mapping_df: pd.DataFrame,
     bounds: dict,
     train_station_ids: list | None = None,
-    output_dir: str = '.',
+    output_dir: str = ".",
     top_n: int = 10,
-    metrics: tuple[str, str] = ('rmse', 'pearson_r'),
+    metrics: tuple[str, str] = ("rmse", "pearson_r"),
     scale_params: dict | None = None,
 ) -> pd.DataFrame:
     """
@@ -680,73 +749,102 @@ def analyze_station_errors(
     station_df : pd.DataFrame  aggregated metrics with coordinates
     """
     from pathlib import Path
+
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     scale_params = scale_params or {}
 
     station_df = load_fold_metrics(csv_paths, mapping_df)
 
-    print(f"\nLoaded metrics for {len(station_df)} unique test stations "
-          f"across {len(csv_paths)} fold(s).\n")
-    show_cols = ['id'] + [c for c in ('mae', 'rmse', 'bias', 'f1') if c in station_df.columns]
-    print(station_df[show_cols].sort_values('mae' if 'mae' in station_df.columns else show_cols[1],
-                                            ascending=False)
-          .head(top_n).to_string(index=False))
+    print(
+        f"\nLoaded metrics for {len(station_df)} unique test stations "
+        f"across {len(csv_paths)} fold(s).\n"
+    )
+    show_cols = ["id"] + [
+        c for c in ("mae", "rmse", "bias", "f1") if c in station_df.columns
+    ]
+    print(
+        station_df[show_cols]
+        .sort_values(
+            "mae" if "mae" in station_df.columns else show_cols[1], ascending=False
+        )
+        .head(top_n)
+        .to_string(index=False)
+    )
 
     metrics_list = list(metrics)
-    metric1 = metrics_list[0] if len(metrics_list) > 0 else 'mae'
-    metric2 = metrics_list[1] if len(metrics_list) > 1 else ('f1' if 'f1' in station_df.columns else 'mae')
+    metric1 = metrics_list[0] if len(metrics_list) > 0 else "mae"
+    metric2 = (
+        metrics_list[1]
+        if len(metrics_list) > 1
+        else ("f1" if "f1" in station_df.columns else "mae")
+    )
 
     # --- Plot 1: First metric spatial map ---
     if metric1 in station_df.columns:
         fig1, ax1 = plt.subplots(figsize=(10, 8))
         plot_spatial_error_map(
-            station_df, bounds, metric=metric1, top_n_labels=top_n, ax=ax1,
+            station_df,
+            bounds,
+            metric=metric1,
+            top_n_labels=top_n,
+            ax=ax1,
             **scale_params.get(metric1, {}),
         )
         fig1.tight_layout()
-        fig1.savefig(out / f'error_analysis_{metric1}_map.png', dpi=200, bbox_inches='tight')
+        fig1.savefig(
+            out / f"error_analysis_{metric1}_map.png", dpi=200, bbox_inches="tight"
+        )
         plt.close(fig1)
 
     # --- Plot 2: Second metric spatial map ---
     if metric2 in station_df.columns:
         fig2, ax2 = plt.subplots(figsize=(10, 8))
         plot_spatial_error_map(
-            station_df, bounds, metric=metric2, top_n_labels=top_n, ax=ax2,
+            station_df,
+            bounds,
+            metric=metric2,
+            top_n_labels=top_n,
+            ax=ax2,
             **scale_params.get(metric2, {}),
         )
         fig2.tight_layout()
-        fig2.savefig(out / f'error_analysis_{metric2}_map.png', dpi=200, bbox_inches='tight')
+        fig2.savefig(
+            out / f"error_analysis_{metric2}_map.png", dpi=200, bbox_inches="tight"
+        )
         plt.close(fig2)
 
     # --- Plot 3: Bias map (if bias column present) ---
-    if 'bias' in station_df.columns:
+    if "bias" in station_df.columns:
         fig3, ax3 = plt.subplots(figsize=(10, 8))
         plot_bias_map(station_df, bounds, top_n_labels=top_n, ax=ax3)
         fig3.tight_layout()
-        fig3.savefig(out / 'error_analysis_bias_map.png', dpi=200, bbox_inches='tight')
+        fig3.savefig(out / "error_analysis_bias_map.png", dpi=200, bbox_inches="tight")
         plt.close(fig3)
 
     # --- Plot 4: Ranking bar chart (metric1 and metric2 side by side) ---
     fig4, (axA, axB) = plt.subplots(1, 2, figsize=(14, max(4, top_n * 0.45)))
-    rank_m1 = metric1 if metric1 in station_df.columns else 'mae'
-    rank_m2 = metric2 if metric2 in station_df.columns else 'f1'
+    rank_m1 = metric1 if metric1 in station_df.columns else "mae"
+    rank_m2 = metric2 if metric2 in station_df.columns else "f1"
     plot_error_ranking(station_df, metric=rank_m1, top_n=top_n, ax=axA)
     plot_error_ranking(station_df, metric=rank_m2, top_n=top_n, ax=axB)
-    fig4.suptitle('Worst-performing stations', fontsize=13)
+    fig4.suptitle("Worst-performing stations", fontsize=13)
     fig4.tight_layout()
-    fig4.savefig(out / 'error_analysis_ranking.png', dpi=200, bbox_inches='tight')
+    fig4.savefig(out / "error_analysis_ranking.png", dpi=200, bbox_inches="tight")
     plt.close(fig4)
 
     # --- Plot 5: Error vs. spatial isolation ---
     if train_station_ids is not None:
         fig5, ax5 = plt.subplots(figsize=(7, 5))
-        iso_metric = metric1 if metric1 in ('mae', 'rmse') else 'mae'
+        iso_metric = metric1 if metric1 in ("mae", "rmse") else "mae"
         plot_error_vs_isolation(
-            station_df, train_station_ids, metric=iso_metric, ax=ax5,
+            station_df,
+            train_station_ids,
+            metric=iso_metric,
+            ax=ax5,
         )
         fig5.tight_layout()
-        fig5.savefig(out / 'error_analysis_isolation.png', dpi=200, bbox_inches='tight')
+        fig5.savefig(out / "error_analysis_isolation.png", dpi=200, bbox_inches="tight")
         plt.close(fig5)
 
     print(f"\nFigures saved to: {out.resolve()}")
@@ -756,6 +854,7 @@ def analyze_station_errors(
 # ---------------------------------------------------------------------------
 # 7.  Per-station time-series inference (GNN spatial model)
 # ---------------------------------------------------------------------------
+
 
 def predict_on_test_stations(
     model,
@@ -789,65 +888,71 @@ def predict_on_test_stations(
 
     model.eval()
 
-    raw_mask = heterodata['raingauge'].mask
+    raw_mask = heterodata["raingauge"].mask
     if isinstance(raw_mask, np.ndarray):
         test_mask = torch.tensor(raw_mask, dtype=torch.bool)
     else:
         test_mask = raw_mask.bool()
 
-    T = heterodata['raingauge'].x.shape[1]
+    T = heterodata["raingauge"].x.shape[1]
     test_node_indices = test_mask.nonzero(as_tuple=False).squeeze(1).tolist()
-    station_ids = [mapping_df.iloc[i]['id'] for i in test_node_indices]
+    station_ids = [mapping_df.iloc[i]["id"] for i in test_node_indices]
 
-    all_preds:   list[np.ndarray] = []
+    all_preds: list[np.ndarray] = []
     all_actuals: list[np.ndarray] = []
 
     with torch.no_grad():
         for t in range(T):
             snap = HeteroData()
 
-            snap['raingauge'].x         = heterodata['raingauge'].x[:, t, :].to(device)
-            snap['raingauge'].y         = heterodata['raingauge'].y[:, t, :].to(device)
-            snap['raingauge'].mask      = test_mask.to(device)
-            snap['raingauge'].num_nodes = heterodata['raingauge'].x.shape[0]
+            snap["raingauge"].x = heterodata["raingauge"].x[:, t, :].to(device)
+            snap["raingauge"].y = heterodata["raingauge"].y[:, t, :].to(device)
+            snap["raingauge"].mask = test_mask.to(device)
+            snap["raingauge"].num_nodes = heterodata["raingauge"].x.shape[0]
 
             for node_type in heterodata.node_types:
-                if node_type == 'raingauge':
+                if node_type == "raingauge":
                     continue
-                snap[node_type].x         = heterodata[node_type].x[:, t, :].to(device)
+                snap[node_type].x = heterodata[node_type].x[:, t, :].to(device)
                 snap[node_type].num_nodes = heterodata[node_type].x.shape[0]
 
             for edge_type in heterodata.edge_types:
                 snap[edge_type].edge_index = heterodata[edge_type].edge_index.to(device)
-                if hasattr(heterodata[edge_type], 'edge_attr'):
-                    snap[edge_type].edge_attr = heterodata[edge_type].edge_attr.to(device)
+                if hasattr(heterodata[edge_type], "edge_attr"):
+                    snap[edge_type].edge_attr = heterodata[edge_type].edge_attr.to(
+                        device
+                    )
 
-            x_input = snap['raingauge'].x.clone()
+            x_input = snap["raingauge"].x.clone()
             x_input[test_mask.to(device), :_DATA_FEATURE_DIM] = 0.0
 
             x_dict = {nt: snap[nt].x for nt in snap.node_types}
-            x_dict['raingauge'] = x_input
+            x_dict["raingauge"] = x_input
 
             edge_attr_dict = {
                 et: snap[et].edge_attr
                 for et in snap.edge_types
-                if hasattr(snap[et], 'edge_attr')
+                if hasattr(snap[et], "edge_attr")
             }
 
             out = model(x_dict, snap.edge_index_dict, edge_attr_dict)
-            out['raingauge'] = out['raingauge'].clamp(min=0.0)  # match test_model: rainfall >= 0
+            out["raingauge"] = out["raingauge"].clamp(
+                min=0.0
+            )  # match test_model: rainfall >= 0
 
-            preds_t   = out['raingauge'][test_mask.to(device)].cpu().numpy().flatten()
-            actuals_t = snap['raingauge'].y[test_mask.to(device)].cpu().numpy().flatten()
+            preds_t = out["raingauge"][test_mask.to(device)].cpu().numpy().flatten()
+            actuals_t = (
+                snap["raingauge"].y[test_mask.to(device)].cpu().numpy().flatten()
+            )
 
             all_preds.append(preds_t)
             all_actuals.append(actuals_t)
 
-    preds_arr   = np.stack(all_preds,   axis=0)  # [T, n_test_stations]
+    preds_arr = np.stack(all_preds, axis=0)  # [T, n_test_stations]
     actuals_arr = np.stack(all_actuals, axis=0)  # [T, n_test_stations]
 
-    predictions_df = pd.DataFrame(preds_arr,   index=timestamps, columns=station_ids)
-    actuals_df     = pd.DataFrame(actuals_arr, index=timestamps, columns=station_ids)
+    predictions_df = pd.DataFrame(preds_arr, index=timestamps, columns=station_ids)
+    actuals_df = pd.DataFrame(actuals_arr, index=timestamps, columns=station_ids)
 
     return predictions_df, actuals_df
 
@@ -855,6 +960,7 @@ def predict_on_test_stations(
 # ---------------------------------------------------------------------------
 # 7b. Pearson R across all folds
 # ---------------------------------------------------------------------------
+
 
 def compute_pearson_r_all_folds(
     gauge_graph_arr: list,
@@ -897,12 +1003,13 @@ def compute_pearson_r_all_folds(
         heterodata = gauge_graph_arr[fold_idx].get_test_heterodata()
 
         # Build a dummy aligned_timestamps Series of length T
-        T = heterodata['raingauge'].x.shape[1]
+        T = heterodata["raingauge"].x.shape[1]
         timestamps = pd.RangeIndex(T)
 
         model = model_cls(
-            in_channels_dict={src: -1 for src in {et[0] for et in ckpt_edge_types}
-                              | {'raingauge'}},
+            in_channels_dict={
+                src: -1 for src in {et[0] for et in ckpt_edge_types} | {"raingauge"}
+            },
             hidden_channels=hidden_channels,
             out_channels=1,
             num_layers=num_layers,
@@ -920,9 +1027,9 @@ def compute_pearson_r_all_folds(
         )
 
         for sid in preds_df.columns:
-            pred   = preds_df[sid].values.astype(float)
+            pred = preds_df[sid].values.astype(float)
             actual = actuals_df[sid].values.astype(float)
-            mask   = ~(np.isnan(pred) | np.isnan(actual))
+            mask = ~(np.isnan(pred) | np.isnan(actual))
             if mask.sum() > 2:
                 r, _ = pearsonr(actual[mask], pred[mask])
                 fold_r.setdefault(str(sid), []).append(float(r))
@@ -931,21 +1038,22 @@ def compute_pearson_r_all_folds(
 
     rows = []
     for sid, r_list in fold_r.items():
-        rows.append({'id': sid, 'pearson_r': float(np.mean(r_list))})
+        rows.append({"id": sid, "pearson_r": float(np.mean(r_list))})
 
     result_df = pd.DataFrame(rows)
 
     # Merge coordinates from mapping_df
-    coord_df = mapping_df[['id', 'longitude', 'latitude']].copy()
-    coord_df['id'] = coord_df['id'].astype(str)
-    result_df = result_df.merge(coord_df, on='id', how='left')
+    coord_df = mapping_df[["id", "longitude", "latitude"]].copy()
+    coord_df["id"] = coord_df["id"].astype(str)
+    result_df = result_df.merge(coord_df, on="id", how="left")
 
-    return result_df.sort_values('pearson_r').reset_index(drop=True)
+    return result_df.sort_values("pearson_r").reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
 # 7c. Per-station time-series inference (ST model — GNNInductiveHeteroST)
 # ---------------------------------------------------------------------------
+
 
 def predict_on_test_stations_st(
     model,
@@ -978,61 +1086,62 @@ def predict_on_test_stations_st(
 
     model.eval()
 
-    raw_mask = heterodata['raingauge'].mask
+    raw_mask = heterodata["raingauge"].mask
     if isinstance(raw_mask, np.ndarray):
         test_mask = torch.tensor(raw_mask, dtype=torch.bool)
     else:
         test_mask = raw_mask.bool()
 
-    T = heterodata['raingauge'].x.shape[1]
+    T = heterodata["raingauge"].x.shape[1]
     test_node_indices = test_mask.nonzero(as_tuple=False).squeeze(1).tolist()
-    station_ids = [mapping_df.iloc[i]['id'] for i in test_node_indices]
+    station_ids = [mapping_df.iloc[i]["id"] for i in test_node_indices]
 
     edge_index_dict = {
-        et: heterodata[et].edge_index.to(device)
-        for et in heterodata.edge_types
+        et: heterodata[et].edge_index.to(device) for et in heterodata.edge_types
     }
     edge_attr_dict = {
         et: heterodata[et].edge_attr.to(device)
         for et in heterodata.edge_types
-        if hasattr(heterodata[et], 'edge_attr')
+        if hasattr(heterodata[et], "edge_attr")
     }
 
-    all_preds:   list[np.ndarray] = []
+    all_preds: list[np.ndarray] = []
     all_actuals: list[np.ndarray] = []
 
     with torch.no_grad():
         for t in range(window_size, T):
             ctx_idx = list(range(t - window_size, t))
 
-            x_cur = heterodata['raingauge'].x[:, t, :].clone().to(device)
+            x_cur = heterodata["raingauge"].x[:, t, :].clone().to(device)
             x_cur[test_mask.to(device), :_DATA_FEATURE_DIM] = 0.0
 
-            x_dict = {'raingauge': x_cur}
+            x_dict = {"raingauge": x_cur}
             x_context_dict = {
-                'raingauge': heterodata['raingauge'].x[:, ctx_idx, :].to(device)
+                "raingauge": heterodata["raingauge"].x[:, ctx_idx, :].to(device)
             }
 
             for ntype in heterodata.node_types:
-                if ntype == 'raingauge':
+                if ntype == "raingauge":
                     continue
-                x_dict[ntype]         = heterodata[ntype].x[:, t, :].to(device)
+                x_dict[ntype] = heterodata[ntype].x[:, t, :].to(device)
                 x_context_dict[ntype] = heterodata[ntype].x[:, ctx_idx, :].to(device)
 
             out = model(x_dict, x_context_dict, edge_index_dict, edge_attr_dict)
 
-            preds_t   = out['raingauge'][test_mask.to(device)].cpu().numpy().flatten()
-            actuals_t = heterodata['raingauge'].y[test_mask, t, :].cpu().numpy().flatten()
+            preds_t = out["raingauge"][test_mask.to(device)].cpu().numpy().flatten()
+            actuals_t = (
+                heterodata["raingauge"].y[test_mask, t, :].cpu().numpy().flatten()
+            )
 
             all_preds.append(preds_t)
             all_actuals.append(actuals_t)
 
-    preds_arr   = np.stack(all_preds,   axis=0)
+    preds_arr = np.stack(all_preds, axis=0)
     actuals_arr = np.stack(all_actuals, axis=0)
 
     valid_ts = timestamps.iloc[window_size:].reset_index(drop=True)
-    predictions_df = pd.DataFrame(preds_arr,   index=valid_ts, columns=station_ids)
-    actuals_df     = pd.DataFrame(actuals_arr, index=valid_ts, columns=station_ids)
+    predictions_df = pd.DataFrame(preds_arr, index=valid_ts, columns=station_ids)
+    actuals_df = pd.DataFrame(actuals_arr, index=valid_ts, columns=station_ids)
 
     return predictions_df, actuals_df
 
@@ -1041,16 +1150,17 @@ def predict_on_test_stations_st(
 # 8.  Per-station rainfall time-series plot
 # ---------------------------------------------------------------------------
 
+
 def plot_station_rainfall_timeseries(
     predictions_df: pd.DataFrame,
     actuals_df: pd.DataFrame,
     station_id: str,
     time_start: str | None = None,
-    time_end:   str | None = None,
+    time_end: str | None = None,
     title: str | None = None,
     ax=None,
     save_path: str | None = None,
-) -> 'plt.Axes':
+) -> plt.Axes:
     """
     Plot actual vs predicted rainfall for a single station over a time window.
 
@@ -1077,29 +1187,41 @@ def plot_station_rainfall_timeseries(
     if ax is None:
         _, ax = plt.subplots(figsize=(16, 4))
 
-    actual    = actuals_df[station_id].copy()
+    actual = actuals_df[station_id].copy()
     predicted = predictions_df[station_id].copy()
 
     if time_start is not None:
         ts = pd.Timestamp(time_start)
-        actual    = actual[actual.index >= ts]
+        actual = actual[actual.index >= ts]
         predicted = predicted[predicted.index >= ts]
     if time_end is not None:
         te = pd.Timestamp(time_end)
-        actual    = actual[actual.index <= te]
+        actual = actual[actual.index <= te]
         predicted = predicted[predicted.index <= te]
 
-    ax.plot(actual.index,    actual.values,    label='Actual',    color='steelblue',
-            linewidth=0.8, alpha=0.9)
-    ax.plot(predicted.index, predicted.values, label='Predicted', color='orangered',
-            linewidth=0.8, alpha=0.8)
+    ax.plot(
+        actual.index,
+        actual.values,
+        label="Actual",
+        color="steelblue",
+        linewidth=0.8,
+        alpha=0.9,
+    )
+    ax.plot(
+        predicted.index,
+        predicted.values,
+        label="Predicted",
+        color="orangered",
+        linewidth=0.8,
+        alpha=0.8,
+    )
 
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Rainfall (mm/hr)')
-    ax.set_title(title or f'Station {station_id} — Actual vs Predicted rainfall')
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Rainfall (mm/hr)")
+    ax.set_title(title or f"Station {station_id} — Actual vs Predicted rainfall")
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax

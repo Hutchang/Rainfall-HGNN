@@ -17,7 +17,6 @@ def visualise_gauge_grid(
         ),
     )
 
-    return
 
 
 def visualise_gauge_radius(
@@ -67,4 +66,3 @@ def visualise_gauge_split(
     node_df["values"] = coordinate_nparr[:, 2]
     node_df.plot(ax=ax, markersize=50, alpha=0.7, color=color)
 
-    return

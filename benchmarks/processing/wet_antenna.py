@@ -1,4 +1,3 @@
-# coding=utf-8
 # ----------------------------------------------------------------------------
 # Name:         wet_antenna
 # Purpose:      Estimation of wet antenna effects
@@ -18,7 +17,6 @@ from numba import jit
 
 from . import k_R_relation
 from .xarray_wrapper import xarray_apply_along_time_dim
-
 
 ########################################
 # Functions for wet antenna estimation #

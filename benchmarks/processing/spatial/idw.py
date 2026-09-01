@@ -1,12 +1,11 @@
-from __future__ import division
 from builtins import range
-from builtins import object
+
 import numpy as np
-from scipy.spatial import cKDTree as KDTree
 from numba import jit
+from scipy.spatial import cKDTree as KDTree
 
 
-class Invdisttree(object):
+class Invdisttree:
     """inverse-distance-weighted interpolation using KDTree:
 
     Copied from http://stackoverflow.com/questions/3104781/
@@ -142,7 +141,7 @@ def _numba_idw_loop(distances, ixs, z, z_shape, p):
         elif dist[0] < 1e-10:
             wz = z[ix[0]]
         else:  # weight z s by 1/dist --
-            w = 1 / dist ** p
+            w = 1 / dist**p
             w /= np.sum(w)
             wz = np.dot(w, z[ix])
 

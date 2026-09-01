@@ -1,7 +1,8 @@
-from torch_geometric.data import HeteroData
-import torch
-import numpy as np
 import math
+
+import numpy as np
+import torch
+from torch_geometric.data import HeteroData
 
 """
 Class for graph builder

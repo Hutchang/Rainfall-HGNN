@@ -1,6 +1,7 @@
-import time
 import json
+import time
 from datetime import datetime
+
 
 class PerformanceLogger:
     def __init__(self, log_path="training_log.jsonl"):
@@ -8,7 +9,15 @@ class PerformanceLogger:
         self.epoch_logs = []
         self.best_val_loss = float("inf")
 
-    def log_grid_radius(self, data, radar_grid_nodes, radius_km, grid_shape, radar_to_gen_src, radar_to_rain_src):
+    def log_grid_radius(
+        self,
+        data,
+        radar_grid_nodes,
+        radius_km,
+        grid_shape,
+        radar_to_gen_src,
+        radar_to_rain_src,
+    ):
         """
         Logs radar grid radius and connectivity information.
 
@@ -35,7 +44,6 @@ class PerformanceLogger:
 
         print("Radar grid radius and connectivity info logged.")
 
-    
     def log_model_config(self, config_dict: dict):
         record = {
             "timestamp": time.time(),
@@ -74,7 +82,7 @@ class PerformanceLogger:
             "type": "training_summary",
             "total_training_time_sec": float(total_training_time_sec),
             "best_validation_loss": float(self.best_val_loss),
-            "epochs_completed": len(self.epoch_logs)
+            "epochs_completed": len(self.epoch_logs),
         }
         with open(self.log_path, "a") as f:
             f.write(json.dumps(summary) + "\n")
@@ -91,13 +99,13 @@ class PerformanceLogger:
 
     def log_model_parameters(self, model):
         total_params = sum(p.numel() for p in model.parameters())
-        
+
         lines = []
         lines.append(f"Total parameters: {total_params:,}\n")
         lines.append("Parameters by layer:")
         for name, p in model.named_parameters():
             lines.append(f"  {name:40s} {tuple(p.shape)}  params={p.numel():,}")
-        
+
         with open(self.log_path, "a") as f:
             f.write("\n=== Model Parameter Stats ===\n")
             f.write("\n".join(lines))

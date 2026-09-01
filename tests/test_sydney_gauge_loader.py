@@ -11,14 +11,15 @@ Tests marked xfail record known defects in the inherited hand export and metadat
 The new source/canonical components replace that data rather than mutating this legacy
 regression fixture.
 """
+
 import re
 
 import numpy as np
 import pandas as pd
 import pytest
 
-
 # ── Records and schema ───────────────────────────────────────────────────────
+
 
 def test_raw_files_present(raw_files):
     assert len(raw_files) == 173, f"expected 173 station files, found {len(raw_files)}"
@@ -45,6 +46,7 @@ def test_filename_matches_in_file_station_id(raw_files):
 
 
 # ── Timestamps ───────────────────────────────────────────────────────────────
+
 
 def test_timestamps_parse_consistently(gauge_long):
     assert gauge_long["timestamp"].notna().all(), "unparseable timestamps present"
@@ -75,6 +77,7 @@ def test_pivot_succeeds(gauge_wide):
 
 # ── Rainfall validity ────────────────────────────────────────────────────────
 
+
 def test_no_negative_rainfall(gauge_long):
     neg = (gauge_long["rainfall_mm"] < 0).sum()
     assert neg == 0, f"{neg} negative rainfall values"
@@ -95,23 +98,28 @@ def test_uptime_filter_is_a_noop(gauge_wide):
 
 @pytest.mark.xfail(
     reason="LEGACY DATA REGRESSION — AUDIT_NIRAMAY.md section 8.2 supersession "
-           "note. Direct BoM comparison proved time- and station-varying export "
-           "distortion; no global scale factor can repair rainfall_mm. Components "
-           "01/02 replace it with source-faithful tips and verified true millimetres.",
+    "note. Direct BoM comparison proved time- and station-varying export "
+    "distortion; no global scale factor can repair rainfall_mm. Components "
+    "01/02 replace it with source-faithful tips and verified true millimetres.",
     strict=False,
 )
 def test_units_are_plausibly_millimetres(gauge_long):
     """Sydney climatology is ~1210 mm/yr; western stations 700-900 mm/yr.
     A plausible mm dataset should not exceed ~2500 mm/yr median."""
-    yearly = gauge_long.assign(y=gauge_long["timestamp"].dt.year) \
-                       .groupby(["station_id", "y"])["rainfall_mm"].sum()
+    yearly = (
+        gauge_long.assign(y=gauge_long["timestamp"].dt.year)
+        .groupby(["station_id", "y"])["rainfall_mm"]
+        .sum()
+    )
     median_annual = yearly.groupby("station_id").mean().median()
     assert median_annual < 2500, (
         f"median station annual total {median_annual:,.0f} is not consistent "
-        f"with millimetres for Sydney")
+        f"with millimetres for Sydney"
+    )
 
 
 # ── Station identity and coordinates ─────────────────────────────────────────
+
 
 def test_all_data_stations_have_metadata(gauge_wide, station_meta):
     data_ids = {str(c) for c in gauge_wide.columns}
@@ -130,24 +138,25 @@ def test_coordinates_are_in_greater_sydney(station_meta):
 
 @pytest.mark.xfail(
     reason="LEGACY DATA REGRESSION — AUDIT_NIRAMAY.md section 8.1. station_metadata.csv holds "
-           "425 rows for 409 unique ids; data/loader.py:53 filters with .isin() "
-           "but never de-duplicates, so the graph gets 188 nodes for 173 real "
-           "stations. Components 01/02 key the replacement data on unique BoM "
-           "internal station_id.",
+    "425 rows for 409 unique ids; data/loader.py:53 filters with .isin() "
+    "but never de-duplicates, so the graph gets 188 nodes for 173 real "
+    "stations. Components 01/02 key the replacement data on unique BoM "
+    "internal station_id.",
     strict=False,
 )
 def test_station_ids_are_unique_after_filtering(station_meta, gauge_wide):
     """One metadata row per station with data."""
     assert len(station_meta) == gauge_wide.shape[1], (
         f"{len(station_meta)} metadata rows for {gauge_wide.shape[1]} stations "
-        f"-> {len(station_meta) - gauge_wide.shape[1]} phantom graph nodes")
+        f"-> {len(station_meta) - gauge_wide.shape[1]} phantom graph nodes"
+    )
 
 
 @pytest.mark.xfail(
     reason="LEGACY PUBLIC-ID REGRESSION — AUDIT_NIRAMAY.md section 8.1. Public "
-           "numbers 563083 and 567163 each identify two real stations. The BoM "
-           "API provides distinct internal station_id values, which components "
-           "01/02 use instead of de-duplicating public numbers.",
+    "numbers 563083 and 567163 each identify two real stations. The BoM "
+    "API provides distinct internal station_id values, which components "
+    "01/02 use instead of de-duplicating public numbers.",
     strict=False,
 )
 def test_duplicate_ids_refer_to_the_same_place(station_meta):
@@ -155,12 +164,15 @@ def test_duplicate_ids_refer_to_the_same_place(station_meta):
     Ids failing this are collisions needing external (BOM) resolution."""
     bad = []
     for sid, grp in station_meta[
-            station_meta.duplicated(subset=["id"], keep=False)].groupby("id"):
+        station_meta.duplicated(subset=["id"], keep=False)
+    ].groupby("id"):
         r = grp.reset_index(drop=True)
         km = np.hypot(
             (r.latitude[0] - r.latitude[1]) * 111.0,
-            (r.longitude[0] - r.longitude[1]) * 111.0
-            * np.cos(np.radians(r.latitude.mean())))
+            (r.longitude[0] - r.longitude[1])
+            * 111.0
+            * np.cos(np.radians(r.latitude.mean())),
+        )
         if km > 1.0:
             bad.append((sid, round(km, 2), list(r["name"])))
     assert not bad, f"id collisions between different stations: {bad}"

@@ -18,17 +18,17 @@ plot_edge_map               – draw edges geographically on a map
 
 from __future__ import annotations
 
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import torch
 from torch_geometric.data import HeteroData
-
 
 # ---------------------------------------------------------------------------
 # 1.  Edge-type overview
 # ---------------------------------------------------------------------------
+
 
 def check_edge_types(heterodata: HeteroData) -> None:
     """
@@ -53,22 +53,28 @@ def check_edge_types(heterodata: HeteroData) -> None:
 
         # A reverse exists if there is any edge type whose source=dst and dest=src
         reverse_present = any(
-            s == dst and d == src for s, r, d in existing if (s, r, d) != (src, rel, dst)
+            s == dst and d == src
+            for s, r, d in existing
+            if (s, r, d) != (src, rel, dst)
         )
 
         direction_flag = "✓" if reverse_present or src == dst else "✗ MISSING"
         if src == dst:
             direction_flag = "(self-loop type)"
 
-        print(f"  ({src}, {rel}, {dst})  "
-              f"{n_edges:>8,}  {direction_flag:>10}")
+        print(f"  ({src}, {rel}, {dst})  {n_edges:>8,}  {direction_flag:>10}")
 
     print()
     # Highlight the critical missing-reverse problem
     critical = [
-        (src, rel, dst) for src, rel, dst in edge_types
-        if src != dst and not any(s == dst and d == src
-                                  for s, r, d in existing if (s, r, d) != (src, rel, dst))
+        (src, rel, dst)
+        for src, rel, dst in edge_types
+        if src != dst
+        and not any(
+            s == dst and d == src
+            for s, r, d in existing
+            if (s, r, d) != (src, rel, dst)
+        )
     ]
     if critical:
         print("  ⚠️  ONE-DIRECTIONAL EDGES FOUND — these source nodes will NOT")
@@ -84,6 +90,7 @@ def check_edge_types(heterodata: HeteroData) -> None:
 # ---------------------------------------------------------------------------
 # 2.  Index-bounds check
 # ---------------------------------------------------------------------------
+
 
 def check_index_bounds(heterodata: HeteroData) -> None:
     """
@@ -109,11 +116,11 @@ def check_index_bounds(heterodata: HeteroData) -> None:
         status = "✓" if (src_ok and dst_ok) else "✗"
         print(f"  {status}  ({src_type}, {rel}, {dst_type})")
         if not src_ok:
-            msg = (f"     Source index {src_max} >= n_{src_type} nodes ({n_src})")
+            msg = f"     Source index {src_max} >= n_{src_type} nodes ({n_src})"
             print(msg)
             errors.append(msg)
         if not dst_ok:
-            msg = (f"     Dest   index {dst_max} >= n_{dst_type} nodes ({n_dst})")
+            msg = f"     Dest   index {dst_max} >= n_{dst_type} nodes ({n_dst})"
             print(msg)
             errors.append(msg)
 
@@ -126,6 +133,7 @@ def check_index_bounds(heterodata: HeteroData) -> None:
 # ---------------------------------------------------------------------------
 # 3.  Feature statistics
 # ---------------------------------------------------------------------------
+
 
 def check_feature_stats(heterodata: HeteroData) -> None:
     """
@@ -140,17 +148,19 @@ def check_feature_stats(heterodata: HeteroData) -> None:
     print("  " + "-" * 62)
 
     for node_type in heterodata.node_types:
-        x = heterodata[node_type].x.float()            # [N, T, F]
+        x = heterodata[node_type].x.float()  # [N, T, F]
         shape_str = str(tuple(x.shape))
-        mean  = x.mean().item()
-        std   = x.std().item()
+        mean = x.mean().item()
+        std = x.std().item()
         pct_zero = (x == 0).float().mean().item() * 100
 
         flag = ""
         if pct_zero > 80:
             flag = "  ⚠️  mostly zeros — data may be empty / all-NaN"
 
-        print(f"  {node_type:<14} {shape_str:<22} {mean:>8.4f} {std:>8.4f} {pct_zero:>7.1f}%{flag}")
+        print(
+            f"  {node_type:<14} {shape_str:<22} {mean:>8.4f} {std:>8.4f} {pct_zero:>7.1f}%{flag}"
+        )
 
     print()
 
@@ -159,10 +169,11 @@ def check_feature_stats(heterodata: HeteroData) -> None:
 # 4.  Ablation test
 # ---------------------------------------------------------------------------
 
+
 def ablation_test(
     model,
     heterodata: HeteroData,
-    device: str = 'cpu',
+    device: str = "cpu",
     timestep: int = 0,
 ) -> dict[str, float]:
     """
@@ -198,28 +209,30 @@ def ablation_test(
         edge_attr_dict = {
             et: ht[et].edge_attr.to(device)
             for et in ht.edge_types
-            if hasattr(ht[et], 'edge_attr')
+            if hasattr(ht[et], "edge_attr")
         }
         return x_dict, edge_index_dict, edge_attr_dict
 
     with torch.no_grad():
         x_base, ei, ea = _build_snap(heterodata)
-        out_base = model(x_base, ei, ea)['raingauge'].cpu()
+        out_base = model(x_base, ei, ea)["raingauge"].cpu()
 
     results = {}
     for node_type in heterodata.node_types:
-        if node_type == 'raingauge':
+        if node_type == "raingauge":
             continue
         with torch.no_grad():
             x_ablated, ei, ea = _build_snap(heterodata)
             x_ablated[node_type] = torch.zeros_like(x_ablated[node_type])
-            out_ablated = model(x_ablated, ei, ea)['raingauge'].cpu()
+            out_ablated = model(x_ablated, ei, ea)["raingauge"].cpu()
 
         delta = (out_base - out_ablated).abs().mean().item()
         results[node_type] = delta
 
         status = "✓" if delta > 1e-4 else "✗ NO EFFECT"
-        print(f"  {status}  Zeroing '{node_type}' changes raingauge output by {delta:.6f} (mean abs)")
+        print(
+            f"  {status}  Zeroing '{node_type}' changes raingauge output by {delta:.6f} (mean abs)"
+        )
 
     print()
     return results
@@ -228,6 +241,7 @@ def ablation_test(
 # ---------------------------------------------------------------------------
 # 5.  Geographic edge map
 # ---------------------------------------------------------------------------
+
 
 def plot_edge_map(
     heterodata: HeteroData,
@@ -260,90 +274,134 @@ def plot_edge_map(
     """
     fig, ax = plt.subplots(figsize=(11, 9))
 
-    gauge_coords = mapping_df[['longitude', 'latitude']].values
+    gauge_coords = mapping_df[["longitude", "latitude"]].values
     ax.scatter(
-        gauge_coords[:, 0], gauge_coords[:, 1],
-        c='red', s=50, zorder=5, label='Rain gauges', edgecolors='black', linewidths=0.5,
+        gauge_coords[:, 0],
+        gauge_coords[:, 1],
+        c="red",
+        s=50,
+        zorder=5,
+        label="Rain gauges",
+        edgecolors="black",
+        linewidths=0.5,
     )
     for _, row in mapping_df.iterrows():
-        ax.annotate(str(row['id']), (row['longitude'], row['latitude']),
-                    fontsize=5, color='darkred', xytext=(2, 2), textcoords='offset points')
+        ax.annotate(
+            str(row["id"]),
+            (row["longitude"], row["latitude"]),
+            fontsize=5,
+            color="darkred",
+            xytext=(2, 2),
+            textcoords="offset points",
+        )
 
     # CML link endpoints
     if cml_coordinates_df is not None:
-        cml_even = cml_coordinates_df.iloc[::2]   # one row per link (same as CMLGraph)
+        cml_even = cml_coordinates_df.iloc[::2]  # one row per link (same as CMLGraph)
         for _, row in cml_even.iterrows():
             ax.plot(
-                [row['site_a_longitude'], row['site_b_longitude']],
-                [row['site_a_latitude'],  row['site_b_latitude']],
-                color='purple', linewidth=0.6, alpha=0.4, zorder=2,
+                [row["site_a_longitude"], row["site_b_longitude"]],
+                [row["site_a_latitude"], row["site_b_latitude"]],
+                color="purple",
+                linewidth=0.6,
+                alpha=0.4,
+                zorder=2,
             )
         # midpoints as dots
-        mid_lon = (cml_even['site_a_longitude'].values + cml_even['site_b_longitude'].values) / 2
-        mid_lat = (cml_even['site_a_latitude'].values  + cml_even['site_b_latitude'].values)  / 2
-        ax.scatter(mid_lon, mid_lat, c='purple', s=10, zorder=3, alpha=0.5,
-                   label='CML links (midpoints)')
+        mid_lon = (
+            cml_even["site_a_longitude"].values + cml_even["site_b_longitude"].values
+        ) / 2
+        mid_lat = (
+            cml_even["site_a_latitude"].values + cml_even["site_b_latitude"].values
+        ) / 2
+        ax.scatter(
+            mid_lon,
+            mid_lat,
+            c="purple",
+            s=10,
+            zorder=3,
+            alpha=0.5,
+            label="CML links (midpoints)",
+        )
 
     # Radar grid (subsample to avoid overdrawing)
     if radar_grid_coords is not None:
         step = max(1, len(radar_grid_coords) // 500)
         rc = radar_grid_coords.iloc[::step]
-        ax.scatter(rc['longitude'], rc['latitude'],
-                   c='grey', s=2, alpha=0.3, zorder=1, label='Radar grid (subsampled)')
+        ax.scatter(
+            rc["longitude"],
+            rc["latitude"],
+            c="grey",
+            s=2,
+            alpha=0.3,
+            zorder=1,
+            label="Radar grid (subsampled)",
+        )
 
     # Cross-modal edges
     colour_map = {
-        'radar': 'steelblue',
-        'cml':   'darkorange',
+        "radar": "steelblue",
+        "cml": "darkorange",
     }
-    default_colours = iter(['green', 'cyan', 'magenta'])
+    default_colours = iter(["green", "cyan", "magenta"])
 
     for src_type, rel, dst_type in heterodata.edge_types:
-        if src_type == dst_type:          # skip gauge-gauge self-edges
+        if src_type == dst_type:  # skip gauge-gauge self-edges
             continue
         if edge_types_to_plot and (src_type, rel, dst_type) not in edge_types_to_plot:
             continue
 
         edge_index = heterodata[(src_type, rel, dst_type)].edge_index  # [2, E]
         n_edges = edge_index.shape[1]
-        sample_idx = np.random.choice(n_edges, min(max_edges_per_type, n_edges), replace=False)
+        sample_idx = np.random.choice(
+            n_edges, min(max_edges_per_type, n_edges), replace=False
+        )
         sampled = edge_index[:, sample_idx]
 
         # Identify which node type is the gauge and which is the auxiliary
-        if src_type == 'raingauge':
+        if src_type == "raingauge":
             gauge_idx = sampled[0].numpy()
-            aux_idx   = sampled[1].numpy()
-            aux_type  = dst_type
+            aux_idx = sampled[1].numpy()
+            aux_type = dst_type
         else:
             gauge_idx = sampled[1].numpy()
-            aux_idx   = sampled[0].numpy()
-            aux_type  = src_type
+            aux_idx = sampled[0].numpy()
+            aux_type = src_type
 
-        aux_coords = _get_node_coords(aux_type, aux_idx, cml_coordinates_df, radar_grid_coords)
+        aux_coords = _get_node_coords(
+            aux_type, aux_idx, cml_coordinates_df, radar_grid_coords
+        )
         if aux_coords is None:
             continue
 
         colour = colour_map.get(aux_type, next(default_colours))
         for gi, (ax_lon, ax_lat) in zip(gauge_idx, aux_coords):
             g_lon, g_lat = float(gauge_coords[gi, 0]), float(gauge_coords[gi, 1])
-            ax.plot([g_lon, ax_lon], [g_lat, ax_lat],
-                    color=colour, linewidth=0.4, alpha=0.35, zorder=2)
+            ax.plot(
+                [g_lon, ax_lon],
+                [g_lat, ax_lat],
+                color=colour,
+                linewidth=0.4,
+                alpha=0.35,
+                zorder=2,
+            )
 
-        patch = mpatches.Patch(color=colour,
-                               label=f'({src_type} → {dst_type})  {n_edges} edges')
+        patch = mpatches.Patch(
+            color=colour, label=f"({src_type} → {dst_type})  {n_edges} edges"
+        )
         ax.add_patch(patch)
 
-    ax.legend(loc='lower right', fontsize=7, framealpha=0.9)
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_title('Graph edge map — cross-modal connections')
+    ax.legend(loc="lower right", fontsize=7, framealpha=0.9)
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title("Graph edge map — cross-modal connections")
     if bounds:
-        ax.set_xlim(bounds['left'],  bounds['right'])
-        ax.set_ylim(bounds['bottom'], bounds['top'])
+        ax.set_xlim(bounds["left"], bounds["right"])
+        ax.set_ylim(bounds["bottom"], bounds["top"])
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        fig.savefig(save_path, dpi=200, bbox_inches='tight')
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
 
     return fig, ax
 
@@ -355,22 +413,26 @@ def _get_node_coords(
     radar_grid_coords,
 ) -> list[tuple[float, float]] | None:
     """Return (lon, lat) for each index in *indices* for the given node type."""
-    if node_type == 'radar' and radar_grid_coords is not None:
-        coords = radar_grid_coords[['longitude', 'latitude']].values
-        return [(float(coords[i, 0]), float(coords[i, 1])) for i in indices if i < len(coords)]
+    if node_type == "radar" and radar_grid_coords is not None:
+        coords = radar_grid_coords[["longitude", "latitude"]].values
+        return [
+            (float(coords[i, 0]), float(coords[i, 1]))
+            for i in indices
+            if i < len(coords)
+        ]
 
-    if node_type == 'cml' and cml_coordinates_df is not None:
+    if node_type == "cml" and cml_coordinates_df is not None:
         # CML graph nodes: even index i → site_a of row i, odd index → site_b of row i-1
         result = []
         for i in indices:
             if i % 2 == 0:
                 row_idx = i
-                lon = cml_coordinates_df.iloc[row_idx]['site_a_longitude']
-                lat = cml_coordinates_df.iloc[row_idx]['site_a_latitude']
+                lon = cml_coordinates_df.iloc[row_idx]["site_a_longitude"]
+                lat = cml_coordinates_df.iloc[row_idx]["site_a_latitude"]
             else:
                 row_idx = i - 1
-                lon = cml_coordinates_df.iloc[row_idx]['site_b_longitude']
-                lat = cml_coordinates_df.iloc[row_idx]['site_b_latitude']
+                lon = cml_coordinates_df.iloc[row_idx]["site_b_longitude"]
+                lat = cml_coordinates_df.iloc[row_idx]["site_b_latitude"]
             result.append((float(lon), float(lat)))
         return result
 
@@ -381,6 +443,7 @@ def _get_node_coords(
 # 6.  Combined entry point
 # ---------------------------------------------------------------------------
 
+
 def run_all_diagnostics(
     heterodata: HeteroData,
     model,
@@ -388,7 +451,7 @@ def run_all_diagnostics(
     cml_coordinates_df: pd.DataFrame | None = None,
     radar_grid_coords: pd.DataFrame | None = None,
     bounds: dict | None = None,
-    device: str = 'cpu',
+    device: str = "cpu",
     save_dir: str | None = None,
 ) -> None:
     """
@@ -422,9 +485,11 @@ def run_all_diagnostics(
 
     if save_dir or (cml_coordinates_df is not None or radar_grid_coords is not None):
         import os
-        save_path = os.path.join(save_dir, 'graph_edge_map.png') if save_dir else None
+
+        save_path = os.path.join(save_dir, "graph_edge_map.png") if save_dir else None
         fig, _ = plot_edge_map(
-            heterodata, mapping_df,
+            heterodata,
+            mapping_df,
             cml_coordinates_df=cml_coordinates_df,
             radar_grid_coords=radar_grid_coords,
             bounds=bounds,

@@ -1,10 +1,8 @@
-from __future__ import division
 import numpy as np
 import xarray as xr
 from scipy.interpolate import interp1d
 
 from .xarray_wrapper import xarray_apply_along_time_dim
-
 
 ############################################
 # Functions for k-R power law calculations #
@@ -69,8 +67,6 @@ def calc_R_from_A(
     attenuation in dB/km.
 
     """
-
-
 
     # Make sure that we only continue if a correct combination of optional args is used
     if (f_GHz is not None) and (pol is not None) and (a is None) and (b is None):
@@ -218,14 +214,15 @@ def a_b(f_GHz, pol, approx_type="ITU_2005"):
     f_GHz = np.atleast_1d(f_GHz)
     pol = np.atleast_1d(pol)
 
-    pol_v_str_variants = ['v','V','vertical','Vertical']
-    pol_h_str_variants = ['h','H','horizontal','Horizontal']
+    pol_v_str_variants = ["v", "V", "vertical", "Vertical"]
+    pol_h_str_variants = ["h", "H", "horizontal", "Horizontal"]
 
     if f_GHz.min() < 1 or f_GHz.max() > 100:
         raise ValueError("Frequency must be between 1 Ghz and 100 GHz.")
-    if not np.isin(pol,pol_v_str_variants+pol_h_str_variants).all():
-        raise ValueError("Polarization must be V, v, Vertical, vertical, H,"
-                         "Horizontal or horizontal.")
+    if not np.isin(pol, pol_v_str_variants + pol_h_str_variants).all():
+        raise ValueError(
+            "Polarization must be V, v, Vertical, vertical, H,Horizontal or horizontal."
+        )
     # select ITU table
     if approx_type == "ITU_2003":
         ITU_table = ITU_table_2003.copy()

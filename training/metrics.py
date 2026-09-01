@@ -1,19 +1,16 @@
-
 import numpy as np
-import torch
 from sklearn.metrics import (
+    confusion_matrix,
     f1_score,
+    mean_absolute_error,
     precision_score,
     recall_score,
-    confusion_matrix,
-    classification_report,
-    mean_absolute_error,
 )
-
 
 # ================================================================
 # ===  CORE METRIC FUNCTIONS
 # ================================================================
+
 
 def compute_mae(preds: np.ndarray, targets: np.ndarray) -> float:
     """Compute Mean Absolute Error between predictions and targets."""
@@ -52,9 +49,15 @@ def compute_binary_classification_metrics(
     pred_labels = (preds_v >= threshold).astype(int)
     true_labels = (targets_v >= threshold).astype(int)
 
-    precision = precision_score(true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division)
-    recall = recall_score(true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division)
-    f1 = f1_score(true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division)
+    precision = precision_score(
+        true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division
+    )
+    recall = recall_score(
+        true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division
+    )
+    f1 = f1_score(
+        true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division
+    )
     cm = confusion_matrix(true_labels, pred_labels, labels=[0, 1])
 
     return {
@@ -71,6 +74,7 @@ def compute_binary_classification_metrics(
 # ================================================================
 # ===  PER-STATION WRAPPER
 # ================================================================
+
 
 def compute_per_station_metrics(
     preds: np.ndarray,
@@ -127,9 +131,9 @@ def print_metrics_summary(global_metrics: dict, per_station: dict = None):
     print(f"  Support (pos)  : {global_metrics['support_pos']}")
     print(f"  Support (neg)  : {global_metrics['support_neg']}")
     cm = global_metrics["confusion_matrix"]
-    print(f"  Confusion Matrix:")
-    print(f"    TN={cm[0,0]}  FP={cm[0,1]}")
-    print(f"    FN={cm[1,0]}  TP={cm[1,1]}")
+    print("  Confusion Matrix:")
+    print(f"    TN={cm[0, 0]}  FP={cm[0, 1]}")
+    print(f"    FN={cm[1, 0]}  TP={cm[1, 1]}")
 
     if per_station:
         print("\n" + "=" * 60)

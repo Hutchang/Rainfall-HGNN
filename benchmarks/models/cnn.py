@@ -15,7 +15,7 @@ specific-attenuation grid, and weather radar reflectivity grid.
 """
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class RainfallCNN(nn.Module):

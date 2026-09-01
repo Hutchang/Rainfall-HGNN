@@ -29,20 +29,21 @@ analyze_benchmark            – run all diagnostic plots for a single benchmark
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.animation as animation
-from pathlib import Path
-from scipy.stats import pearsonr, gaussian_kde
+from matplotlib import animation
+from scipy.stats import gaussian_kde, pearsonr
 from sklearn.metrics import f1_score
 from sklearn.neighbors import NearestNeighbors
-
 
 # ---------------------------------------------------------------------------
 # 1.  Per-station metric computation
 # ---------------------------------------------------------------------------
+
 
 def compute_per_station_metrics(
     per_station_data: dict,
@@ -69,8 +70,8 @@ def compute_per_station_metrics(
     """
     records = []
     for station_id, data in per_station_data.items():
-        actual = np.array(data['actual'], dtype=float)
-        predicted = np.array(data['predicted'], dtype=float)
+        actual = np.array(data["actual"], dtype=float)
+        predicted = np.array(data["predicted"], dtype=float)
         if len(actual) == 0:
             continue
         mask = ~(np.isnan(actual) | np.isnan(predicted))
@@ -78,28 +79,32 @@ def compute_per_station_metrics(
         if len(actual) == 0:
             continue
 
-        mae  = float(np.mean(np.abs(actual - predicted)))
+        mae = float(np.mean(np.abs(actual - predicted)))
         rmse = float(np.sqrt(np.mean((actual - predicted) ** 2)))
         bias = float(np.mean(predicted - actual))
-        f1   = float(f1_score(
-            (actual >= rain_threshold).astype(int),
-            (predicted >= rain_threshold).astype(int),
-            zero_division=0,
-        ))
+        f1 = float(
+            f1_score(
+                (actual >= rain_threshold).astype(int),
+                (predicted >= rain_threshold).astype(int),
+                zero_division=0,
+            )
+        )
         r = float(pearsonr(actual, predicted)[0]) if len(actual) > 2 else np.nan
 
         lat, lon = coordinates.get(station_id, (np.nan, np.nan))
-        records.append({
-            'station_id': station_id,
-            'latitude':   lat,
-            'longitude':  lon,
-            'mae':        mae,
-            'rmse':       rmse,
-            'bias':       bias,
-            'f1':         f1,
-            'pearson_r':  r,
-            'n_samples':  int(len(actual)),
-        })
+        records.append(
+            {
+                "station_id": station_id,
+                "latitude": lat,
+                "longitude": lon,
+                "mae": mae,
+                "rmse": rmse,
+                "bias": bias,
+                "f1": f1,
+                "pearson_r": r,
+                "n_samples": len(actual),
+            }
+        )
 
     return pd.DataFrame(records)
 
@@ -108,12 +113,13 @@ def compute_per_station_metrics(
 # 2.  Spatial error map
 # ---------------------------------------------------------------------------
 
+
 def plot_spatial_error_map(
     station_df: pd.DataFrame,
     bounds: dict | None = None,
-    metric: str = 'rmse',
+    metric: str = "rmse",
     top_n_labels: int = 5,
-    cmap: str = 'RdYlGn_r',
+    cmap: str = "RdYlGn_r",
     title: str | None = None,
     vmin: float | None = None,
     vmax: float | None = None,
@@ -150,14 +156,14 @@ def plot_spatial_error_map(
     if ax is None:
         _, ax = plt.subplots(figsize=(10, 8))
 
-    valid  = station_df.dropna(subset=[metric, 'longitude', 'latitude'])
+    valid = station_df.dropna(subset=[metric, "longitude", "latitude"])
     values = valid[metric].values
 
     _cmap = cmap
-    if metric in ('f1', 'pearson_r'):
-        _cmap = 'RdYlGn'
-    elif metric == 'bias':
-        _cmap = 'RdBu_r'
+    if metric in ("f1", "pearson_r"):
+        _cmap = "RdYlGn"
+    elif metric == "bias":
+        _cmap = "RdBu_r"
 
     if vmin is None or (vmax is None and boundaries is None):
         raise ValueError(
@@ -171,57 +177,70 @@ def plot_spatial_error_map(
     if boundaries is not None:
         cmap_obj = cm_mod.get_cmap(_cmap)
         norm = mcolors.BoundaryNorm(boundaries, ncolors=cmap_obj.N, clip=True)
-    elif metric == 'bias':
+    elif metric == "bias":
         norm = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
     else:
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 
     sc = ax.scatter(
-        valid['longitude'], valid['latitude'],
-        c=values, cmap=_cmap, norm=norm,
-        s=120, zorder=4, edgecolors='black', linewidths=0.5,
+        valid["longitude"],
+        valid["latitude"],
+        c=values,
+        cmap=_cmap,
+        norm=norm,
+        s=120,
+        zorder=4,
+        edgecolors="black",
+        linewidths=0.5,
     )
-    cbar_label = 'Pearson R' if metric == 'pearson_r' else metric.upper()
+    cbar_label = "Pearson R" if metric == "pearson_r" else metric.upper()
     plt.colorbar(sc, ax=ax, label=cbar_label, shrink=0.8)
 
     # Annotate worst stations
-    if metric in ('f1', 'pearson_r'):
+    if metric in ("f1", "pearson_r"):
         worst = valid.nsmallest(top_n_labels, metric)
-    elif metric == 'bias':
-        worst = valid.reindex(valid['bias'].abs().nlargest(top_n_labels).index)
+    elif metric == "bias":
+        worst = valid.reindex(valid["bias"].abs().nlargest(top_n_labels).index)
     else:
         worst = valid.nlargest(top_n_labels, metric)
 
     for _, row in worst.iterrows():
         ax.annotate(
-            str(row['station_id']),
-            xy=(row['longitude'], row['latitude']),
-            xytext=(5, 5), textcoords='offset points',
-            fontsize=8, color='black',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7),
+            str(row["station_id"]),
+            xy=(row["longitude"], row["latitude"]),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=8,
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
         )
 
     if bounds:
-        ax.set_xlim(bounds['left'],  bounds['right'])
-        ax.set_ylim(bounds['bottom'], bounds['top'])
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_title(title or f'Per-station {metric.upper()} — spatial distribution')
+        ax.set_xlim(bounds["left"], bounds["right"])
+        ax.set_ylim(bounds["bottom"], bounds["top"])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(title or f"Per-station {metric.upper()} — spatial distribution")
     ax.grid(True, alpha=0.3)
 
     if show_outline:
-        from src.visualization.main import visualise_singapore_outline, visualise_with_basemap
+        from src.visualization.main import (
+            visualise_singapore_outline,
+            visualise_with_basemap,
+        )
+
         visualise_singapore_outline(ax=ax)
         visualise_with_basemap(ax=ax)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
 # ---------------------------------------------------------------------------
 # 3.  Bias map
 # ---------------------------------------------------------------------------
+
 
 def plot_bias_map(
     station_df: pd.DataFrame,
@@ -230,7 +249,7 @@ def plot_bias_map(
     title: str | None = None,
     ax=None,
     save_path: str | None = None,
-    vmax=1
+    vmax=1,
 ):
     """
     Spatial map of signed prediction bias (mean(pred − actual)).
@@ -251,40 +270,51 @@ def plot_bias_map(
     if ax is None:
         _, ax = plt.subplots(figsize=(10, 8))
 
-    valid   = station_df.dropna(subset=['bias', 'longitude', 'latitude'])
-    biases  = valid['bias'].values
+    valid = station_df.dropna(subset=["bias", "longitude", "latitude"])
+    biases = valid["bias"].values
     abs_max = max(np.abs(biases).max(), 1e-6)
-    sizes   = 30 + 200 * np.abs(biases) / abs_max
+    sizes = 30 + 200 * np.abs(biases) / abs_max
 
     norm = mcolors.TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
-    sc   = ax.scatter(
-        valid['longitude'], valid['latitude'],
-        c=biases, cmap='RdBu_r', norm=norm,
-        s=sizes, zorder=4, edgecolors='black', linewidths=0.5,
+    sc = ax.scatter(
+        valid["longitude"],
+        valid["latitude"],
+        c=biases,
+        cmap="RdBu_r",
+        norm=norm,
+        s=sizes,
+        zorder=4,
+        edgecolors="black",
+        linewidths=0.5,
     )
-    cbar = plt.colorbar(sc, ax=ax, label='Bias  (pred − actual, mm)', shrink=0.8)
-    cbar.ax.axhline(0, color='black', linewidth=1)
+    cbar = plt.colorbar(sc, ax=ax, label="Bias  (pred − actual, mm)", shrink=0.8)
+    cbar.ax.axhline(0, color="black", linewidth=1)
 
-    worst = valid.reindex(valid['bias'].abs().nlargest(top_n_labels).index)
+    worst = valid.reindex(valid["bias"].abs().nlargest(top_n_labels).index)
     for _, row in worst.iterrows():
         ax.annotate(
             f"{row['station_id']} ({row['bias']:+.2f})",
-            xy=(row['longitude'], row['latitude']),
-            xytext=(6, 6), textcoords='offset points',
-            fontsize=7, color='black',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7),
+            xy=(row["longitude"], row["latitude"]),
+            xytext=(6, 6),
+            textcoords="offset points",
+            fontsize=7,
+            color="black",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
         )
 
     if bounds:
-        ax.set_xlim(bounds['left'],  bounds['right'])
-        ax.set_ylim(bounds['bottom'], bounds['top'])
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_title(title or 'Prediction bias by station  (red = over-predict, blue = under-predict)')
+        ax.set_xlim(bounds["left"], bounds["right"])
+        ax.set_ylim(bounds["bottom"], bounds["top"])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(
+        title
+        or "Prediction bias by station  (red = over-predict, blue = under-predict)"
+    )
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -292,9 +322,10 @@ def plot_bias_map(
 # 4.  Bar chart ranking
 # ---------------------------------------------------------------------------
 
+
 def plot_error_ranking(
     station_df: pd.DataFrame,
-    metric: str = 'mae',
+    metric: str = "mae",
     top_n: int = 15,
     title: str | None = None,
     ax=None,
@@ -320,35 +351,38 @@ def plot_error_ranking(
 
     valid = station_df.dropna(subset=[metric]).copy()
 
-    if metric == 'f1':
+    if metric == "f1":
         ranked = valid.nsmallest(top_n, metric)
-        colour = 'salmon'
-        xlabel = f'{metric.upper()} (lower = worse)'
+        colour = "salmon"
+        xlabel = f"{metric.upper()} (lower = worse)"
     else:
         ranked = valid.nlargest(top_n, metric)
-        colour = 'steelblue'
-        xlabel = f'{metric.upper()} (higher = worse)'
+        colour = "steelblue"
+        xlabel = f"{metric.upper()} (higher = worse)"
 
-    ranked = ranked.sort_values(metric, ascending=(metric == 'f1'))
-    labels = ranked['station_id'].astype(str).values
-    vals   = ranked[metric].values
+    ranked = ranked.sort_values(metric, ascending=(metric == "f1"))
+    labels = ranked["station_id"].astype(str).values
+    vals = ranked[metric].values
 
-    bars = ax.barh(labels, vals, color=colour, edgecolor='black', linewidth=0.4)
+    bars = ax.barh(labels, vals, color=colour, edgecolor="black", linewidth=0.4)
     for bar, val in zip(bars, vals):
         ax.text(
             bar.get_width() + 0.01 * vals.max(),
             bar.get_y() + bar.get_height() / 2,
-            f'{val:.3f}', va='center', ha='left', fontsize=8,
+            f"{val:.3f}",
+            va="center",
+            ha="left",
+            fontsize=8,
         )
 
     ax.set_xlabel(xlabel)
-    ax.set_ylabel('Station ID')
-    ax.set_title(title or f'Top {top_n} stations by {metric.upper()}')
+    ax.set_ylabel("Station ID")
+    ax.set_title(title or f"Top {top_n} stations by {metric.upper()}")
     ax.invert_yaxis()
-    ax.grid(axis='x', alpha=0.3)
+    ax.grid(axis="x", alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -356,11 +390,12 @@ def plot_error_ranking(
 # 5.  Error vs. spatial isolation
 # ---------------------------------------------------------------------------
 
+
 def plot_error_vs_isolation(
     station_df: pd.DataFrame,
     train_station_ids: list,
     coordinates: dict,
-    metric: str = 'mae',
+    metric: str = "mae",
     title: str | None = None,
     ax=None,
     save_path: str | None = None,
@@ -384,50 +419,62 @@ def plot_error_vs_isolation(
     if ax is None:
         _, ax = plt.subplots(figsize=(7, 5))
 
-    test_df = station_df.dropna(subset=[metric, 'longitude', 'latitude'])
+    test_df = station_df.dropna(subset=[metric, "longitude", "latitude"])
 
     train_rows = [
         (coordinates[s][0], coordinates[s][1])
-        for s in train_station_ids if s in coordinates
+        for s in train_station_ids
+        if s in coordinates
     ]
     if not train_rows:
-        ax.text(0.5, 0.5, 'No training station coordinates available.',
-                transform=ax.transAxes, ha='center')
+        ax.text(
+            0.5,
+            0.5,
+            "No training station coordinates available.",
+            transform=ax.transAxes,
+            ha="center",
+        )
         return ax
 
     train_latlon = np.radians(np.array(train_rows))
-    test_latlon  = np.radians(test_df[['latitude', 'longitude']].values)
+    test_latlon = np.radians(test_df[["latitude", "longitude"]].values)
 
-    nbrs = NearestNeighbors(n_neighbors=1, metric='haversine')
+    nbrs = NearestNeighbors(n_neighbors=1, metric="haversine")
     nbrs.fit(train_latlon)
     dists_rad, _ = nbrs.kneighbors(test_latlon)
     dists_km = dists_rad.flatten() * 6371.0
 
     errors = test_df[metric].values
-    ax.scatter(dists_km, errors, alpha=0.7, edgecolors='black', linewidths=0.4, s=60)
+    ax.scatter(dists_km, errors, alpha=0.7, edgecolors="black", linewidths=0.4, s=60)
 
     if len(dists_km) > 2:
         z = np.polyfit(dists_km, errors, 1)
         p = np.poly1d(z)
         x_line = np.linspace(dists_km.min(), dists_km.max(), 100)
-        ax.plot(x_line, p(x_line), 'r--', linewidth=1.5,
-                label=f'Trend (slope={z[0]:.3f})')
+        ax.plot(
+            x_line, p(x_line), "r--", linewidth=1.5, label=f"Trend (slope={z[0]:.3f})"
+        )
         ax.legend(fontsize=8)
 
         r, pval = pearsonr(dists_km, errors)
         ax.text(
-            0.97, 0.95, f'r = {r:.3f}  (p={pval:.3f})',
-            transform=ax.transAxes, ha='right', va='top', fontsize=9,
-            bbox=dict(facecolor='white', alpha=0.7),
+            0.97,
+            0.95,
+            f"r = {r:.3f}  (p={pval:.3f})",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=9,
+            bbox=dict(facecolor="white", alpha=0.7),
         )
 
-    ax.set_xlabel('Distance to nearest training gauge (km)')
+    ax.set_xlabel("Distance to nearest training gauge (km)")
     ax.set_ylabel(metric.upper())
-    ax.set_title(title or f'{metric.upper()} vs. distance to nearest training gauge')
+    ax.set_title(title or f"{metric.upper()} vs. distance to nearest training gauge")
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -435,10 +482,11 @@ def plot_error_vs_isolation(
 # 6.  Regression scatter (single model)
 # ---------------------------------------------------------------------------
 
+
 def plot_regression_scatter(
     actual: np.ndarray,
     predicted: np.ndarray,
-    model_name: str = 'Model',
+    model_name: str = "Model",
     metrics: dict | None = None,
     title: str | None = None,
     ax=None,
@@ -462,38 +510,47 @@ def plot_regression_scatter(
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 6))
 
-    actual    = np.asarray(actual,    dtype=float)
+    actual = np.asarray(actual, dtype=float)
     predicted = np.asarray(predicted, dtype=float)
-    mask      = ~(np.isnan(actual) | np.isnan(predicted))
+    mask = ~(np.isnan(actual) | np.isnan(predicted))
     actual, predicted = actual[mask], predicted[mask]
 
     if metrics is None:
-        r, _  = pearsonr(actual, predicted)
-        rmse  = float(np.sqrt(np.mean((actual - predicted) ** 2)))
-        mae   = float(np.mean(np.abs(actual - predicted)))
-        metrics = {'Pearson r': r, 'RMSE (mm/hr)': rmse, 'MAE (mm/hr)': mae}
+        r, _ = pearsonr(actual, predicted)
+        rmse = float(np.sqrt(np.mean((actual - predicted) ** 2)))
+        mae = float(np.mean(np.abs(actual - predicted)))
+        metrics = {"Pearson r": r, "RMSE (mm/hr)": rmse, "MAE (mm/hr)": mae}
 
-    ax.scatter(actual, predicted, alpha=0.4, s=10, edgecolors='none')
+    ax.scatter(actual, predicted, alpha=0.4, s=10, edgecolors="none")
 
     plot_bound = max(float(np.nanmax(actual)), float(np.nanmax(predicted)), 1.0)
-    ax.plot([0, plot_bound], [0, plot_bound], 'r--', linewidth=1.5,
-            label='Perfect prediction')
-
-    text = '\n'.join(f'{k} = {v:.3f}' for k, v in metrics.items())
-    ax.text(
-        0.05, 0.95, text,
-        transform=ax.transAxes, verticalalignment='top', fontsize=9,
-        bbox=dict(facecolor='white', alpha=0.7, edgecolor='black'),
+    ax.plot(
+        [0, plot_bound],
+        [0, plot_bound],
+        "r--",
+        linewidth=1.5,
+        label="Perfect prediction",
     )
 
-    ax.set_xlabel('Actual (mm/hr)')
-    ax.set_ylabel('Predicted (mm/hr)')
+    text = "\n".join(f"{k} = {v:.3f}" for k, v in metrics.items())
+    ax.text(
+        0.05,
+        0.95,
+        text,
+        transform=ax.transAxes,
+        verticalalignment="top",
+        fontsize=9,
+        bbox=dict(facecolor="white", alpha=0.7, edgecolor="black"),
+    )
+
+    ax.set_xlabel("Actual (mm/hr)")
+    ax.set_ylabel("Predicted (mm/hr)")
     ax.set_title(title or model_name)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -501,10 +558,11 @@ def plot_regression_scatter(
 # 6b. Density regression scatter (single model)
 # ---------------------------------------------------------------------------
 
+
 def plot_density_scatter(
     actual: np.ndarray,
     predicted: np.ndarray,
-    model_name: str = 'Model',
+    model_name: str = "Model",
     metrics: dict | None = None,
     title: str | None = None,
     log_scale: bool = True,
@@ -532,24 +590,28 @@ def plot_density_scatter(
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 6))
 
-    actual    = np.asarray(actual,    dtype=float)
+    actual = np.asarray(actual, dtype=float)
     predicted = np.asarray(predicted, dtype=float)
-    mask      = ~(np.isnan(actual) | np.isnan(predicted))
+    mask = ~(np.isnan(actual) | np.isnan(predicted))
     actual, predicted = actual[mask], predicted[mask]
 
     if metrics is None:
-        r, _  = pearsonr(actual, predicted)
-        rmse  = float(np.sqrt(np.mean((actual - predicted) ** 2)))
-        mae   = float(np.mean(np.abs(actual - predicted)))
-        metrics = {'Pearson r': r, 'RMSE (mm/hr)': rmse, 'MAE (mm/hr)': mae}
+        r, _ = pearsonr(actual, predicted)
+        rmse = float(np.sqrt(np.mean((actual - predicted) ** 2)))
+        mae = float(np.mean(np.abs(actual - predicted)))
+        metrics = {"Pearson r": r, "RMSE (mm/hr)": rmse, "MAE (mm/hr)": mae}
 
     # Compute KDE density for each point
-    xy  = np.vstack([actual, predicted])
+    xy = np.vstack([actual, predicted])
     kde = gaussian_kde(xy)
     density = kde(xy)
     # Sort so densest points are drawn on top
     sort_idx = np.argsort(density)
-    a_sorted, p_sorted, d_sorted = actual[sort_idx], predicted[sort_idx], density[sort_idx]
+    a_sorted, p_sorted, d_sorted = (
+        actual[sort_idx],
+        predicted[sort_idx],
+        density[sort_idx],
+    )
 
     if log_scale:
         a_plot = np.log1p(a_sorted)
@@ -557,23 +619,33 @@ def plot_density_scatter(
     else:
         a_plot, p_plot = a_sorted, p_sorted
 
-    sc = ax.scatter(a_plot, p_plot, c=d_sorted, cmap='plasma', s=10,
-                    edgecolors='none', alpha=0.8)
-    plt.colorbar(sc, ax=ax, label='Density', shrink=0.8)
+    sc = ax.scatter(
+        a_plot, p_plot, c=d_sorted, cmap="plasma", s=10, edgecolors="none", alpha=0.8
+    )
+    plt.colorbar(sc, ax=ax, label="Density", shrink=0.8)
 
     plot_bound = max(float(a_plot.max()), float(p_plot.max()), 0.1)
-    ax.plot([0, plot_bound], [0, plot_bound], 'r--', linewidth=1.5,
-            label='Perfect prediction')
-
-    text = '\n'.join(f'{k} = {v:.3f}' for k, v in metrics.items())
-    ax.text(
-        0.05, 0.95, text,
-        transform=ax.transAxes, verticalalignment='top', fontsize=9,
-        bbox=dict(facecolor='white', alpha=0.7, edgecolor='black'),
+    ax.plot(
+        [0, plot_bound],
+        [0, plot_bound],
+        "r--",
+        linewidth=1.5,
+        label="Perfect prediction",
     )
 
-    xlabel = 'Actual — log(mm/hr + 1)' if log_scale else 'Actual (mm/hr)'
-    ylabel = 'Predicted — log(mm/hr + 1)' if log_scale else 'Predicted (mm/hr)'
+    text = "\n".join(f"{k} = {v:.3f}" for k, v in metrics.items())
+    ax.text(
+        0.05,
+        0.95,
+        text,
+        transform=ax.transAxes,
+        verticalalignment="top",
+        fontsize=9,
+        bbox=dict(facecolor="white", alpha=0.7, edgecolor="black"),
+    )
+
+    xlabel = "Actual — log(mm/hr + 1)" if log_scale else "Actual (mm/hr)"
+    ylabel = "Predicted — log(mm/hr + 1)" if log_scale else "Predicted (mm/hr)"
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title or model_name)
@@ -581,7 +653,7 @@ def plot_density_scatter(
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -589,9 +661,10 @@ def plot_density_scatter(
 # 7.  Regression comparison (multiple models)
 # ---------------------------------------------------------------------------
 
+
 def plot_regression_comparison(
     results: dict,
-    title: str = 'Model Comparison — Actual vs Predicted',
+    title: str = "Model Comparison — Actual vs Predicted",
     figsize_per_panel: tuple[float, float] = (5, 5),
     save_path: str | None = None,
 ):
@@ -626,7 +699,7 @@ def plot_regression_comparison(
                     'metrics': kriging_result['metrics']},
     })
     """
-    n    = len(results)
+    n = len(results)
     w, h = figsize_per_panel
     fig, axes = plt.subplots(1, n, figsize=(w * n, h))
     if n == 1:
@@ -634,10 +707,10 @@ def plot_regression_comparison(
 
     for ax, (model_name, data) in zip(axes, results.items()):
         plot_regression_scatter(
-            actual=np.asarray(data['actual']),
-            predicted=np.asarray(data['predicted']),
+            actual=np.asarray(data["actual"]),
+            predicted=np.asarray(data["predicted"]),
             model_name=model_name,
-            metrics=data.get('metrics'),
+            metrics=data.get("metrics"),
             ax=ax,
         )
 
@@ -645,7 +718,7 @@ def plot_regression_comparison(
     fig.tight_layout()
 
     if save_path:
-        fig.savefig(save_path, dpi=200, bbox_inches='tight')
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
     return fig
 
 
@@ -653,10 +726,11 @@ def plot_regression_comparison(
 # 8.  Aggregate metrics comparison bar chart
 # ---------------------------------------------------------------------------
 
+
 def plot_metrics_comparison(
     results: dict,
-    metrics: list[str] | tuple[str, ...] = ('rmse', 'mae', 'f1'),
-    title: str = 'Benchmark Comparison',
+    metrics: list[str] | tuple[str, ...] = ("rmse", "mae", "f1"),
+    title: str = "Benchmark Comparison",
     ax=None,
     save_path: str | None = None,
 ):
@@ -687,9 +761,9 @@ def plot_metrics_comparison(
     """
     # Normalise metric names: accept both 'rmse' and 'average_RMSE_loss' etc.
     _alias = {
-        'rmse': ['rmse', 'average_rmse_loss', 'average_RMSE_loss'],
-        'mae':  ['mae',  'average_mae_loss',  'average_MAE_loss'],
-        'f1':   ['f1'],
+        "rmse": ["rmse", "average_rmse_loss", "average_RMSE_loss"],
+        "mae": ["mae", "average_mae_loss", "average_MAE_loss"],
+        "f1": ["f1"],
     }
 
     def _get(d: dict, key: str):
@@ -699,12 +773,13 @@ def plot_metrics_comparison(
         return np.nan
 
     model_names = list(results.keys())
-    valid_metrics = [m for m in metrics
-                     if any(not np.isnan(_get(v, m)) for v in results.values())]
+    valid_metrics = [
+        m for m in metrics if any(not np.isnan(_get(v, m)) for v in results.values())
+    ]
 
-    n_models  = len(model_names)
+    n_models = len(model_names)
     n_metrics = len(valid_metrics)
-    x     = np.arange(n_metrics)
+    x = np.arange(n_metrics)
     width = 0.8 / n_models
 
     if ax is None:
@@ -713,27 +788,37 @@ def plot_metrics_comparison(
     colours = plt.cm.tab10(np.linspace(0, 0.9, n_models))
 
     for i, (model_name, colour) in enumerate(zip(model_names, colours)):
-        vals   = [_get(results[model_name], m) for m in valid_metrics]
+        vals = [_get(results[model_name], m) for m in valid_metrics]
         offset = (i - n_models / 2 + 0.5) * width
-        bars   = ax.bar(x + offset, vals, width, label=model_name,
-                        color=colour, edgecolor='black', linewidth=0.4)
+        bars = ax.bar(
+            x + offset,
+            vals,
+            width,
+            label=model_name,
+            color=colour,
+            edgecolor="black",
+            linewidth=0.4,
+        )
         for bar, val in zip(bars, vals):
             if not np.isnan(val):
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
                     bar.get_height() + 0.002,
-                    f'{val:.3f}', ha='center', va='bottom', fontsize=7,
+                    f"{val:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
                 )
 
     ax.set_xticks(x)
     ax.set_xticklabels([m.upper() for m in valid_metrics])
-    ax.set_ylabel('Score')
+    ax.set_ylabel("Score")
     ax.set_title(title)
     ax.legend(fontsize=9)
-    ax.grid(axis='y', alpha=0.3)
+    ax.grid(axis="y", alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -741,10 +826,11 @@ def plot_metrics_comparison(
 # 9.  Per-timestep metrics (single model)
 # ---------------------------------------------------------------------------
 
+
 def plot_timestep_metrics(
     per_timestep_metrics: list[dict],
-    metrics: list[str] | tuple[str, ...] = ('rmse', 'mae'),
-    model_name: str = 'Model',
+    metrics: list[str] | tuple[str, ...] = ("rmse", "mae"),
+    model_name: str = "Model",
     title: str | None = None,
     ts_display_start: str | None = None,
     ts_frame_count: int | None = None,
@@ -774,8 +860,8 @@ def plot_timestep_metrics(
         _, ax = plt.subplots(figsize=(12, 4))
 
     df = pd.DataFrame(per_timestep_metrics)
-    if 'timestamp' in df.columns:
-        df = df.set_index('timestamp')
+    if "timestamp" in df.columns:
+        df = df.set_index("timestamp")
 
     # Apply display window
     if ts_display_start is not None:
@@ -785,17 +871,22 @@ def plot_timestep_metrics(
 
     for metric in metrics:
         if metric in df.columns:
-            ax.plot(df.index, df[metric], linewidth=0.8, alpha=0.8,
-                    label=f'{model_name} {metric.upper()}')
+            ax.plot(
+                df.index,
+                df[metric],
+                linewidth=0.8,
+                alpha=0.8,
+                label=f"{model_name} {metric.upper()}",
+            )
 
-    ax.set_xlabel('Timestamp')
-    ax.set_ylabel('Error (mm/hr)')
-    ax.set_title(title or f'{model_name} — per-timestep error')
+    ax.set_xlabel("Timestamp")
+    ax.set_ylabel("Error (mm/hr)")
+    ax.set_title(title or f"{model_name} — per-timestep error")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
@@ -803,9 +894,10 @@ def plot_timestep_metrics(
 # 10.  Per-timestep comparison (multiple models)
 # ---------------------------------------------------------------------------
 
+
 def plot_timestep_comparison(
     results: dict,
-    metric: str = 'rmse',
+    metric: str = "rmse",
     title: str | None = None,
     rolling_window: int | None = None,
     ts_display_start: str | None = None,
@@ -845,13 +937,13 @@ def plot_timestep_comparison(
     colours = plt.cm.tab10(np.linspace(0, 0.9, len(results)))
 
     for (model_name, data), colour in zip(results.items(), colours):
-        ts_list = data.get('per_timestep_metrics', [])
+        ts_list = data.get("per_timestep_metrics", [])
         if not ts_list:
             continue
 
         df = pd.DataFrame(ts_list)
-        if 'timestamp' in df.columns:
-            df = df.set_index('timestamp')
+        if "timestamp" in df.columns:
+            df = df.set_index("timestamp")
 
         if metric not in df.columns:
             continue
@@ -865,24 +957,31 @@ def plot_timestep_comparison(
         if rolling_window:
             series = series.rolling(rolling_window, min_periods=1).mean()
 
-        ax.plot(series.index, series.values, linewidth=1.0, alpha=0.85,
-                label=model_name, color=colour)
+        ax.plot(
+            series.index,
+            series.values,
+            linewidth=1.0,
+            alpha=0.85,
+            label=model_name,
+            color=colour,
+        )
 
-    suffix = f' (rolling {rolling_window})' if rolling_window else ''
-    ax.set_xlabel('Timestamp')
-    ax.set_ylabel(f'{metric.upper()} (mm/hr)')
-    ax.set_title(title or f'Per-timestep {metric.upper()} comparison{suffix}')
+    suffix = f" (rolling {rolling_window})" if rolling_window else ""
+    ax.set_xlabel("Timestamp")
+    ax.set_ylabel(f"{metric.upper()} (mm/hr)")
+    ax.set_title(title or f"Per-timestep {metric.upper()} comparison{suffix}")
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax
 
 
 # ---------------------------------------------------------------------------
 # 11.  Grid interpolation + spatial heatmap (mirrors grid_prediction.py)
 # ---------------------------------------------------------------------------
+
 
 def interpolate_to_grid(
     predictions_df: pd.DataFrame,
@@ -928,36 +1027,34 @@ def interpolate_to_grid(
     grid_shape  : (n_rows, n_cols)
     """
     # Build regular grid
-    lat_centre = (bounds['top'] + bounds['bottom']) / 2.0
-    lat_step   = resolution_km / 111.0
-    lon_step   = resolution_km / (111.32 * np.cos(np.radians(lat_centre)))
+    lat_centre = (bounds["top"] + bounds["bottom"]) / 2.0
+    lat_step = resolution_km / 111.0
+    lon_step = resolution_km / (111.32 * np.cos(np.radians(lat_centre)))
 
-    lats = np.arange(bounds['bottom'], bounds['top'],  lat_step)
-    lons = np.arange(bounds['left'],   bounds['right'], lon_step)
+    lats = np.arange(bounds["bottom"], bounds["top"], lat_step)
+    lons = np.arange(bounds["left"], bounds["right"], lon_step)
     lon_grid, lat_grid = np.meshgrid(lons, lats)
     n_rows, n_cols = len(lats), len(lons)
     grid_shape = (n_rows, n_cols)
 
-    grid_latlon = np.radians(
-        np.stack([lat_grid.flatten(), lon_grid.flatten()], axis=1)
-    )
+    grid_latlon = np.radians(np.stack([lat_grid.flatten(), lon_grid.flatten()], axis=1))
 
     # Station coordinates for the columns that appear in predictions_df
     station_ids = list(predictions_df.columns)
     station_latlon = np.radians(
-        np.array([coordinates[s] for s in station_ids])   # (lat, lon)
+        np.array([coordinates[s] for s in station_ids])  # (lat, lon)
     )
 
     k = min(n_nearest, len(station_ids))
-    nbrs = NearestNeighbors(n_neighbors=k, metric='haversine')
+    nbrs = NearestNeighbors(n_neighbors=k, metric="haversine")
     nbrs.fit(station_latlon)
     dists_rad, nbr_idx = nbrs.kneighbors(grid_latlon)  # [n_grid, k]
 
     # Pre-compute IDW weights  [n_grid, k]
     dists_km = dists_rad * 6371.0
-    dists_km  = np.maximum(dists_km, 1e-3)
-    raw_w     = 1.0 / dists_km ** power
-    weights   = raw_w / raw_w.sum(axis=1, keepdims=True)  # [n_grid, k]
+    dists_km = np.maximum(dists_km, 1e-3)
+    raw_w = 1.0 / dists_km**power
+    weights = raw_w / raw_w.sum(axis=1, keepdims=True)  # [n_grid, k]
 
     station_vals = predictions_df[station_ids].values  # [T, n_stations]
 
@@ -965,12 +1062,12 @@ def interpolate_to_grid(
     pred_flat = np.full((T, n_rows * n_cols), np.nan)
 
     for t in range(T):
-        row_vals = station_vals[t]                       # [n_stations]
-        neigh    = row_vals[nbr_idx]                     # [n_grid, k]
-        valid    = ~np.isnan(neigh)                      # [n_grid, k]
+        row_vals = station_vals[t]  # [n_stations]
+        neigh = row_vals[nbr_idx]  # [n_grid, k]
+        valid = ~np.isnan(neigh)  # [n_grid, k]
         w_masked = weights * valid
-        w_sum    = w_masked.sum(axis=1)
-        with np.errstate(invalid='ignore'):
+        w_sum = w_masked.sum(axis=1)
+        with np.errstate(invalid="ignore"):
             interpolated = np.where(
                 w_sum > 0,
                 (w_masked * np.nan_to_num(neigh)).sum(axis=1) / w_sum,
@@ -994,7 +1091,7 @@ def plot_rainfall_grid(
     vmin: float = 0.0,
     vmax: float | None = None,
     boundaries: list[float] | None = None,
-    cmap: str = 'YlGnBu',
+    cmap: str = "YlGnBu",
     show_outline: bool = True,
     log_scale: bool = False,
     ax=None,
@@ -1044,41 +1141,47 @@ def plot_rainfall_grid(
         _lv_min = max(vmin if vmin and vmin > 0 else 0.01, 0.01)
         _lv_max = vmax if vmax else frame.max()
         norm = mcolors.LogNorm(vmin=_lv_min, vmax=_lv_max)
-        cbar_label = 'Predicted Rainfall (mm/hr) [log scale]'
+        cbar_label = "Predicted Rainfall (mm/hr) [log scale]"
     elif boundaries is not None:
         norm = mcolors.BoundaryNorm(boundaries, ncolors=cmap_obj.N, clip=True)
-        cbar_label = 'Predicted Rainfall (mm/hr)'
+        cbar_label = "Predicted Rainfall (mm/hr)"
     else:
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-        cbar_label = 'Predicted Rainfall (mm/hr)'
+        cbar_label = "Predicted Rainfall (mm/hr)"
 
     im = ax.imshow(
         frame,
-        extent=[bounds['left'], bounds['right'], bounds['bottom'], bounds['top']],
-        origin='lower',
+        extent=[bounds["left"], bounds["right"], bounds["bottom"], bounds["top"]],
+        origin="lower",
         cmap=cmap_obj,
         norm=norm,
-        aspect='auto',
-        interpolation='bilinear',
+        aspect="auto",
+        interpolation="bilinear",
     )
     plt.colorbar(im, ax=ax, label=cbar_label, shrink=0.8)
 
     if mapping_df is not None:
         ax.scatter(
-            mapping_df['longitude'], mapping_df['latitude'],
-            c='red', s=25, zorder=5, label='Gauge stations',
-            edgecolors='black', linewidths=0.4,
+            mapping_df["longitude"],
+            mapping_df["latitude"],
+            c="red",
+            s=25,
+            zorder=5,
+            label="Gauge stations",
+            edgecolors="black",
+            linewidths=0.4,
         )
-        ax.legend(loc='lower right', fontsize=8)
+        ax.legend(loc="lower right", fontsize=8)
 
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_title(title or f'Predicted Rainfall — timestep {timestamp_idx}')
-    ax.set_xlim(bounds['left'],  bounds['right'])
-    ax.set_ylim(bounds['bottom'], bounds['top'])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(title or f"Predicted Rainfall — timestep {timestamp_idx}")
+    ax.set_xlim(bounds["left"], bounds["right"])
+    ax.set_ylim(bounds["bottom"], bounds["top"])
 
     if show_outline:
         from src.visualization.main import visualise_singapore_outline
+
         visualise_singapore_outline(ax=ax)
 
     return ax
@@ -1095,7 +1198,7 @@ def plot_rainfall_sequence(
     vmin: float = 0.0,
     vmax: float | None = None,
     boundaries: list[float] | None = None,
-    cmap: str = 'YlGnBu',
+    cmap: str = "YlGnBu",
     show_outline: bool = True,
     log_scale: bool = False,
     save_path: str | None = None,
@@ -1139,9 +1242,11 @@ def plot_rainfall_sequence(
     global_vmax = vmax
 
     for i, (t_idx, ax) in enumerate(zip(timestep_indices, axes)):
-        panel_title = titles[i] if titles else f'Timestep {t_idx}'
+        panel_title = titles[i] if titles else f"Timestep {t_idx}"
         plot_rainfall_grid(
-            predictions, grid_shape, bounds,
+            predictions,
+            grid_shape,
+            bounds,
             timestamp_idx=t_idx,
             mapping_df=mapping_df,
             title=panel_title,
@@ -1156,7 +1261,7 @@ def plot_rainfall_sequence(
 
     fig.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=200, bbox_inches='tight')
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
     return fig
 
 
@@ -1171,7 +1276,7 @@ def animate_rainfall_grid(
     vmin: float = 0.0,
     vmax: float | None = None,
     boundaries: list[float] | None = None,
-    cmap: str = 'YlGnBu',
+    cmap: str = "YlGnBu",
     show_outline: bool = True,
     log_scale: bool = False,
     figsize: tuple[float, float] = (9, 7),
@@ -1212,68 +1317,80 @@ def animate_rainfall_grid(
             "  animate_rainfall_grid(..., **scales['rainfall'])"
         )
     import matplotlib.cm as cm_mod
+
     cmap_obj = cm_mod.get_cmap(cmap)
     if log_scale:
         _lv_min = max(vmin if vmin and vmin > 0 else 0.01, 0.01)
         _lv_max = vmax if vmax else subset.max()
         _norm = mcolors.LogNorm(vmin=_lv_min, vmax=_lv_max)
-        cbar_label = 'Predicted Rainfall (mm/hr) [log scale]'
+        cbar_label = "Predicted Rainfall (mm/hr) [log scale]"
     elif boundaries is not None:
         _norm = mcolors.BoundaryNorm(boundaries, ncolors=cmap_obj.N, clip=True)
-        cbar_label = 'Predicted Rainfall (mm/hr)'
+        cbar_label = "Predicted Rainfall (mm/hr)"
     else:
         _norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-        cbar_label = 'Predicted Rainfall (mm/hr)'
+        cbar_label = "Predicted Rainfall (mm/hr)"
 
     fig, ax = plt.subplots(figsize=figsize)
 
     im = ax.imshow(
         subset[0],
-        extent=[bounds['left'], bounds['right'], bounds['bottom'], bounds['top']],
-        origin='lower',
+        extent=[bounds["left"], bounds["right"], bounds["bottom"], bounds["top"]],
+        origin="lower",
         cmap=cmap_obj,
         norm=_norm,
-        aspect='auto',
-        interpolation='bilinear',
+        aspect="auto",
+        interpolation="bilinear",
         animated=True,
     )
     plt.colorbar(im, ax=ax, label=cbar_label, shrink=0.8)
 
     if mapping_df is not None:
         ax.scatter(
-            mapping_df['longitude'], mapping_df['latitude'],
-            c='red', s=25, zorder=5, label='Gauge stations',
-            edgecolors='black', linewidths=0.4,
+            mapping_df["longitude"],
+            mapping_df["latitude"],
+            c="red",
+            s=25,
+            zorder=5,
+            label="Gauge stations",
+            edgecolors="black",
+            linewidths=0.4,
         )
-        ax.legend(loc='lower right', fontsize=8)
+        ax.legend(loc="lower right", fontsize=8)
 
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_xlim(bounds['left'],  bounds['right'])
-    ax.set_ylim(bounds['bottom'], bounds['top'])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_xlim(bounds["left"], bounds["right"])
+    ax.set_ylim(bounds["bottom"], bounds["top"])
 
     if show_outline:
         from src.visualization.main import visualise_singapore_outline
+
         visualise_singapore_outline(ax=ax)
 
-    label = str(timestamps[0]) if timestamps else f'Timestep {timestep_indices[0]}'
+    label = str(timestamps[0]) if timestamps else f"Timestep {timestep_indices[0]}"
     title = ax.set_title(label, fontsize=11)
 
     def _update(frame_i):
         im.set_data(subset[frame_i])
-        lbl = str(timestamps[frame_i]) if timestamps else f'Timestep {timestep_indices[frame_i]}'
+        lbl = (
+            str(timestamps[frame_i])
+            if timestamps
+            else f"Timestep {timestep_indices[frame_i]}"
+        )
         title.set_text(lbl)
         return im, title
 
     anim = animation.FuncAnimation(
-        fig, _update,
+        fig,
+        _update,
         frames=len(timestep_indices),
         interval=interval_ms,
         blit=True,
     )
 
     if save_path:
-        writer = 'pillow' if save_path.endswith('.gif') else 'ffmpeg'
+        writer = "pillow" if save_path.endswith(".gif") else "ffmpeg"
         anim.save(save_path, writer=writer, dpi=150)
         print(f"Animation saved to {save_path}")
 
@@ -1284,16 +1401,17 @@ def animate_rainfall_grid(
 # 12.  Combined entry point for a single benchmark
 # ---------------------------------------------------------------------------
 
+
 def analyze_benchmark(
     result: dict,
     coordinates: dict,
     bounds: dict | None = None,
     train_station_ids: list | None = None,
-    model_name: str = 'Benchmark',
-    output_dir: str = '.',
+    model_name: str = "Benchmark",
+    output_dir: str = ".",
     top_n: int = 10,
     rain_threshold: float = 0.5,
-    metrics: tuple[str, str] = ('rmse', 'pearson_r'),
+    metrics: tuple[str, str] = ("rmse", "pearson_r"),
     scale_params: dict | None = None,
 ) -> pd.DataFrame:
     """
@@ -1332,91 +1450,123 @@ def analyze_benchmark(
     -------
     station_df : pd.DataFrame  per-station metrics with coordinates
     """
-    out  = Path(output_dir)
+    out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    slug = model_name.lower().replace(' ', '_')
+    slug = model_name.lower().replace(" ", "_")
     scale_params = scale_params or {}
 
     station_df = compute_per_station_metrics(
-        result['per_station_data'], coordinates, rain_threshold=rain_threshold
+        result["per_station_data"], coordinates, rain_threshold=rain_threshold
     )
 
     print(f"\n=== {model_name} — per-station analysis ===")
     print(f"Stations analysed: {len(station_df)}")
-    show_cols = ['station_id', 'mae', 'rmse', 'bias', 'f1', 'pearson_r']
+    show_cols = ["station_id", "mae", "rmse", "bias", "f1", "pearson_r"]
     show_cols = [c for c in show_cols if c in station_df.columns]
-    print(station_df[show_cols].sort_values('mae', ascending=False)
-          .head(top_n).to_string(index=False))
+    print(
+        station_df[show_cols]
+        .sort_values("mae", ascending=False)
+        .head(top_n)
+        .to_string(index=False)
+    )
 
     metric1, metric2 = metrics
 
     # Plot 1: First metric spatial map
     if metric1 in station_df.columns:
         fig1, ax1 = plt.subplots(figsize=(10, 8))
-        plot_spatial_error_map(station_df, bounds=bounds, metric=metric1,
-                               top_n_labels=top_n, ax=ax1,
-                               title=f'{model_name} — per-station {metric1.upper()}',
-                               **scale_params.get(metric1, {}))
+        plot_spatial_error_map(
+            station_df,
+            bounds=bounds,
+            metric=metric1,
+            top_n_labels=top_n,
+            ax=ax1,
+            title=f"{model_name} — per-station {metric1.upper()}",
+            **scale_params.get(metric1, {}),
+        )
         fig1.tight_layout()
-        fig1.savefig(out / f'{slug}_{metric1}_map.png', dpi=200, bbox_inches='tight')
+        fig1.savefig(out / f"{slug}_{metric1}_map.png", dpi=200, bbox_inches="tight")
         plt.close(fig1)
 
     # Plot 2: Second metric spatial map
     if metric2 in station_df.columns:
         fig2, ax2 = plt.subplots(figsize=(10, 8))
-        plot_spatial_error_map(station_df, bounds=bounds, metric=metric2,
-                               top_n_labels=top_n, ax=ax2,
-                               title=f'{model_name} — per-station {metric2.upper()}',
-                               **scale_params.get(metric2, {}))
+        plot_spatial_error_map(
+            station_df,
+            bounds=bounds,
+            metric=metric2,
+            top_n_labels=top_n,
+            ax=ax2,
+            title=f"{model_name} — per-station {metric2.upper()}",
+            **scale_params.get(metric2, {}),
+        )
         fig2.tight_layout()
-        fig2.savefig(out / f'{slug}_{metric2}_map.png', dpi=200, bbox_inches='tight')
+        fig2.savefig(out / f"{slug}_{metric2}_map.png", dpi=200, bbox_inches="tight")
         plt.close(fig2)
 
     # Plot 3: Bias map
     fig3, ax3 = plt.subplots(figsize=(10, 8))
-    plot_bias_map(station_df, bounds=bounds, top_n_labels=top_n, ax=ax3,
-                  title=f'{model_name} — prediction bias')
+    plot_bias_map(
+        station_df,
+        bounds=bounds,
+        top_n_labels=top_n,
+        ax=ax3,
+        title=f"{model_name} — prediction bias",
+    )
     fig3.tight_layout()
-    fig3.savefig(out / f'{slug}_bias_map.png', dpi=200, bbox_inches='tight')
+    fig3.savefig(out / f"{slug}_bias_map.png", dpi=200, bbox_inches="tight")
     plt.close(fig3)
 
     # Plot 4: Ranking bar chart (metric1 + metric2 side-by-side)
     fig4, (axA, axB) = plt.subplots(1, 2, figsize=(14, max(4, top_n * 0.45)))
-    rank_m1 = metric1 if metric1 in station_df.columns else 'mae'
-    rank_m2 = metric2 if metric2 in station_df.columns else 'f1'
-    plot_error_ranking(station_df, metric=rank_m1, top_n=top_n, ax=axA,
-                       title=f'{model_name} — worst by {rank_m1.upper()}')
-    plot_error_ranking(station_df, metric=rank_m2, top_n=top_n, ax=axB,
-                       title=f'{model_name} — worst by {rank_m2.upper()}')
-    fig4.suptitle(f'{model_name} — worst-performing stations', fontsize=13)
+    rank_m1 = metric1 if metric1 in station_df.columns else "mae"
+    rank_m2 = metric2 if metric2 in station_df.columns else "f1"
+    plot_error_ranking(
+        station_df,
+        metric=rank_m1,
+        top_n=top_n,
+        ax=axA,
+        title=f"{model_name} — worst by {rank_m1.upper()}",
+    )
+    plot_error_ranking(
+        station_df,
+        metric=rank_m2,
+        top_n=top_n,
+        ax=axB,
+        title=f"{model_name} — worst by {rank_m2.upper()}",
+    )
+    fig4.suptitle(f"{model_name} — worst-performing stations", fontsize=13)
     fig4.tight_layout()
-    fig4.savefig(out / f'{slug}_ranking.png', dpi=200, bbox_inches='tight')
+    fig4.savefig(out / f"{slug}_ranking.png", dpi=200, bbox_inches="tight")
     plt.close(fig4)
 
     # Plot 5: Error vs. isolation (optional)
     if train_station_ids is not None:
         fig5, ax5 = plt.subplots(figsize=(7, 5))
         plot_error_vs_isolation(
-            station_df, train_station_ids, coordinates,
-            metric='mae', ax=ax5,
-            title=f'{model_name} — MAE vs. distance to training gauge',
+            station_df,
+            train_station_ids,
+            coordinates,
+            metric="mae",
+            ax=ax5,
+            title=f"{model_name} — MAE vs. distance to training gauge",
         )
         fig5.tight_layout()
-        fig5.savefig(out / f'{slug}_isolation.png', dpi=200, bbox_inches='tight')
+        fig5.savefig(out / f"{slug}_isolation.png", dpi=200, bbox_inches="tight")
         plt.close(fig5)
 
     # Plot 6: Regression scatter
-    if 'actual_values' in result and 'predicted_values' in result:
+    if "actual_values" in result and "predicted_values" in result:
         fig6, ax6 = plt.subplots(figsize=(6, 6))
         plot_regression_scatter(
-            actual=np.asarray(result['actual_values']),
-            predicted=np.asarray(result['predicted_values']),
+            actual=np.asarray(result["actual_values"]),
+            predicted=np.asarray(result["predicted_values"]),
             model_name=model_name,
-            metrics=result.get('metrics'),
+            metrics=result.get("metrics"),
             ax=ax6,
         )
         fig6.tight_layout()
-        fig6.savefig(out / f'{slug}_regression.png', dpi=200, bbox_inches='tight')
+        fig6.savefig(out / f"{slug}_regression.png", dpi=200, bbox_inches="tight")
         plt.close(fig6)
 
     print(f"Figures saved to: {out.resolve()}")
@@ -1427,16 +1577,17 @@ def analyze_benchmark(
 # Per-station rainfall time-series plot
 # ---------------------------------------------------------------------------
 
+
 def plot_station_rainfall_timeseries(
     predictions_df: pd.DataFrame,
     actuals_df: pd.DataFrame,
     station_id: str,
     time_start: str | None = None,
-    time_end:   str | None = None,
+    time_end: str | None = None,
     title: str | None = None,
     ax=None,
     save_path: str | None = None,
-) -> 'plt.Axes':
+) -> plt.Axes:
     """
     Plot actual vs predicted rainfall for a single station over a time window.
 
@@ -1466,29 +1617,41 @@ def plot_station_rainfall_timeseries(
     if ax is None:
         _, ax = plt.subplots(figsize=(16, 4))
 
-    actual    = actuals_df[station_id].copy()
+    actual = actuals_df[station_id].copy()
     predicted = predictions_df[station_id].copy()
 
     if time_start is not None:
         ts = pd.Timestamp(time_start)
-        actual    = actual[actual.index >= ts]
+        actual = actual[actual.index >= ts]
         predicted = predicted[predicted.index >= ts]
     if time_end is not None:
         te = pd.Timestamp(time_end)
-        actual    = actual[actual.index <= te]
+        actual = actual[actual.index <= te]
         predicted = predicted[predicted.index <= te]
 
-    ax.plot(actual.index,    actual.values,    label='Actual',    color='steelblue',
-            linewidth=0.8, alpha=0.9)
-    ax.plot(predicted.index, predicted.values, label='Predicted', color='orangered',
-            linewidth=0.8, alpha=0.8)
+    ax.plot(
+        actual.index,
+        actual.values,
+        label="Actual",
+        color="steelblue",
+        linewidth=0.8,
+        alpha=0.9,
+    )
+    ax.plot(
+        predicted.index,
+        predicted.values,
+        label="Predicted",
+        color="orangered",
+        linewidth=0.8,
+        alpha=0.8,
+    )
 
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Rainfall (mm/hr)')
-    ax.set_title(title or f'Station {station_id} — Actual vs Predicted rainfall')
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Rainfall (mm/hr)")
+    ax.set_title(title or f"Station {station_id} — Actual vs Predicted rainfall")
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
 
     if save_path:
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')
+        plt.savefig(save_path, dpi=200, bbox_inches="tight")
     return ax

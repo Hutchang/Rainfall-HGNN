@@ -1,8 +1,9 @@
-from pykrige.uk import UniversalKriging
-from pykrige.ok import OrdinaryKriging
-import pandas as pd
-from src import *
 import numpy as np
+import pandas as pd
+from pykrige.ok import OrdinaryKriging
+from pykrige.uk import UniversalKriging
+
+from src import *
 
 
 def kriging_external_drift(

@@ -1,6 +1,7 @@
+from typing import Literal
+
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
-from typing import Literal
 
 
 class WeatherGraphDataset(Dataset):
@@ -191,20 +192,22 @@ class HomogeneousWeatherGraphDatasetInductive(Dataset):
         x = self.graph.x[idx]
         # Labels at this timestep: shape [N, ...]
         y = self.graph.y[idx]
-        
+
         # Create a PyG Data object
-        
+
         data = Data(
             x=x,
             y=y,
             edge_index=self.graph.edge_index,
-            edge_attr=self.graph.edge_attr if hasattr(self.graph, 'edge_attr') else None,
+            edge_attr=self.graph.edge_attr
+            if hasattr(self.graph, "edge_attr")
+            else None,
             mask=self.mask,  # Nodes to train on
             train_mask=self.graph.train_mask,  # For masking features
-            station_id = self.graph.station_id,
-            num_nodes=x.shape[0]
+            station_id=self.graph.station_id,
+            num_nodes=x.shape[0],
         )
-        
+
         return data
 
 

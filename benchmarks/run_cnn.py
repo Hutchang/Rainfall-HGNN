@@ -36,30 +36,29 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+import xarray as xr
 from scipy.stats import pearsonr
 from sklearn.metrics import f1_score
-import tqdm
-import xarray as xr
+from torch.utils.data import DataLoader, Dataset
+
+from benchmarks.models.cnn import RainfallCNN
+from benchmarks.processing.gridify import (
+    apply_idw_weights,
+    make_grid_coords,
+    precompute_idw_weights,
+)
+from src.radar.utils import load_processed_dataset
+from src.raingauge.utils import load_raingauge_dataset
 
 # ---------- project imports ----------
 from src.sampling.main import stratified_spatial_kfold_dual
 from src.utils import read_config
-from src.raingauge.utils import load_raingauge_dataset
-from src.radar.utils import load_processed_dataset
-from benchmarks.models.cnn import RainfallCNN
-from benchmarks.processing.gridify import (
-    make_grid_coords,
-    precompute_idw_weights,
-    apply_idw_weights,
-)
-
 
 # ============================================================
 # Dataset
 # ============================================================
+
 
 class CNNGridDataset(Dataset):
     """One item = one timestep: (input_grid [C,H,W], target_values [N])."""
@@ -80,8 +79,10 @@ class CNNGridDataset(Dataset):
 # Sampling helper (uses torch.nn.functional.grid_sample)
 # ============================================================
 
-def sample_field_at_stations(pred_field, station_lons, station_lats,
-                              grid_lons, grid_lats):
+
+def sample_field_at_stations(
+    pred_field, station_lons, station_lats, grid_lons, grid_lats
+):
     """Bilinear sample a predicted [B, 1, H, W] field at station positions.
 
     Parameters
@@ -110,8 +111,7 @@ def sample_field_at_stations(pred_field, station_lons, station_lats,
     grid_4d = grid_t.unsqueeze(0).unsqueeze(2).expand(B, -1, 1, -1)  # [B, N, 1, 2]
 
     sampled = F.grid_sample(
-        pred_field, grid_4d, mode="bilinear",
-        align_corners=True, padding_mode="border"
+        pred_field, grid_4d, mode="bilinear", align_corners=True, padding_mode="border"
     )  # [B, 1, N, 1]
     return sampled[:, 0, :, 0]  # [B, N]
 
@@ -119,6 +119,7 @@ def sample_field_at_stations(pred_field, station_lons, station_lats,
 # ============================================================
 # Weighted MSE loss (matches training/logic_hetero.py)
 # ============================================================
+
 
 def weighted_mse(pred: torch.Tensor, target: torch.Tensor, alpha: float = 0.0):
     weights = 1.0 + alpha * torch.log1p(target.clamp(min=0.0))
@@ -129,10 +130,13 @@ def weighted_mse(pred: torch.Tensor, target: torch.Tensor, alpha: float = 0.0):
 # Data preparation helpers
 # ============================================================
 
-def _prepare_cml_series(cml_nc_path: str,
-                        grid_lons: np.ndarray,
-                        grid_lats: np.ndarray,
-                        timestamps: pd.DatetimeIndex):
+
+def _prepare_cml_series(
+    cml_nc_path: str,
+    grid_lons: np.ndarray,
+    grid_lats: np.ndarray,
+    timestamps: pd.DatetimeIndex,
+):
     """Return [T, H, W] float32 CML specific-attenuation grids.
 
     Dataset dims: (link_id=414, station=2, time=T_cml).
@@ -145,32 +149,34 @@ def _prepare_cml_series(cml_nc_path: str,
     cml_times = pd.DatetimeIndex(pd.to_datetime(ds["time"].values))
 
     # [N_links, 2, T_cml] → mean over station axis → [N_links, T_cml] → T [T_cml, N_links]
-    tsl = ds["TSL_AVG"].values.astype(np.float32)   # [N_links, 2, T_cml]
+    tsl = ds["TSL_AVG"].values.astype(np.float32)  # [N_links, 2, T_cml]
     rsl = ds["RSL_AVG"].values.astype(np.float32)
 
-    atten = np.clip(
-        tsl.mean(axis=1) - rsl.mean(axis=1), 0, None
-    ).T.astype(np.float32)                           # [T_cml, N_links]
+    atten = np.clip(tsl.mean(axis=1) - rsl.mean(axis=1), 0, None).T.astype(
+        np.float32
+    )  # [T_cml, N_links]
 
-    link_ids_arr = ds["link_id"].values              # [N_links]
-    mid_lons = ((ds["site_a_longitude"].values + ds["site_b_longitude"].values) / 2)
-    mid_lats = ((ds["site_a_latitude"].values  + ds["site_b_latitude"].values)  / 2)
+    link_ids_arr = ds["link_id"].values  # [N_links]
+    mid_lons = (ds["site_a_longitude"].values + ds["site_b_longitude"].values) / 2
+    mid_lats = (ds["site_a_latitude"].values + ds["site_b_latitude"].values) / 2
     lk_lengths = np.maximum(ds["length"].values.astype(np.float32), 1e-6)
     ds.close()
 
-    atten /= lk_lengths                              # specific attenuation [T_cml, N_links]
+    atten /= lk_lengths  # specific attenuation [T_cml, N_links]
 
     aligned = (
         pd.DataFrame(atten, index=cml_times, columns=link_ids_arr)
-        .reindex(timestamps).fillna(0.0).values.astype(np.float32)
+        .reindex(timestamps)
+        .fillna(0.0)
+        .values.astype(np.float32)
     )
     cml_weights = precompute_idw_weights(mid_lons, mid_lats, grid_lons, grid_lats)
     return apply_idw_weights(cml_weights, aligned, H, W)  # [T, H, W]
 
 
-def _prepare_radar_series(radar_df: pd.DataFrame,
-                          timestamps: pd.DatetimeIndex,
-                          H: int, W: int):
+def _prepare_radar_series(
+    radar_df: pd.DataFrame, timestamps: pd.DatetimeIndex, H: int, W: int
+):
     """Return [T, H, W] float32 array aligned to timestamps."""
     radar_indexed = radar_df.set_index("timestamp")["data"].reindex(timestamps)
 
@@ -184,6 +190,7 @@ def _prepare_radar_series(radar_df: pd.DataFrame,
             if data.shape != (H, W):
                 # Rescale if grid dimensions differ from radar native resolution
                 from scipy.ndimage import zoom
+
                 data = zoom(data, (H / data.shape[0], W / data.shape[1]), order=1)
             grids.append(np.clip(data, 0, None))
 
@@ -194,19 +201,28 @@ def _prepare_radar_series(radar_df: pd.DataFrame,
 # Training & evaluation loops
 # ============================================================
 
-def _train_epoch(model, loader, optimizer, device,
-                 station_lons, station_lats,
-                 grid_lons, grid_lats, alpha):
+
+def _train_epoch(
+    model,
+    loader,
+    optimizer,
+    device,
+    station_lons,
+    station_lats,
+    grid_lons,
+    grid_lats,
+    alpha,
+):
     model.train()
     losses = []
     for grids, targets in loader:
-        grids   = grids.to(device)          # [B, C, H, W]
-        targets = targets.to(device)        # [B, N_train]
+        grids = grids.to(device)  # [B, C, H, W]
+        targets = targets.to(device)  # [B, N_train]
 
-        pred = model(grids)                 # [B, 1, H, W]
+        pred = model(grids)  # [B, 1, H, W]
         pred_at = sample_field_at_stations(
             pred, station_lons, station_lats, grid_lons, grid_lats
-        )                                   # [B, N_train]
+        )  # [B, N_train]
 
         loss = weighted_mse(pred_at, targets, alpha=alpha)
         optimizer.zero_grad()
@@ -218,16 +234,16 @@ def _train_epoch(model, loader, optimizer, device,
     return float(np.mean(losses))
 
 
-def _eval_epoch(model, loader, device,
-                station_lons, station_lats,
-                grid_lons, grid_lats, alpha):
+def _eval_epoch(
+    model, loader, device, station_lons, station_lats, grid_lons, grid_lats, alpha
+):
     model.eval()
     losses = []
     all_preds, all_targets = [], []
 
     with torch.no_grad():
         for grids, targets in loader:
-            grids   = grids.to(device)
+            grids = grids.to(device)
             targets = targets.to(device)
 
             pred = model(grids).clamp(min=0.0)
@@ -240,7 +256,7 @@ def _eval_epoch(model, loader, device,
             all_preds.append(pred_at.cpu().numpy())
             all_targets.append(targets.cpu().numpy())
 
-    preds   = np.concatenate(all_preds).ravel()
+    preds = np.concatenate(all_preds).ravel()
     targets = np.concatenate(all_targets).ravel()
     return float(np.mean(losses)), preds, targets
 
@@ -249,9 +265,9 @@ def _compute_metrics(preds, targets, rain_threshold=0.5):
     mask = ~(np.isnan(preds) | np.isnan(targets))
     p, t = preds[mask], targets[mask]
     rmse = float(np.sqrt(np.mean((p - t) ** 2)))
-    mae  = float(np.mean(np.abs(p - t)))
+    mae = float(np.mean(np.abs(p - t)))
     r, _ = pearsonr(p, t) if len(p) > 1 else (0.0, 1.0)
-    f1   = f1_score(
+    f1 = f1_score(
         (t >= rain_threshold).astype(int),
         (p >= rain_threshold).astype(int),
         zero_division=0,
@@ -262,6 +278,7 @@ def _compute_metrics(preds, targets, rain_threshold=0.5):
 # ============================================================
 # Main entry point
 # ============================================================
+
 
 def train_cnn(config=None, debug: bool = False):
     """Train the CNN benchmark.
@@ -276,26 +293,26 @@ def train_cnn(config=None, debug: bool = False):
     if config is None:
         config = read_config("config.yaml")
 
-    device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = config["training_params"]["batch_size"]
-    epochs     = config["training_params"]["epochs"]
-    patience   = config["training_params"]["early_stop"]
+    epochs = config["training_params"]["epochs"]
+    patience = config["training_params"]["early_stop"]
     fold_count = config["training_params"]["fold_count"]
-    alpha      = config["training_params"]["weighted_loss_alpha"]
-    lr         = float(config["model"]["learning_rate"])
-    wd         = float(config["model"]["weight_decay"])
-    rain_thr   = 0.5
+    alpha = config["training_params"]["weighted_loss_alpha"]
+    lr = float(config["model"]["learning_rate"])
+    wd = float(config["model"]["weight_decay"])
+    rain_thr = 0.5
 
     # Debug overrides — small enough to fit in ~1 GB RAM on an M1 laptop
     debug_T = 500
     if debug:
-        epochs     = 3
-        patience   = 2
+        epochs = 3
+        patience = 2
         fold_count = 1
         batch_size = min(batch_size, 16)
 
     # ---- experiment folder ----
-    prefix   = "debug_" if debug else ""
+    prefix = "debug_" if debug else ""
     exp_name = f"{prefix}{datetime.now().strftime('%Y%m%d_%H%M%S')}_cnn"
     os.makedirs(f"experiments/{exp_name}", exist_ok=True)
     shutil.copy("config.yaml", f"experiments/{exp_name}/config.yaml")
@@ -308,11 +325,12 @@ def train_cnn(config=None, debug: bool = False):
     # ---- load raw data ----
     print("Loading data …")
     uptime = config["filters"]["uptime_threshold"]
-    start  = config["dataset_parameters"]["start_year"]
-    end    = config["dataset_parameters"]["end_year"]
+    start = config["dataset_parameters"]["start_year"]
+    end = config["dataset_parameters"]["end_year"]
 
-    raingauge_df, mapping_df = load_raingauge_dataset(start=start, end=end,
-                                                       uptime_threshold=uptime)
+    raingauge_df, mapping_df = load_raingauge_dataset(
+        start=start, end=end, uptime_threshold=uptime
+    )
     raingauge_df = raingauge_df.resample("15min", closed="left", label="left").mean()
     raingauge_df = raingauge_df[raingauge_df.index.minute % 15 == 0]
 
@@ -324,17 +342,19 @@ def train_cnn(config=None, debug: bool = False):
 
     # ---- inner-join timestamps ----
     radar_ts = set(radar_df["timestamp"].tolist())
-    common   = sorted(raingauge_df.index.intersection(radar_ts).intersection(cml_ts))
+    common = sorted(raingauge_df.index.intersection(radar_ts).intersection(cml_ts))
     timestamps = pd.DatetimeIndex(common)
 
     raingauge_df = raingauge_df.loc[timestamps]
-    radar_df     = radar_df[radar_df["timestamp"].isin(set(timestamps))].copy()
+    radar_df = radar_df[radar_df["timestamp"].isin(set(timestamps))].copy()
 
     if debug:
-        timestamps   = timestamps[:debug_T]
+        timestamps = timestamps[:debug_T]
         raingauge_df = raingauge_df.iloc[:debug_T]
-        radar_df     = radar_df[radar_df["timestamp"].isin(set(timestamps))].copy()
-        print(f"[DEBUG] Using {debug_T} timesteps, {fold_count} fold(s), {epochs} epoch(s)")
+        radar_df = radar_df[radar_df["timestamp"].isin(set(timestamps))].copy()
+        print(
+            f"[DEBUG] Using {debug_T} timesteps, {fold_count} fold(s), {epochs} epoch(s)"
+        )
 
     T = len(timestamps)
     print(f"Aligned timesteps: {T}")
@@ -348,29 +368,33 @@ def train_cnn(config=None, debug: bool = False):
     # ---- precompute CML and radar grids (fold-independent) ----
     t0 = time.time()
     print("Building CML grid series …")
-    cml_grids = _prepare_cml_series(cml_nc_path, grid_lons, grid_lats, timestamps)  # [T, H, W]
-    print(f"  CML grid done in {time.time()-t0:.1f}s")
+    cml_grids = _prepare_cml_series(
+        cml_nc_path, grid_lons, grid_lats, timestamps
+    )  # [T, H, W]
+    print(f"  CML grid done in {time.time() - t0:.1f}s")
 
     print("Building radar grid series …")
-    radar_grids = _prepare_radar_series(radar_df, timestamps, H, W)     # [T, H, W]
+    radar_grids = _prepare_radar_series(radar_df, timestamps, H, W)  # [T, H, W]
 
     # ---- spatial folds (same splits as GNN) ----
     split_info = stratified_spatial_kfold_dual(
-        mapping_df, seed=config["training_params"]["seed"],
-        plot=False, n_splits=fold_count
+        mapping_df,
+        seed=config["training_params"]["seed"],
+        plot=False,
+        n_splits=fold_count,
     )
 
     fold_metrics = []
-    total_start  = time.time()
+    total_start = time.time()
 
     for fold_idx in range(fold_count):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"FOLD {fold_idx + 1} / {fold_count}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         train_ids = split_info[fold_idx]["ml"]["train"]
-        val_ids   = split_info[fold_idx]["ml"]["validation"]
-        test_ids  = split_info[fold_idx]["ml"]["test"]
+        val_ids = split_info[fold_idx]["ml"]["validation"]
+        test_ids = split_info[fold_idx]["ml"]["test"]
 
         # Station coordinates
         def _get_coords(station_ids):
@@ -379,18 +403,20 @@ def train_cnn(config=None, debug: bool = False):
             return rows["longitude"].values, rows["latitude"].values
 
         train_lons, train_lats = _get_coords(train_ids)
-        val_lons,   val_lats   = _get_coords(val_ids)
-        test_lons,  test_lats  = _get_coords(test_ids)
+        val_lons, val_lats = _get_coords(val_ids)
+        test_lons, test_lats = _get_coords(test_ids)
 
         # Raingauge grid (train stations only — test/val stations never in input)
         print(f"  Building raingauge grid from {len(train_ids)} training stations …")
-        rg_weights = precompute_idw_weights(train_lons, train_lats, grid_lons, grid_lats)
-        rg_values  = raingauge_df[list(train_ids)].fillna(0).values.astype(np.float32)
-        rg_grids   = apply_idw_weights(rg_weights, rg_values, H, W)  # [T, H, W]
+        rg_weights = precompute_idw_weights(
+            train_lons, train_lats, grid_lons, grid_lats
+        )
+        rg_values = raingauge_df[list(train_ids)].fillna(0).values.astype(np.float32)
+        rg_grids = apply_idw_weights(rg_weights, rg_values, H, W)  # [T, H, W]
 
         # Stack into [T, 3, H, W]
         input_np = np.stack([rg_grids, cml_grids, radar_grids], axis=1)  # [T, 3, H, W]
-        input_t  = torch.tensor(input_np)
+        input_t = torch.tensor(input_np)
 
         # Target tensors per split
         def _targets(station_ids):
@@ -399,58 +425,87 @@ def train_cnn(config=None, debug: bool = False):
             )  # [T, N]
 
         train_targets = _targets(train_ids)
-        val_targets   = _targets(val_ids)
-        test_targets  = _targets(test_ids)
+        val_targets = _targets(val_ids)
+        test_targets = _targets(test_ids)
 
         # Datasets / loaders
         train_ds = CNNGridDataset(input_t, train_targets)
-        val_ds   = CNNGridDataset(input_t, val_targets)
-        test_ds  = CNNGridDataset(input_t, test_targets)
+        val_ds = CNNGridDataset(input_t, val_targets)
+        test_ds = CNNGridDataset(input_t, test_targets)
 
         train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False)
-        val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False)
-        test_loader  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
         # Model + optimiser
         model = RainfallCNN(in_channels=3, hidden=64).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
 
         # Log model config
-        _log({"type": "model_config", "fold": fold_idx,
-              "config": model.config, "timestamp": time.time()})
+        _log(
+            {
+                "type": "model_config",
+                "fold": fold_idx,
+                "config": model.config,
+                "timestamp": time.time(),
+            }
+        )
 
         # Training loop with early stopping
-        best_val_loss  = float("inf")
-        best_state     = None
-        no_improve     = 0
-        fold_start     = time.time()
+        best_val_loss = float("inf")
+        best_state = None
+        no_improve = 0
+        fold_start = time.time()
 
         for epoch in range(1, epochs + 1):
             train_loss = _train_epoch(
-                model, train_loader, optimizer, device,
-                train_lons, train_lats, grid_lons, grid_lats, alpha
+                model,
+                train_loader,
+                optimizer,
+                device,
+                train_lons,
+                train_lats,
+                grid_lons,
+                grid_lats,
+                alpha,
             )
             val_loss, _, _ = _eval_epoch(
-                model, val_loader, device,
-                val_lons, val_lats, grid_lons, grid_lats, alpha
+                model,
+                val_loader,
+                device,
+                val_lons,
+                val_lats,
+                grid_lons,
+                grid_lats,
+                alpha,
             )
 
             improved = val_loss < best_val_loss
             if improved:
                 best_val_loss = val_loss
-                best_state    = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                no_improve    = 0
+                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                no_improve = 0
             else:
                 no_improve += 1
 
-            _log({"type": "epoch", "fold": fold_idx, "epoch": epoch,
-                  "train_loss": train_loss, "val_loss": val_loss,
-                  "best_val": best_val_loss, "new_best": improved,
-                  "timestamp": time.time()})
+            _log(
+                {
+                    "type": "epoch",
+                    "fold": fold_idx,
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    "best_val": best_val_loss,
+                    "new_best": improved,
+                    "timestamp": time.time(),
+                }
+            )
 
-            print(f"  Epoch {epoch:3d}/{epochs}  "
-                  f"train={train_loss:.4f}  val={val_loss:.4f}"
-                  + ("  *" if improved else ""))
+            print(
+                f"  Epoch {epoch:3d}/{epochs}  "
+                f"train={train_loss:.4f}  val={val_loss:.4f}"
+                + ("  *" if improved else "")
+            )
 
             if no_improve >= patience:
                 print(f"  Early stop after {no_improve} epochs without improvement.")
@@ -462,14 +517,25 @@ def train_cnn(config=None, debug: bool = False):
 
         # Save checkpoint
         ckpt_path = f"experiments/{exp_name}/fold_{fold_idx + 1}_model.pt"
-        torch.save({"model_state": model.state_dict(),
-                    "model_config": model.config,
-                    "fold": fold_idx}, ckpt_path)
+        torch.save(
+            {
+                "model_state": model.state_dict(),
+                "model_config": model.config,
+                "fold": fold_idx,
+            },
+            ckpt_path,
+        )
 
         # Evaluate on test set
         _, test_preds, test_targets_np = _eval_epoch(
-            model, test_loader, device,
-            test_lons, test_lats, grid_lons, grid_lats, alpha
+            model,
+            test_loader,
+            device,
+            test_lons,
+            test_lats,
+            grid_lons,
+            grid_lats,
+            alpha,
         )
         metrics = _compute_metrics(test_preds, test_targets_np, rain_threshold=rain_thr)
         fold_time = time.time() - fold_start
@@ -479,19 +545,28 @@ def train_cnn(config=None, debug: bool = False):
             print(f"    {k}: {v:.4f}")
         print(f"  Fold time: {fold_time:.1f}s")
 
-        _log({"type": "test_metrics", "fold": fold_idx,
-              "train_time_sec": fold_time, **metrics, "timestamp": time.time()})
+        _log(
+            {
+                "type": "test_metrics",
+                "fold": fold_idx,
+                "train_time_sec": fold_time,
+                **metrics,
+                "timestamp": time.time(),
+            }
+        )
 
         fold_metrics.append(metrics)
 
     # ---- aggregate results ----
     total_time = time.time() - total_start
     agg = {k: float(np.mean([m[k] for m in fold_metrics])) for k in fold_metrics[0]}
-    agg_std = {f"{k}_std": float(np.std([m[k] for m in fold_metrics])) for k in fold_metrics[0]}
+    agg_std = {
+        f"{k}_std": float(np.std([m[k] for m in fold_metrics])) for k in fold_metrics[0]
+    }
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("AGGREGATE RESULTS (mean ± std across folds)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for k in fold_metrics[0]:
         print(f"  {k}: {agg[k]:.4f} ± {agg_std[k + '_std']:.4f}")
     print(f"Total time: {total_time:.1f}s")
@@ -517,9 +592,13 @@ def train_cnn(config=None, debug: bool = False):
 # ============================================================
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", action="store_true",
-                        help="Run with 500 timesteps / 1 fold / 3 epochs for local testing")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Run with 500 timesteps / 1 fold / 3 epochs for local testing",
+    )
     args = parser.parse_args()
 
     config = read_config("config.yaml")

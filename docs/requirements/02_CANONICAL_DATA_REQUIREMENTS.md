@@ -149,10 +149,13 @@ Component 04 reads both gauge tables and does essentially this:
 
 ```python
 wide = gauge_hourly.pivot(index="timestamp", columns="station_id", values="rainfall_mm")
-x = torch.stack([
-    torch.tensor(wide.fillna(0).values.T),      # channel 0: rainfall
-    torch.tensor(wide.notna().values.T),        # channel 1: validity  <- your absent rows
-], dim=2)
+x = torch.stack(
+    [
+        torch.tensor(wide.fillna(0).values.T),  # channel 0: rainfall
+        torch.tensor(wide.notna().values.T),  # channel 1: validity  <- your absent rows
+    ],
+    dim=2,
+)
 ```
 
 That is why the absent-row rule is not cosmetic: it is literally the model's validity

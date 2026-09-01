@@ -19,6 +19,7 @@ GRID_BOUNDS = {"left": 103.6, "right": 104.1, "top": 1.5, "bottom": 1.188}
 # Grid coordinate helpers
 # ---------------------------------------------------------------------------
 
+
 def make_grid_coords(bounds=None, resolution=GRID_RES):
     """Return (lons, lats) 1-D arrays for the regular grid.
 
@@ -36,8 +37,10 @@ def make_grid_coords(bounds=None, resolution=GRID_RES):
 # IDW weights (precomputed once per fold / data-source)
 # ---------------------------------------------------------------------------
 
-def precompute_idw_weights(source_lons, source_lats, grid_lons, grid_lats,
-                           power=2, k=10):
+
+def precompute_idw_weights(
+    source_lons, source_lats, grid_lons, grid_lats, power=2, k=10
+):
     """Build a dense IDW weight matrix [H*W, N_sources].
 
     The matrix is independent of the actual observation values, so it only
@@ -66,7 +69,7 @@ def precompute_idw_weights(source_lons, source_lats, grid_lons, grid_lats,
 
     lon_2d, lat_2d = np.meshgrid(grid_lons, grid_lats)
     query_pts = np.column_stack([lon_2d.ravel(), lat_2d.ravel()])  # [H*W, 2]
-    source_pts = np.column_stack([source_lons, source_lats])       # [N, 2]
+    source_pts = np.column_stack([source_lons, source_lats])  # [N, 2]
 
     k_actual = min(k, N)
     if k_actual == 0:
@@ -75,16 +78,16 @@ def precompute_idw_weights(source_lons, source_lats, grid_lons, grid_lats,
     tree = cKDTree(source_pts)
     dists, idxs = tree.query(query_pts, k=k_actual)
 
-    if dists.ndim == 1:                   # k=1 edge case
+    if dists.ndim == 1:  # k=1 edge case
         dists = dists[:, np.newaxis]
         idxs = idxs[:, np.newaxis]
 
-    exact_mask = dists == 0               # [H*W, k]
-    any_exact = exact_mask.any(axis=1)   # [H*W]
+    exact_mask = dists == 0  # [H*W, k]
+    any_exact = exact_mask.any(axis=1)  # [H*W]
 
     # IDW weights: 1/d^power, zero for exact hits (overridden below)
     with np.errstate(divide="ignore", invalid="ignore"):
-        w = np.where(exact_mask, 0.0, 1.0 / (dists ** power))
+        w = np.where(exact_mask, 0.0, 1.0 / (dists**power))
 
     # For cells where a source sits exactly on the grid point, copy it directly
     exact_rows = np.where(any_exact)[0]
@@ -110,6 +113,7 @@ def precompute_idw_weights(source_lons, source_lats, grid_lons, grid_lats,
 # Apply precomputed weights to a time series
 # ---------------------------------------------------------------------------
 
+
 def apply_idw_weights(weights, values, H, W):
     """Multiply precomputed IDW weights by observation values.
 
@@ -133,6 +137,7 @@ def apply_idw_weights(weights, values, H, W):
 # Bilinear sampling from grid at scattered point locations (NumPy, no grad)
 # ---------------------------------------------------------------------------
 
+
 def grid_sample_at_points(grid, point_lons, point_lats, grid_lons, grid_lats):
     """Bilinear sample from a single (H, W) grid at scattered point positions.
 
@@ -150,7 +155,7 @@ def grid_sample_at_points(grid, point_lons, point_lats, grid_lons, grid_lats):
     """
     H, W = grid.shape
     dx = grid_lons[1] - grid_lons[0]
-    dy = grid_lats[0] - grid_lats[1]     # positive: lats decrease top→bottom
+    dy = grid_lats[0] - grid_lats[1]  # positive: lats decrease top→bottom
 
     xi = (np.asarray(point_lons) - grid_lons[0]) / dx
     yi = (grid_lats[0] - np.asarray(point_lats)) / dy
@@ -168,7 +173,7 @@ def grid_sample_at_points(grid, point_lons, point_lats, grid_lons, grid_lats):
 
     return (
         (1 - wx) * (1 - wy) * grid[y0, x0]
-        + wx       * (1 - wy) * grid[y0, x1]
-        + (1 - wx) * wy       * grid[y1, x0]
-        + wx       * wy       * grid[y1, x1]
+        + wx * (1 - wy) * grid[y0, x1]
+        + (1 - wx) * wy * grid[y1, x0]
+        + wx * wy * grid[y1, x1]
     ).astype(np.float32)

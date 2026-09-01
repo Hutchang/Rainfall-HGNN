@@ -1,35 +1,44 @@
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import networkx as nx
-import torch
 
 import geopandas as gpd
-from shapely import STRtree, LineString, Point
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import pandas as pd
+import torch
+from shapely import LineString, Point, STRtree
+from sklearn.neighbors import NearestNeighbors
+from torch.utils.data import Dataset
 from torch_geometric.data import HeteroData
 from torch_geometric.transforms import ToUndirected
-from torch.utils.data import Dataset
-from sklearn.neighbors import NearestNeighbors
-from typing import Literal
 
-from src.utils import generate_homogeneous_edges, add_homogeneous_edge_attributes_to_data, read_config
+from src.utils import (
+    read_config,
+)
 
 config = read_config("config.yaml")
 
-class GaugeGraphNew():
 
-    def __init__(self, data_df: pd.DataFrame, mapping_df: pd.DataFrame, split_info: dict, knn: int):
+class GaugeGraphNew:
+    def __init__(
+        self,
+        data_df: pd.DataFrame,
+        mapping_df: pd.DataFrame,
+        split_info: dict,
+        knn: int,
+    ):
         """
         node_feature_dict: contains information on heterogeneous node
         station_lists: reference to maintain mapping of stations to node orderings
         """
         self.dtype = torch.float32
-        self.raingauge_df = data_df[mapping_df['id'].values.tolist()] #reorder the columns
+        self.raingauge_df = data_df[
+            mapping_df["id"].values.tolist()
+        ]  # reorder the columns
         self.mapping_df = mapping_df
         self.split_info = split_info
         self.knn = knn
-        self.test_gauges = split_info['ml']['test']
-        self.fused_validation_heterodata=None
+        self.test_gauges = split_info["ml"]["test"]
+        self.fused_validation_heterodata = None
 
         self.test_graph = self.build_graph("test")
 
@@ -37,10 +46,8 @@ class GaugeGraphNew():
 
         self.test_heterodata = ToUndirected()(self.test_heterodata)
 
-
     def get_test_graph(self):
         return self.test_graph
-
 
     def get_test_heterodata(self):
         if self.fused_test_heterodata:
@@ -49,89 +56,118 @@ class GaugeGraphNew():
             return self.test_heterodata
 
     def build_graph(self, split: str):
-        '''
+        """
         BUILDS A GRAPH FOR TRAIN/VALIDATION/TEST
         returns an nx graph
-        '''
+        """
 
-        #Build the graph
+        # Build the graph
         G = nx.Graph()
-        coords = filtered_mapping_df[['longitude', 'latitude']].values
+        coords = filtered_mapping_df[["longitude", "latitude"]].values
 
-        ball_tree = NearestNeighbors(n_neighbors=self.knn+1, algorithm='ball_tree').fit(coords)
+        ball_tree = NearestNeighbors(
+            n_neighbors=self.knn + 1, algorithm="ball_tree"
+        ).fit(coords)
 
         distances, indices = ball_tree.kneighbors(coords)
 
         for idx, row in filtered_mapping_df.iterrows():
-            G.add_node(idx, lat=row['latitude'], lon=row['longitude'])
+            G.add_node(idx, lat=row["latitude"], lon=row["longitude"])
 
         for i, neighbors in enumerate(indices):
             for j, neighbor_idx in enumerate(neighbors[1:]):
-              dist = distances[i][j + 1]
+                dist = distances[i][j + 1]
 
-              G.add_edge(i, neighbor_idx, weight=dist)
+                G.add_edge(i, neighbor_idx, weight=dist)
 
         return G
 
     def initialise_masks(self):
-        '''
+        """
         Returns mask tensors
 
         :param self: Description
-        '''
+        """
         train_mask = np.zeros(self.mapping_df.shape[0], dtype=bool)
         validation_mask = np.zeros(self.mapping_df.shape[0], dtype=bool)
         test_mask = np.zeros(self.mapping_df.shape[0], dtype=bool)
 
-        train_mask[self.mapping_df['order'][self.mapping_df['id'].isin(self.train_gauges)].index.to_list()] = True
-        validation_mask[self.mapping_df['order'][self.mapping_df['id'].isin(self.validation_gauges)].index.to_list()] = True
-        test_mask[self.mapping_df['order'][self.mapping_df['id'].isin(self.test_gauges)].index.to_list()] = True
+        train_mask[
+            self.mapping_df["order"][
+                self.mapping_df["id"].isin(self.train_gauges)
+            ].index.to_list()
+        ] = True
+        validation_mask[
+            self.mapping_df["order"][
+                self.mapping_df["id"].isin(self.validation_gauges)
+            ].index.to_list()
+        ] = True
+        test_mask[
+            self.mapping_df["order"][
+                self.mapping_df["id"].isin(self.test_gauges)
+            ].index.to_list()
+        ] = True
         return train_mask, validation_mask, test_mask
 
     def fill_heterodata(self, graph: str) -> HeteroData:
         heterodata = HeteroData()
-        rainfall_values = torch.tensor(self.raingauge_df.fillna(0).values.T, dtype=torch.float32)
-        rainfall_validity = torch.tensor(self.raingauge_df.notna().astype(int).values.T, dtype=torch.int16)
+        rainfall_values = torch.tensor(
+            self.raingauge_df.fillna(0).values.T, dtype=torch.float32
+        )
+        rainfall_validity = torch.tensor(
+            self.raingauge_df.notna().astype(int).values.T, dtype=torch.int16
+        )
         rainfall_features = torch.stack([rainfall_values, rainfall_validity], dim=2)
-        heterodata['raingauge'].x = rainfall_features
-        heterodata['raingauge'].y = rainfall_values.unsqueeze(-1)
+        heterodata["raingauge"].x = rainfall_features
+        heterodata["raingauge"].y = rainfall_values.unsqueeze(-1)
 
         match graph:
             case "train":
-              mask = torch.tensor(self.train_mask, dtype=bool)
-              heterodata['raingauge'].mask = []
-              edges = self.train_graph.edges(data=True)
+                mask = torch.tensor(self.train_mask, dtype=bool)
+                heterodata["raingauge"].mask = []
+                edges = self.train_graph.edges(data=True)
             case "validation":
-              mask = torch.tensor(np.logical_or(self.train_mask, self.val_mask), dtype=bool)
-              val = self.mapping_df[self.mapping_df['id'].isin(self.validation_gauges) | self.mapping_df['id'].isin(self.train_gauges)]
-              heterodata['raingauge'].mask = val['id'].isin(self.validation_gauges).to_numpy()
-              edges = self.validation_graph.edges(data=True)
+                mask = torch.tensor(
+                    np.logical_or(self.train_mask, self.val_mask), dtype=bool
+                )
+                val = self.mapping_df[
+                    self.mapping_df["id"].isin(self.validation_gauges)
+                    | self.mapping_df["id"].isin(self.train_gauges)
+                ]
+                heterodata["raingauge"].mask = (
+                    val["id"].isin(self.validation_gauges).to_numpy()
+                )
+                edges = self.validation_graph.edges(data=True)
             case "test":
-              mask = torch.tensor(np.ones(len(self.test_mask)), dtype=bool)
-              heterodata['raingauge'].mask = self.test_mask
-              edges = self.test_graph.edges(data=True)
+                mask = torch.tensor(np.ones(len(self.test_mask)), dtype=bool)
+                heterodata["raingauge"].mask = self.test_mask
+                edges = self.test_graph.edges(data=True)
 
-        heterodata['raingauge'].x = heterodata['raingauge'].x[mask]
-        heterodata['raingauge'].y = heterodata['raingauge'].y[mask]
+        heterodata["raingauge"].x = heterodata["raingauge"].x[mask]
+        heterodata["raingauge"].y = heterodata["raingauge"].y[mask]
         edge_index = []
         edge_attr = []
         for A, B, data in edges:
-            edge_index.append([
-                A,
-                B
-            ])
-            weight = data['weight']
+            edge_index.append([A, B])
+            weight = data["weight"]
             edge_attr.append(weight)
-        heterodata['raingauge', 'connects', 'raingauge'].edge_index = torch.tensor(edge_index, dtype=int).T
-        heterodata['raingauge', 'connects', 'raingauge'].edge_attr = torch.tensor(edge_attr, dtype=torch.float32)
-        heterodata['raingauge'].num_nodes = torch.tensor(heterodata['raingauge'].x.shape[0], dtype=torch.int32)
+        heterodata["raingauge", "connects", "raingauge"].edge_index = torch.tensor(
+            edge_index, dtype=int
+        ).T
+        heterodata["raingauge", "connects", "raingauge"].edge_attr = torch.tensor(
+            edge_attr, dtype=torch.float32
+        )
+        heterodata["raingauge"].num_nodes = torch.tensor(
+            heterodata["raingauge"].x.shape[0], dtype=torch.int32
+        )
         return heterodata
 
-
-    def add_heterodata(self, heterodata_layer: HeteroData, coords:pd.DataFrame, layer_name: str,knn=4) -> tuple[HeteroData, HeteroData, HeteroData]:
-        '''
+    def add_heterodata(
+        self, heterodata_layer: HeteroData, coords: pd.DataFrame, layer_name: str, knn=4
+    ) -> tuple[HeteroData, HeteroData, HeteroData]:
+        """
         Adds layer to the heterodata.
-        '''
+        """
         if not self.fused_train_heterodata:
             self.fused_train_heterodata = self.train_heterodata.clone()
             self.fused_validation_heterodata = self.validation_heterodata.clone()
@@ -139,84 +175,162 @@ class GaugeGraphNew():
 
         for node_type in heterodata_layer.node_types:
             self.fused_train_heterodata[node_type].x = heterodata_layer[node_type].x
-            self.fused_validation_heterodata[node_type].x = heterodata_layer[node_type].x
+            self.fused_validation_heterodata[node_type].x = heterodata_layer[
+                node_type
+            ].x
             self.fused_test_heterodata[node_type].x = heterodata_layer[node_type].x
 
         for edge_type in heterodata_layer.edge_types:
-            self.fused_train_heterodata[edge_type].edge_index = heterodata_layer[edge_type].edge_index
-            self.fused_validation_heterodata[edge_type].edge_index = heterodata_layer[edge_type].edge_index
-            self.fused_test_heterodata[edge_type].edge_index = heterodata_layer[edge_type].edge_index
-            self.fused_train_heterodata[edge_type].edge_attr = heterodata_layer[edge_type].edge_attr
-            self.fused_validation_heterodata[edge_type].edge_attr = heterodata_layer[edge_type].edge_attr
-            self.fused_test_heterodata[edge_type].edge_attr = heterodata_layer[edge_type].edge_attr
+            self.fused_train_heterodata[edge_type].edge_index = heterodata_layer[
+                edge_type
+            ].edge_index
+            self.fused_validation_heterodata[edge_type].edge_index = heterodata_layer[
+                edge_type
+            ].edge_index
+            self.fused_test_heterodata[edge_type].edge_index = heterodata_layer[
+                edge_type
+            ].edge_index
+            self.fused_train_heterodata[edge_type].edge_attr = heterodata_layer[
+                edge_type
+            ].edge_attr
+            self.fused_validation_heterodata[edge_type].edge_attr = heterodata_layer[
+                edge_type
+            ].edge_attr
+            self.fused_test_heterodata[edge_type].edge_attr = heterodata_layer[
+                edge_type
+            ].edge_attr
 
-
-
-        #Connect the raingauge and the radar
-        train_raingauge_coords = list(zip(self.mapping_df[self.train_mask]['longitude'],
-                                          self.mapping_df[self.train_mask]['latitude']))
-        val_raingauge_coords = list(zip(self.mapping_df[np.logical_or(self.train_mask, self.val_mask)]['longitude'],
-                                       self.mapping_df[np.logical_or(self.train_mask, self.val_mask)]['latitude']))
-        test_raingauge_coords = list(zip(self.mapping_df['longitude'],
-                                         self.mapping_df['latitude']))
+        # Connect the raingauge and the radar
+        train_raingauge_coords = list(
+            zip(
+                self.mapping_df[self.train_mask]["longitude"],
+                self.mapping_df[self.train_mask]["latitude"],
+            )
+        )
+        val_raingauge_coords = list(
+            zip(
+                self.mapping_df[np.logical_or(self.train_mask, self.val_mask)][
+                    "longitude"
+                ],
+                self.mapping_df[np.logical_or(self.train_mask, self.val_mask)][
+                    "latitude"
+                ],
+            )
+        )
+        test_raingauge_coords = list(
+            zip(self.mapping_df["longitude"], self.mapping_df["latitude"])
+        )
 
         if layer_name == "cml":
-            train_connecting_edges, train_connecting_edge_weight = self.connect_cml_graph(train_raingauge_coords, coords, knn)
-            val_connecting_edges, val_connecting_edge_weight = self.connect_cml_graph(val_raingauge_coords, coords, knn)
-            test_connecting_edges, test_connecting_edge_weight = self.connect_cml_graph(test_raingauge_coords, coords, knn)
+            train_connecting_edges, train_connecting_edge_weight = (
+                self.connect_cml_graph(train_raingauge_coords, coords, knn)
+            )
+            val_connecting_edges, val_connecting_edge_weight = self.connect_cml_graph(
+                val_raingauge_coords, coords, knn
+            )
+            test_connecting_edges, test_connecting_edge_weight = self.connect_cml_graph(
+                test_raingauge_coords, coords, knn
+            )
         else:
-            train_connecting_edges, train_connecting_edge_weight = self.connect_graphs(train_raingauge_coords, coords, knn)
-            val_connecting_edges, val_connecting_edge_weight = self.connect_graphs(val_raingauge_coords, coords, knn)
-            test_connecting_edges, test_connecting_edge_weight = self.connect_graphs(test_raingauge_coords, coords, knn)
+            train_connecting_edges, train_connecting_edge_weight = self.connect_graphs(
+                train_raingauge_coords, coords, knn
+            )
+            val_connecting_edges, val_connecting_edge_weight = self.connect_graphs(
+                val_raingauge_coords, coords, knn
+            )
+            test_connecting_edges, test_connecting_edge_weight = self.connect_graphs(
+                test_raingauge_coords, coords, knn
+            )
 
+        self.fused_train_heterodata[
+            "raingauge", "connects", f"{layer_name}"
+        ].edge_index = torch.tensor(train_connecting_edges, dtype=torch.long).T
+        self.fused_validation_heterodata[
+            "raingauge", "connects", f"{layer_name}"
+        ].edge_index = torch.tensor(val_connecting_edges, dtype=torch.long).T
+        self.fused_test_heterodata[
+            "raingauge", "connects", f"{layer_name}"
+        ].edge_index = torch.tensor(test_connecting_edges, dtype=torch.long).T
 
+        self.fused_train_heterodata[
+            "raingauge", "connects", f"{layer_name}"
+        ].edge_attr = torch.tensor(train_connecting_edge_weight, dtype=torch.float32).T
+        self.fused_validation_heterodata[
+            "raingauge", "connects", f"{layer_name}"
+        ].edge_attr = torch.tensor(val_connecting_edge_weight, dtype=torch.float32).T
+        self.fused_test_heterodata[
+            "raingauge", "connects", f"{layer_name}"
+        ].edge_attr = torch.tensor(test_connecting_edge_weight, dtype=torch.float32).T
 
-        self.fused_train_heterodata['raingauge', 'connects', f'{layer_name}'].edge_index = torch.tensor(train_connecting_edges,dtype=torch.long).T
-        self.fused_validation_heterodata['raingauge', 'connects', f'{layer_name}'].edge_index = torch.tensor(val_connecting_edges, dtype=torch.long).T
-        self.fused_test_heterodata['raingauge', 'connects', f'{layer_name}'].edge_index = torch.tensor(test_connecting_edges, dtype=torch.long).T
+        if not config["layer_connect"]["is_directed"]:
+            self.fused_train_heterodata[
+                f"{layer_name}", "rev_connects", "raingauge"
+            ].edge_index = torch.tensor(
+                train_connecting_edges, dtype=torch.long
+            ).T.flip(0)
+            self.fused_validation_heterodata[
+                f"{layer_name}", "rev_connects", "raingauge"
+            ].edge_index = torch.tensor(val_connecting_edges, dtype=torch.long).T.flip(
+                0
+            )
+            self.fused_test_heterodata[
+                f"{layer_name}", "rev_connects", "raingauge"
+            ].edge_index = torch.tensor(test_connecting_edges, dtype=torch.long).T.flip(
+                0
+            )
 
-        self.fused_train_heterodata['raingauge', 'connects', f'{layer_name}'].edge_attr = torch.tensor(train_connecting_edge_weight, dtype=torch.float32).T
-        self.fused_validation_heterodata['raingauge', 'connects', f'{layer_name}'].edge_attr = torch.tensor(val_connecting_edge_weight, dtype=torch.float32).T
-        self.fused_test_heterodata['raingauge', 'connects', f'{layer_name}'].edge_attr = torch.tensor(test_connecting_edge_weight, dtype=torch.float32).T
+            self.fused_train_heterodata[
+                f"{layer_name}", "rev_connects", "raingauge"
+            ].edge_attr = torch.tensor(
+                train_connecting_edge_weight, dtype=torch.float32
+            )
+            self.fused_validation_heterodata[
+                f"{layer_name}", "rev_connects", "raingauge"
+            ].edge_attr = torch.tensor(val_connecting_edge_weight, dtype=torch.float32)
+            self.fused_test_heterodata[
+                f"{layer_name}", "rev_connects", "raingauge"
+            ].edge_attr = torch.tensor(test_connecting_edge_weight, dtype=torch.float32)
 
-        if not config['layer_connect']['is_directed']:
-            self.fused_train_heterodata[f'{layer_name}', 'rev_connects', 'raingauge'].edge_index = torch.tensor(train_connecting_edges, dtype=torch.long).T.flip(0)
-            self.fused_validation_heterodata[f'{layer_name}', 'rev_connects', 'raingauge'].edge_index = torch.tensor(val_connecting_edges, dtype=torch.long).T.flip(0)
-            self.fused_test_heterodata[f'{layer_name}', 'rev_connects', 'raingauge'].edge_index = torch.tensor(test_connecting_edges, dtype=torch.long).T.flip(0)
+        return (
+            self.fused_train_heterodata,
+            self.fused_validation_heterodata,
+            self.fused_test_heterodata,
+        )
 
-            self.fused_train_heterodata[f'{layer_name}', 'rev_connects', 'raingauge'].edge_attr = torch.tensor(train_connecting_edge_weight, dtype=torch.float32)
-            self.fused_validation_heterodata[f'{layer_name}', 'rev_connects', 'raingauge'].edge_attr = torch.tensor(val_connecting_edge_weight, dtype=torch.float32)
-            self.fused_test_heterodata[f'{layer_name}', 'rev_connects', 'raingauge'].edge_attr = torch.tensor(test_connecting_edge_weight, dtype=torch.float32)
-
-        return self.fused_train_heterodata, self.fused_validation_heterodata, self.fused_test_heterodata
-
-    def connect_cml_graph(self, raingauge_coords, cml_coords: pd.DataFrame, knn:int) -> tuple[list,list]:
+    def connect_cml_graph(
+        self, raingauge_coords, cml_coords: pd.DataFrame, knn: int
+    ) -> tuple[list, list]:
         gauge_gdf = gpd.GeoDataFrame(
-            geometry=[Point(lon, lat) for lon, lat
-             in raingauge_coords],
-            crs="EPSG:4326"
+            geometry=[Point(lon, lat) for lon, lat in raingauge_coords], crs="EPSG:4326"
         ).to_crs("EPSG:3857")
 
         cml_gdf = gpd.GeoDataFrame(
             cml_coords,
             geometry=[
-                LineString([(row['site_a_longitude'], row['site_a_latitude']),
-                            (row['site_b_longitude'], row['site_b_latitude'])])
+                LineString(
+                    [
+                        (row["site_a_longitude"], row["site_a_latitude"]),
+                        (row["site_b_longitude"], row["site_b_latitude"]),
+                    ]
+                )
                 for _, row in cml_coords.iterrows()
             ],
-            crs="EPSG:4326"
+            crs="EPSG:4326",
         ).to_crs("EPSG:3857")
 
         node_a_gdf = gpd.GeoDataFrame(
-            geometry=gpd.points_from_xy(cml_coords['site_a_longitude'], cml_coords['site_a_latitude']),
-            crs="EPSG:4326"
+            geometry=gpd.points_from_xy(
+                cml_coords["site_a_longitude"], cml_coords["site_a_latitude"]
+            ),
+            crs="EPSG:4326",
         ).to_crs("EPSG:3857")
 
         node_b_gdf = gpd.GeoDataFrame(
-            geometry=gpd.points_from_xy(cml_coords['site_b_longitude'], cml_coords['site_b_latitude']),
-            crs="EPSG:4326"
+            geometry=gpd.points_from_xy(
+                cml_coords["site_b_longitude"], cml_coords["site_b_latitude"]
+            ),
+            crs="EPSG:4326",
         ).to_crs("EPSG:3857")
-
 
         tree = STRtree(cml_gdf.geometry)
         K = knn
@@ -237,21 +351,24 @@ class GaugeGraphNew():
                 edge_list.append((gauge_idx, cml_idx + 1))
                 station_A = node_a_gdf.iloc[cml_idx]
                 station_B = node_b_gdf.iloc[cml_idx]
-                weight_A = gauge_pt.distance(station_A) / 1000 #downscale
-                weight_B  = gauge_pt.distance(station_B) / 1000 #downscale
+                weight_A = gauge_pt.distance(station_A) / 1000  # downscale
+                weight_B = gauge_pt.distance(station_B) / 1000  # downscale
                 weight_list.append(float(weight_A.item()))
                 weight_list.append(float(weight_B.item()))
 
         return edge_list, weight_list
 
-    def connect_graphs(self, raingauge_coords, other_coords: pd.DataFrame, knn=16) -> tuple[list, list]:
+    def connect_graphs(
+        self, raingauge_coords, other_coords: pd.DataFrame, knn=16
+    ) -> tuple[list, list]:
         edges = []
         A_coords = np.radians(np.array(raingauge_coords))
-        B_coords = np.radians(np.array(list(zip(other_coords['longitude'], other_coords['latitude']))))
-
+        B_coords = np.radians(
+            np.array(list(zip(other_coords["longitude"], other_coords["latitude"])))
+        )
 
         # Use haversine metric
-        nearestNeighbors = NearestNeighbors(n_neighbors=knn, metric='haversine')
+        nearestNeighbors = NearestNeighbors(n_neighbors=knn, metric="haversine")
         nearestNeighbors.fit(B_coords)
 
         distances, indices = nearestNeighbors.kneighbors(A_coords)
@@ -266,24 +383,32 @@ class GaugeGraphNew():
         return edge_list, weight_list
 
     def get_fused_heterodata(self):
-        return self.fused_train_heterodata, self.fused_validation_heterodata, self.fused_test_heterodata
-
+        return (
+            self.fused_train_heterodata,
+            self.fused_validation_heterodata,
+            self.fused_test_heterodata,
+        )
 
     def visualise_graph_split(self):
 
         fig, ax = plt.subplots(1, 3, figsize=(30, 10))
-        mappings = self.mapping_df.set_index('id')
+        mappings = self.mapping_df.set_index("id")
         train_df = mappings.loc[list(self.train_graph.nodes)]
         val_df = mappings.loc[list(self.validation_graph.nodes)]
         test_df = mappings.loc[list(self.test_graph.nodes)]
         print(train_df.iloc[0])
 
-        train_pos = {node: (row['longitude'], row['latitude'])
-                 for node, row in train_df.iterrows()}
-        validation_pos = {node: (row['longitude'], row['latitude'])
-                for node, row in val_df.iterrows()}
-        test_pos = {node: (row['longitude'], row['latitude'])
-                    for node, row in test_df.iterrows()}
+        train_pos = {
+            node: (row["longitude"], row["latitude"])
+            for node, row in train_df.iterrows()
+        }
+        validation_pos = {
+            node: (row["longitude"], row["latitude"]) for node, row in val_df.iterrows()
+        }
+        test_pos = {
+            node: (row["longitude"], row["latitude"])
+            for node, row in test_df.iterrows()
+        }
 
         train_stations = train_df.index
         val_stations = val_df.index
@@ -297,52 +422,42 @@ class GaugeGraphNew():
 
         for node in test_df.index:
             if node in train_stations:
-                test_colors.append('blue')
+                test_colors.append("blue")
             elif node in val_stations:
-                test_colors.append('green')
+                test_colors.append("green")
             else:
-                test_colors.append('red')
+                test_colors.append("red")
 
-
-        #4. Plotting
-        nx.draw(
-            self.train_graph,
-            pos=train_pos,
-            with_labels=True,
-            ax=ax[0]
-        )
+        # 4. Plotting
+        nx.draw(self.train_graph, pos=train_pos, with_labels=True, ax=ax[0])
         nx.draw(
             self.validation_graph,
             pos=validation_pos,
-            node_color = val_colors,
+            node_color=val_colors,
             with_labels=True,
-            ax=ax[1]
+            ax=ax[1],
         )
         nx.draw(
             self.test_graph,
             pos=test_pos,
             node_color=test_colors,
             with_labels=True,
-            ax=ax[2]
+            ax=ax[2],
         )
 
         fig.show()
 
 
-
-
 class HeterogeneousWeatherGraphDatasetInductive(Dataset):
-
-
     def __init__(self, heterodata, device="cpu"):
 
         self.heterodata = heterodata
         self.device = device
 
         # Graph has shape [N, T, F]
-        self.num_timesteps = heterodata['raingauge'].x.shape[1]
+        self.num_timesteps = heterodata["raingauge"].x.shape[1]
 
-        self.mask = heterodata['raingauge'].mask
+        self.mask = heterodata["raingauge"].mask
 
     def __len__(self):
         return self.num_timesteps
@@ -350,21 +465,21 @@ class HeterogeneousWeatherGraphDatasetInductive(Dataset):
     def __getitem__(self, idx):
         """Return a PyG Data object for timestep idx"""
         # Node features at this timestep: shape [N, F]
-        x = self.heterodata['raingauge'].x[:, idx, :]
+        x = self.heterodata["raingauge"].x[:, idx, :]
         # Labels at this timestep: shape [N, ...]
-        y = self.heterodata['raingauge'].y[:, idx, :]
+        y = self.heterodata["raingauge"].y[:, idx, :]
 
         # Create a PyG Data object
         data = HeteroData()
-        data['raingauge'].x = x
-        data['raingauge'].y = y
+        data["raingauge"].x = x
+        data["raingauge"].y = y
         for edge_type in self.heterodata.edge_types:
             data[edge_type].edge_index = self.heterodata[edge_type].edge_index
             data[edge_type].edge_attr = self.heterodata[edge_type].edge_attr
-        data['raingauge'].mask = torch.tensor(self.heterodata['raingauge'].mask)
-        data['raingauge'].num_nodes = self.heterodata['raingauge'].x.shape[0]
+        data["raingauge"].mask = torch.tensor(self.heterodata["raingauge"].mask)
+        data["raingauge"].num_nodes = self.heterodata["raingauge"].x.shape[0]
         for node_type in self.heterodata.node_types:
-            if node_type == 'raingauge':
+            if node_type == "raingauge":
                 continue
             data[node_type].x = self.heterodata[node_type].x[:, idx, :]
         return data

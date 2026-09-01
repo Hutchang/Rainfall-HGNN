@@ -12,8 +12,9 @@ than failing spuriously (NFR-003: fail loudly, but do not fake a pass).
 The same data is recoverable from this repository's own history:
     git ls-tree -r --name-only cc23a25 -- database/australia
 """
-import os
+
 import glob
+import os
 from pathlib import Path
 
 import pytest
@@ -39,8 +40,10 @@ DATA_ROOT = _resolve_root()
 
 _SKIP = pytest.mark.skipif(
     DATA_ROOT is None,
-    reason=("Sydney gauge data not found. Set SYDNEY_GAUGE_ROOT, or create the "
-            "niramay worktree: git worktree add ../COMP3888-niramay niramay-clone"),
+    reason=(
+        "Sydney gauge data not found. Set SYDNEY_GAUGE_ROOT, or create the "
+        "niramay worktree: git worktree add ../COMP3888-niramay niramay-clone"
+    ),
 )
 
 
@@ -63,6 +66,7 @@ def raw_files(data_root):
 def gauge_long(raw_files):
     """All raw per-station observations concatenated (long format)."""
     import pandas as pd
+
     df = pd.concat((pd.read_csv(f) for f in raw_files), ignore_index=True)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     return df
@@ -71,8 +75,9 @@ def gauge_long(raw_files):
 @pytest.fixture(scope="session")
 def gauge_wide(gauge_long):
     """Pivoted [T x N] frame, as data/loader.py builds it."""
-    wide = gauge_long.pivot(index="timestamp", columns="station_id",
-                            values="rainfall_mm")
+    wide = gauge_long.pivot(
+        index="timestamp", columns="station_id", values="rainfall_mm"
+    )
     wide.columns = wide.columns.astype(str)  # match loader.py:48
     return wide
 
@@ -82,8 +87,12 @@ def station_meta(data_root, gauge_wide):
     """Metadata filtered to stations with data — replicates data/loader.py:41-56,
     including its lack of de-duplication."""
     import pandas as pd
-    meta = pd.read_csv(data_root / "station_metadata.csv", header=None,
-                       names=["name", "id", "network", "latitude", "longitude"])
+
+    meta = pd.read_csv(
+        data_root / "station_metadata.csv",
+        header=None,
+        names=["name", "id", "network", "latitude", "longitude"],
+    )
     meta["id"] = meta["id"].astype(str)
     meta["latitude"] = meta["latitude"].astype(float)
     meta["longitude"] = meta["longitude"].astype(float)

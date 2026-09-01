@@ -52,8 +52,8 @@ N_radar radar nodes:
 """
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch_geometric.nn import GraphConv, Linear
 
 
@@ -76,15 +76,20 @@ class GNNHomoBaseline(nn.Module):
 
     # Fixed node-type ordering that determines the layout of the zero-padded
     # feature vector and the node-index block order within each graph.
-    NODE_ORDER = ('raingauge', 'cml', 'radar')
+    NODE_ORDER = ("raingauge", "cml", "radar")
 
-    def __init__(self, in_channels_dict: dict, hidden_channels: int,
-                 out_channels: int, num_layers: int,
-                 edge_types=None, dropout: float = 0.0):
+    def __init__(
+        self,
+        in_channels_dict: dict,
+        hidden_channels: int,
+        out_channels: int,
+        num_layers: int,
+        edge_types=None,
+        dropout: float = 0.0,
+    ):
         super().__init__()
 
-        self.in_channels_dict = {k: in_channels_dict.get(k, 0)
-                                 for k in self.NODE_ORDER}
+        self.in_channels_dict = {k: in_channels_dict.get(k, 0) for k in self.NODE_ORDER}
         D = sum(self.in_channels_dict.values())
 
         self.config = dict(
@@ -145,13 +150,13 @@ class GNNHomoBaseline(nn.Module):
         N_total        : total nodes per graph
         B              : batch size (number of graphs in batch)
         """
-        npg    = self._npg
+        npg = self._npg
         device = next(iter(x_dict.values())).device
 
         # ---- derive layout constants ----
-        N_rg    = npg['raingauge']
+        N_rg = npg["raingauge"]
         N_total = sum(npg.values())
-        B       = x_dict['raingauge'].shape[0] // N_rg if N_rg > 0 else 1
+        B = x_dict["raingauge"].shape[0] // N_rg if N_rg > 0 else 1
 
         # Feature slots: where each type's channels start in the D-dim vector
         feat_offset: dict[str, int] = {}
@@ -174,15 +179,15 @@ class GNNHomoBaseline(nn.Module):
         for nt in self.NODE_ORDER:
             if nt not in x_dict or npg[nt] == 0:
                 continue
-            N_t  = npg[nt]
-            fs   = feat_offset[nt]
-            fe   = fs + self.in_channels_dict[nt]
-            h    = torch.arange(B * N_t, device=device)
+            N_t = npg[nt]
+            fs = feat_offset[nt]
+            fe = fs + self.in_channels_dict[nt]
+            h = torch.arange(B * N_t, device=device)
             homo = (h // N_t) * N_total + node_offset[nt] + (h % N_t)
             x_homo[homo, fs:fe] = x_dict[nt].to(dtype=torch.float32)
 
         # ---- remap all edges into unified index space ----
-        all_edges:   list[torch.Tensor] = []
+        all_edges: list[torch.Tensor] = []
         all_weights: list[torch.Tensor] = []
 
         for edge_type, ei in edge_index_dict.items():
@@ -194,8 +199,12 @@ class GNNHomoBaseline(nn.Module):
 
             src_h = ei[0]
             dst_h = ei[1]
-            homo_src = (src_h // N_src) * N_total + node_offset[src_type] + (src_h % N_src)
-            homo_dst = (dst_h // N_dst) * N_total + node_offset[dst_type] + (dst_h % N_dst)
+            homo_src = (
+                (src_h // N_src) * N_total + node_offset[src_type] + (src_h % N_src)
+            )
+            homo_dst = (
+                (dst_h // N_dst) * N_total + node_offset[dst_type] + (dst_h % N_dst)
+            )
             all_edges.append(torch.stack([homo_src, homo_dst]))
 
             # Collapse edge attributes to a 1-D scalar weight per edge
@@ -206,8 +215,8 @@ class GNNHomoBaseline(nn.Module):
                 w = torch.ones(ei.shape[1], device=device)
             all_weights.append(w)
 
-        edge_index_homo = torch.cat(all_edges,   dim=1)
-        edge_weight     = torch.cat(all_weights, dim=0)
+        edge_index_homo = torch.cat(all_edges, dim=1)
+        edge_weight = torch.cat(all_weights, dim=0)
 
         return x_homo, edge_index_homo, edge_weight, node_offset, N_rg, N_total, B
 
@@ -229,24 +238,26 @@ class GNNHomoBaseline(nn.Module):
         """
         if self._npg is None:
             raise RuntimeError(
-                "Call model.set_graph_sizes(heterodata) before the first "
-                "forward pass."
+                "Call model.set_graph_sizes(heterodata) before the first forward pass."
             )
 
-        x, edge_index, edge_weight, node_offset, N_rg, N_total, B = \
+        x, edge_index, edge_weight, node_offset, N_rg, N_total, B = (
             self._build_homo_graph(x_dict, edge_index_dict, edge_attr_dict)
+        )
 
         for conv in self.convs:
             x = conv(x, edge_index, edge_weight)
             x = self.dropout(F.relu(x))
 
         # Extract raingauge nodes from each graph in the batch
-        rg_off = node_offset['raingauge']
-        rg_idx = torch.cat([
-            torch.arange(b * N_total + rg_off,
-                         b * N_total + rg_off + N_rg,
-                         device=x.device)
-            for b in range(B)
-        ])
+        rg_off = node_offset["raingauge"]
+        rg_idx = torch.cat(
+            [
+                torch.arange(
+                    b * N_total + rg_off, b * N_total + rg_off + N_rg, device=x.device
+                )
+                for b in range(B)
+            ]
+        )
 
-        return {'raingauge': self.lin(x[rg_idx])}
+        return {"raingauge": self.lin(x[rg_idx])}

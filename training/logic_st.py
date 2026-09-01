@@ -23,21 +23,22 @@ missing" sensor, which is the intended leave-one-out signal.  LPE columns
 (indices >= 2) are never zeroed.
 """
 
-import torch
-import tqdm
-import numpy as np
-import torch.nn.functional as F
-import pandas as pd
 import os
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+import tqdm
 from scipy.stats import pearsonr
 
 from training.logic_hetero import (
-    weighted_mse,
-    compute_mae,
     compute_binary_classification_metrics,
+    compute_mae,
     compute_per_station_metrics,
     print_metrics_summary,
+    weighted_mse,
 )
 
 # Feature indices 0.._DATA_FEATURE_DIM-1 are zeroed during leave-one-out masking.
@@ -50,6 +51,7 @@ _VALIDITY_IDX = 1
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_context_dict(batch):
     """Return {node_type: x_context} for all node types that carry it."""
@@ -74,6 +76,7 @@ def _valid_node_indices(x, indices):
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+
 
 def train_epoch_st(
     model,
@@ -103,8 +106,8 @@ def train_epoch_st(
         optimizer.zero_grad()
         batch = batch.to(device)
 
-        x = batch["raingauge"].x   # [B*N, F]  — current timestep
-        y = batch["raingauge"].y   # [B*N, 1]
+        x = batch["raingauge"].x  # [B*N, F]  — current timestep
+        y = batch["raingauge"].y  # [B*N, 1]
 
         edge_index_dict = batch.edge_index_dict
         edge_attr_dict = {
@@ -115,7 +118,7 @@ def train_epoch_st(
         x_context_dict = _extract_context_dict(batch)
 
         num_graphs = batch["raingauge"].ptr.size(0) - 1
-        num_nodes  = x.shape[0] // num_graphs
+        num_nodes = x.shape[0] // num_graphs
 
         # First pass: find valid node positions without running the model.
         # Knowing the count upfront lets us scale each per-node loss before
@@ -124,7 +127,7 @@ def train_epoch_st(
         # in memory at a time instead of all num_nodes simultaneously.
         valid_positions = []
         for node_pos in range(num_nodes):
-            indices   = torch.arange(num_graphs, device=device) * num_nodes + node_pos
+            indices = torch.arange(num_graphs, device=device) * num_nodes + node_pos
             valid_idx = _valid_node_indices(x, indices)
             if valid_idx.numel() > 0:
                 valid_positions.append((node_pos, indices, valid_idx))
@@ -132,7 +135,7 @@ def train_epoch_st(
         if not valid_positions:
             continue  # entire batch is imputed — skip gradient step
 
-        scale          = 1.0 / len(valid_positions)
+        scale = 1.0 / len(valid_positions)
         batch_loss_val = 0.0
 
         # Second pass: one forward + backward per valid node position.
@@ -149,7 +152,8 @@ def train_epoch_st(
 
             if weighted_loss_alpha > 0.0:
                 loss = weighted_mse(
-                    out["raingauge"][valid_idx], y[valid_idx],
+                    out["raingauge"][valid_idx],
+                    y[valid_idx],
                     alpha=weighted_loss_alpha,
                 )
             else:
@@ -172,6 +176,7 @@ def train_epoch_st(
 # Validation
 # ---------------------------------------------------------------------------
 
+
 def validate_st(
     model,
     dataloader,
@@ -192,8 +197,8 @@ def validate_st(
         for batch in tqdm.tqdm(dataloader, desc="validation"):
             batch = batch.to(device)
 
-            x        = batch["raingauge"].x
-            y        = batch["raingauge"].y
+            x = batch["raingauge"].x
+            y = batch["raingauge"].y
             val_mask = batch["raingauge"].mask
 
             edge_index_dict = batch.edge_index_dict
@@ -206,7 +211,7 @@ def validate_st(
 
             # Only evaluate on split nodes that have real data at this timestep
             valid_at_t = x[:, _VALIDITY_IDX] > 0
-            eval_mask  = val_mask & valid_at_t
+            eval_mask = val_mask & valid_at_t
 
             if eval_mask.sum() == 0:
                 continue
@@ -222,7 +227,8 @@ def validate_st(
 
             if weighted_loss_alpha > 0.0:
                 loss = weighted_mse(
-                    out["raingauge"][eval_mask], y[eval_mask],
+                    out["raingauge"][eval_mask],
+                    y[eval_mask],
                     alpha=weighted_loss_alpha,
                 )
             else:
@@ -236,6 +242,7 @@ def validate_st(
 # ---------------------------------------------------------------------------
 # Testing
 # ---------------------------------------------------------------------------
+
 
 def test_model_st(
     model,
@@ -257,16 +264,16 @@ def test_model_st(
     """
     model.eval()
 
-    all_preds       = []
-    all_targets     = []
+    all_preds = []
+    all_targets = []
     all_station_ids = []
 
     with torch.no_grad():
         for batch in tqdm.tqdm(dataloader, desc="testing"):
             batch = batch.to(device)
 
-            x    = batch["raingauge"].x
-            y    = batch["raingauge"].y
+            x = batch["raingauge"].x
+            y = batch["raingauge"].y
             mask = batch["raingauge"].mask
 
             edge_index_dict = batch.edge_index_dict
@@ -278,11 +285,11 @@ def test_model_st(
             x_context_dict = _extract_context_dict(batch)
 
             num_graphs = batch["raingauge"].ptr.size(0) - 1
-            num_nodes  = x.shape[0] // num_graphs
+            num_nodes = x.shape[0] // num_graphs
 
             # Only evaluate on test-split nodes that have real data at time t
             valid_at_t = x[:, _VALIDITY_IDX] > 0
-            eval_mask  = mask & valid_at_t
+            eval_mask = mask & valid_at_t
 
             if eval_mask.sum() == 0:
                 continue
@@ -305,12 +312,12 @@ def test_model_st(
     # -----------------------------------------------------------------------
     # Aggregate
     # -----------------------------------------------------------------------
-    all_preds       = torch.cat(all_preds, dim=0)
-    all_targets     = torch.cat(all_targets, dim=0)
+    all_preds = torch.cat(all_preds, dim=0)
+    all_targets = torch.cat(all_targets, dim=0)
     all_station_ids = torch.cat(all_station_ids, dim=0)
 
-    preds_np       = all_preds.numpy().flatten()
-    targets_np     = all_targets.numpy().flatten()
+    preds_np = all_preds.numpy().flatten()
+    targets_np = all_targets.numpy().flatten()
     station_ids_np = all_station_ids.numpy().flatten()
 
     print("Prediction shape:", all_preds.shape)
@@ -320,16 +327,16 @@ def test_model_st(
     # -----------------------------------------------------------------------
     # Global regression metrics
     # -----------------------------------------------------------------------
-    valid_mask   = (~np.isnan(preds_np)) & (~np.isnan(targets_np))
+    valid_mask = (~np.isnan(preds_np)) & (~np.isnan(targets_np))
     pearson_r, _ = pearsonr(targets_np[valid_mask], preds_np[valid_mask])
-    rmse         = float(torch.sqrt(((all_preds - all_targets) ** 2).mean()).item())
-    mae          = compute_mae(preds_np, targets_np)
+    rmse = float(torch.sqrt(((all_preds - all_targets) ** 2).mean()).item())
+    mae = compute_mae(preds_np, targets_np)
     print(f"Pearson r: {pearson_r:.4f}  RMSE: {rmse:.4f}  MAE: {mae:.4f}")
 
     # -----------------------------------------------------------------------
     # Classification metrics
     # -----------------------------------------------------------------------
-    global_cls     = compute_binary_classification_metrics(
+    global_cls = compute_binary_classification_metrics(
         preds_np, targets_np, threshold=rain_threshold
     )
     global_metrics = {"mae": mae, **global_cls}
@@ -340,8 +347,8 @@ def test_model_st(
     # -----------------------------------------------------------------------
     n_test_stations = int(np.unique(station_ids_np).shape[0])
     try:
-        ts_preds      = all_preds.reshape(-1, n_test_stations)
-        ts_targets    = all_targets.reshape(-1, n_test_stations)
+        ts_preds = all_preds.reshape(-1, n_test_stations)
+        ts_targets = all_targets.reshape(-1, n_test_stations)
         timestep_rmse = float(
             torch.sqrt(((ts_preds - ts_targets) ** 2).mean(dim=1)).mean().item()
         )
@@ -362,14 +369,14 @@ def test_model_st(
 
     rows = [
         {
-            "station_id":  sid,
-            "mae":         m["mae"],
-            "rmse":        m["rmse"],
-            "bias":        m["bias"],
-            "pearson_r":   m["pearson_r"],
-            "precision":   m["precision"],
-            "recall":      m["recall"],
-            "f1":          m["f1"],
+            "station_id": sid,
+            "mae": m["mae"],
+            "rmse": m["rmse"],
+            "bias": m["bias"],
+            "pearson_r": m["pearson_r"],
+            "precision": m["precision"],
+            "recall": m["recall"],
+            "f1": m["f1"],
             "support_pos": m["support_pos"],
             "support_neg": m["support_neg"],
         }
@@ -393,7 +400,8 @@ def test_model_st(
     plt.title("Test Set Performance (ST Model)")
     plt.grid(True)
     plt.text(
-        0.05, 0.95,
+        0.05,
+        0.95,
         f"Pearson r = {pearson_r:.3f}\n"
         f"RMSE = {rmse:.3f}\n"
         f"MAE = {mae:.3f}\n"
@@ -417,8 +425,8 @@ def test_model_st(
     os.makedirs(save_dir, exist_ok=True)
 
     for sid in np.unique(station_ids_np).tolist():
-        sid_mask    = station_ids_np == sid
-        preds_sid   = preds_np[sid_mask]
+        sid_mask = station_ids_np == sid
+        preds_sid = preds_np[sid_mask]
         targets_sid = targets_np[sid_mask]
         if len(preds_sid) < 5:
             continue
@@ -434,7 +442,8 @@ def test_model_st(
         plt.grid(True)
         if station_m:
             plt.text(
-                0.05, 0.95,
+                0.05,
+                0.95,
                 f"MAE  = {station_m['mae']:.3f}\n"
                 f"F1   = {station_m['f1']:.3f}\n"
                 f"Prec = {station_m['precision']:.3f}\n"
@@ -449,9 +458,12 @@ def test_model_st(
 
         plt.figure(figsize=(15, 6))
         plt.plot(targets_sid, label="Actual")
-        plt.plot(preds_sid,   label="Predicted")
+        plt.plot(preds_sid, label="Predicted")
         plt.axhline(
-            y=rain_threshold, color="gray", linestyle=":", alpha=0.5,
+            y=rain_threshold,
+            color="gray",
+            linestyle=":",
+            alpha=0.5,
             label=f"Threshold ({rain_threshold} mm)",
         )
         plt.title(f"Station {sid} — Time Series")
@@ -463,13 +475,13 @@ def test_model_st(
     print(f"Saved per-station plots → {save_dir}")
 
     return {
-        "rmse":                rmse,
-        "mae":                 mae,
-        "pearson_r":           pearson_r,
-        "timestep_rmse":       timestep_rmse,
-        "precision":           global_cls["precision"],
-        "recall":              global_cls["recall"],
-        "f1":                  global_cls["f1"],
-        "threshold":           rain_threshold,
+        "rmse": rmse,
+        "mae": mae,
+        "pearson_r": pearson_r,
+        "timestep_rmse": timestep_rmse,
+        "precision": global_cls["precision"],
+        "recall": global_cls["recall"],
+        "f1": global_cls["f1"],
+        "threshold": rain_threshold,
         "per_station_metrics": per_station,
     }
