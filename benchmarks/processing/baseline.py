@@ -1,11 +1,10 @@
 from builtins import range
+
 import numpy as np
 import pandas as pd
-
 from numba import jit
 
 from .xarray_wrapper import xarray_apply_along_time_dim
-
 
 ################################################
 # Functions for setting the RSL baseline level #

@@ -1,6 +1,6 @@
-import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
 from matplotlib.patches import Patch
 
 
@@ -363,7 +363,11 @@ def visualize_splitted_graphs(
     fig.legend(handles=legend_elements, loc="upper center", ncol=4, fontsize=12)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.savefig(f"{model_dir}/graph_comparison_corrected_{fold}.png", dpi=150, bbox_inches="tight")
+    plt.savefig(
+        f"{model_dir}/graph_comparison_corrected_{fold}.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
     print(f"✅ Graphs saved to '{model_dir}/graph_comparison_corrected_{fold}.png'")
     plt.show()
 

@@ -1,9 +1,9 @@
-import pandas as pd
 import os
 from datetime import datetime
-import numpy as np
-from rasterio.transform import from_bounds
+
+import pandas as pd
 from rasterio.coords import BoundingBox
+from rasterio.transform import from_bounds
 
 from src.utils import read_tif_file
 
@@ -15,7 +15,8 @@ class RadarDataObject:
         self.crs = crs
         self.transform = transform
 
-def process_radar_dataset(folder_name: str, crop_bounds: dict)-> pd.DataFrame:
+
+def process_radar_dataset(folder_name: str, crop_bounds: dict) -> pd.DataFrame:
     """
     Process the radar dataset by consolidating data and cropping the data.
 
@@ -35,30 +36,36 @@ def process_radar_dataset(folder_name: str, crop_bounds: dict)-> pd.DataFrame:
                         os.path.join(path, filename)
                     )
 
-                    #cropping
-                    col_start = int((crop_bounds['left'] - bounds.left) // transform[0])
-                    col_end = int((crop_bounds['right'] - bounds.left) // transform[0])
-                    row_start = int((bounds.top - crop_bounds['top']) // -transform[4])
-                    row_end = int((bounds.top - crop_bounds['bottom']) // -transform[4])
+                    # cropping
+                    col_start = int((crop_bounds["left"] - bounds.left) // transform[0])
+                    col_end = int((crop_bounds["right"] - bounds.left) // transform[0])
+                    row_start = int((bounds.top - crop_bounds["top"]) // -transform[4])
+                    row_end = int((bounds.top - crop_bounds["bottom"]) // -transform[4])
 
                     new_bounds_left = bounds.left + transform[0] * col_start
                     new_bounds_right = bounds.left + transform[0] * col_end
                     new_bounds_top = bounds.top + transform[4] * row_start
                     new_bounds_bottom = bounds.top + transform[4] * row_end
-                    new_bounding_box = BoundingBox(left = new_bounds_left,
-                                                   right = new_bounds_right,
-                                                   top = new_bounds_top,
-                                                   bottom = new_bounds_bottom)
+                    new_bounding_box = BoundingBox(
+                        left=new_bounds_left,
+                        right=new_bounds_right,
+                        top=new_bounds_top,
+                        bottom=new_bounds_bottom,
+                    )
 
-                    new_transform = from_bounds(new_bounds_left,
-                                             new_bounds_bottom,
-                                             new_bounds_right,
-                                             new_bounds_top, (new_bounds_right - new_bounds_left) * 10, (new_bounds_top - new_bounds_bottom) * 10)
+                    new_transform = from_bounds(
+                        new_bounds_left,
+                        new_bounds_bottom,
+                        new_bounds_right,
+                        new_bounds_top,
+                        (new_bounds_right - new_bounds_left) * 10,
+                        (new_bounds_top - new_bounds_bottom) * 10,
+                    )
 
-                    data = data[row_start:row_end, col_start: col_end]
-                    #print(data.shape)
-                    #print(new_bounding_box)
-                    #print(new_transform)
+                    data = data[row_start:row_end, col_start:col_end]
+                    # print(data.shape)
+                    # print(new_bounding_box)
+                    # print(new_transform)
 
                     new_row = pd.DataFrame(
                         {
@@ -74,9 +81,11 @@ def process_radar_dataset(folder_name: str, crop_bounds: dict)-> pd.DataFrame:
     df.to_pickle("database/processed_radar_dataset.pkl")
     return df
 
+
 def load_processed_dataset(folder_name: str) -> pd.DataFrame | pd.Series:
     df = pd.read_pickle(f"{folder_name}")
     return df
+
 
 def load_radar_dataset(folder_name: str, cropped=False) -> pd.DataFrame:
     """
@@ -99,7 +108,9 @@ def load_radar_dataset(folder_name: str, cropped=False) -> pd.DataFrame:
             for filename in os.listdir(path):
                 if filename.endswith(".tif"):
                     count += 1
-                    timestamp = filename.split("_")[3] if cropped else filename.split("_")[2]
+                    timestamp = (
+                        filename.split("_")[3] if cropped else filename.split("_")[2]
+                    )
                     timestamp = datetime.strptime(timestamp, "%Y%m%d%H%M")
                     data, bounds, crs, transform = read_tif_file(
                         os.path.join(path, filename)

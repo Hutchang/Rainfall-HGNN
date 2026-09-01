@@ -1,7 +1,7 @@
 import torch
-import torch.nn as nn
+from torch import nn
+from torch.nn import ELU, GELU, LeakyReLU, PReLU, ReLU, Sigmoid, Tanh
 from torch.nn import Linear as Lin
-from torch.nn import ReLU, PReLU, ELU, GELU, Sigmoid, Tanh, LeakyReLU
 
 
 class BaseRainfallModel(nn.module):

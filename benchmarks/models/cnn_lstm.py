@@ -24,12 +24,12 @@ Additions over RainfallCNN (run_cnn.py)
 """
 
 import torch
-import torch.nn as nn
-
+from torch import nn
 
 # ---------------------------------------------------------------------------
 # Channel-wise z-score normalisation
 # ---------------------------------------------------------------------------
+
 
 class ChannelNorm(nn.Module):
     """
@@ -46,7 +46,7 @@ class ChannelNorm(nn.Module):
     def __init__(self, num_channels: int):
         super().__init__()
         self.register_buffer("mean", torch.zeros(num_channels))
-        self.register_buffer("std",  torch.ones(num_channels))
+        self.register_buffer("std", torch.ones(num_channels))
 
     def fit(self, data: torch.Tensor) -> None:
         """
@@ -58,7 +58,7 @@ class ChannelNorm(nn.Module):
             All training input grids (before sequencing).
         """
         self.mean = data.mean(dim=(0, 2, 3)).to(self.mean.device)
-        self.std  = data.std( dim=(0, 2, 3)).clamp(min=1e-6).to(self.std.device)
+        self.std = data.std(dim=(0, 2, 3)).clamp(min=1e-6).to(self.std.device)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Broadcast over both 4-D [B, C, H, W] and 5-D [B, S, C, H, W] inputs.
@@ -71,6 +71,7 @@ class ChannelNorm(nn.Module):
 # ---------------------------------------------------------------------------
 # CNN + normalisation  (single-frame; seq_len=1)
 # ---------------------------------------------------------------------------
+
 
 class RainfallCNNNorm(nn.Module):
     """
@@ -87,17 +88,16 @@ class RainfallCNNNorm(nn.Module):
 
     def __init__(self, in_channels: int = 3, hidden: int = 64):
         super().__init__()
-        self.config = dict(model_type="cnn", in_channels=in_channels,
-                           hidden=hidden)
+        self.config = dict(model_type="cnn", in_channels=in_channels, hidden=hidden)
         self.norm = ChannelNorm(in_channels)
         self.net = nn.Sequential(
-            nn.Conv2d(in_channels, 32,     kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32,         hidden,  kernel_size=3, padding=1),
+            nn.Conv2d(32, hidden, kernel_size=3, padding=1),
             nn.BatchNorm2d(hidden),
             nn.ReLU(inplace=True),
-            nn.Conv2d(hidden,     hidden,  kernel_size=3, padding=1),
+            nn.Conv2d(hidden, hidden, kernel_size=3, padding=1),
             nn.BatchNorm2d(hidden),
             nn.ReLU(inplace=True),
             nn.Conv2d(hidden, 1, kernel_size=1),
@@ -105,13 +105,14 @@ class RainfallCNNNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.ndim == 5:
-            x = x[:, -1]        # [B, 1, C, H, W] → [B, C, H, W]
+            x = x[:, -1]  # [B, 1, C, H, W] → [B, C, H, W]
         return self.net(self.norm(x))
 
 
 # ---------------------------------------------------------------------------
 # LSTM  (per-pixel; no CNN encoder)
 # ---------------------------------------------------------------------------
+
 
 class RainfallLSTM(nn.Module):
     """
@@ -129,11 +130,14 @@ class RainfallLSTM(nn.Module):
     num_layers  : int   number of stacked LSTM layers (default 1)
     """
 
-    def __init__(self, in_channels: int = 3, hidden: int = 64,
-                 num_layers: int = 1):
+    def __init__(self, in_channels: int = 3, hidden: int = 64, num_layers: int = 1):
         super().__init__()
-        self.config = dict(model_type="lstm", in_channels=in_channels,
-                           hidden=hidden, num_layers=num_layers)
+        self.config = dict(
+            model_type="lstm",
+            in_channels=in_channels,
+            hidden=hidden,
+            num_layers=num_layers,
+        )
         self.norm = ChannelNorm(in_channels)
         self.lstm = nn.LSTM(
             input_size=in_channels,
@@ -147,17 +151,18 @@ class RainfallLSTM(nn.Module):
         # x: [B, S, C, H, W]
         B, S, C, H, W = x.shape
         x = self.norm(x)
-        x = x.permute(0, 3, 4, 1, 2)                       # [B, H, W, S, C]
-        x = x.reshape(B * H * W, S, C)                     # [B·H·W, S, C]
-        _, (h_n, _) = self.lstm(x)                         # h_n: [layers, B·H·W, hidden]
-        feat = h_n[-1]                                      # [B·H·W, hidden]
-        feat = feat.view(B, H, W, -1).permute(0, 3, 1, 2) # [B, hidden, H, W]
-        return self.out(feat)                               # [B, 1, H, W]
+        x = x.permute(0, 3, 4, 1, 2)  # [B, H, W, S, C]
+        x = x.reshape(B * H * W, S, C)  # [B·H·W, S, C]
+        _, (h_n, _) = self.lstm(x)  # h_n: [layers, B·H·W, hidden]
+        feat = h_n[-1]  # [B·H·W, hidden]
+        feat = feat.view(B, H, W, -1).permute(0, 3, 1, 2)  # [B, hidden, H, W]
+        return self.out(feat)  # [B, 1, H, W]
 
 
 # ---------------------------------------------------------------------------
 # CNN-LSTM  (spatial encoder + per-pixel temporal aggregation)
 # ---------------------------------------------------------------------------
+
 
 class RainfallCNNLSTM(nn.Module):
     """
@@ -180,20 +185,29 @@ class RainfallCNNLSTM(nn.Module):
     num_layers  : int   number of stacked LSTM layers (default 1)
     """
 
-    def __init__(self, in_channels: int = 3, cnn_hidden: int = 32,
-                 lstm_hidden: int = 64, num_layers: int = 1):
+    def __init__(
+        self,
+        in_channels: int = 3,
+        cnn_hidden: int = 32,
+        lstm_hidden: int = 64,
+        num_layers: int = 1,
+    ):
         super().__init__()
-        self.config = dict(model_type="cnn_lstm", in_channels=in_channels,
-                           cnn_hidden=cnn_hidden, lstm_hidden=lstm_hidden,
-                           num_layers=num_layers)
+        self.config = dict(
+            model_type="cnn_lstm",
+            in_channels=in_channels,
+            cnn_hidden=cnn_hidden,
+            lstm_hidden=lstm_hidden,
+            num_layers=num_layers,
+        )
         self.norm = ChannelNorm(in_channels)
 
         # Spatial encoder — shared across all timesteps in the sequence
         self.cnn = nn.Sequential(
-            nn.Conv2d(in_channels, 32,        kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32,         cnn_hidden, kernel_size=3, padding=1),
+            nn.Conv2d(32, cnn_hidden, kernel_size=3, padding=1),
             nn.BatchNorm2d(cnn_hidden),
             nn.ReLU(inplace=True),
         )
@@ -214,14 +228,14 @@ class RainfallCNNLSTM(nn.Module):
         x = self.norm(x)
 
         # CNN: encode all S frames in a single batched call
-        x    = x.view(B * S, C, H, W)                      # [B·S, C, H, W]
-        feat = self.cnn(x)                                  # [B·S, cnn_hidden, H, W]
-        feat = feat.view(B, S, -1, H, W)                   # [B, S, cnn_hidden, H, W]
+        x = x.view(B * S, C, H, W)  # [B·S, C, H, W]
+        feat = self.cnn(x)  # [B·S, cnn_hidden, H, W]
+        feat = feat.view(B, S, -1, H, W)  # [B, S, cnn_hidden, H, W]
 
         # LSTM: per-pixel temporal aggregation
-        feat = feat.permute(0, 3, 4, 1, 2)                 # [B, H, W, S, cnn_hidden]
-        feat = feat.reshape(B * H * W, S, -1)              # [B·H·W, S, cnn_hidden]
-        _, (h_n, _) = self.lstm(feat)                      # h_n: [layers, B·H·W, lstm_h]
-        out  = h_n[-1]                                      # [B·H·W, lstm_hidden]
-        out  = out.view(B, H, W, -1).permute(0, 3, 1, 2)  # [B, lstm_hidden, H, W]
-        return self.out(out)                                # [B, 1, H, W]
+        feat = feat.permute(0, 3, 4, 1, 2)  # [B, H, W, S, cnn_hidden]
+        feat = feat.reshape(B * H * W, S, -1)  # [B·H·W, S, cnn_hidden]
+        _, (h_n, _) = self.lstm(feat)  # h_n: [layers, B·H·W, lstm_h]
+        out = h_n[-1]  # [B·H·W, lstm_hidden]
+        out = out.view(B, H, W, -1).permute(0, 3, 1, 2)  # [B, lstm_hidden, H, W]
+        return self.out(out)  # [B, 1, H, W]

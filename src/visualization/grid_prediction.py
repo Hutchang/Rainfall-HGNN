@@ -22,15 +22,14 @@ plot_rainfall_sequence – plot a row of N timestep snapshots in one figure
 
 from __future__ import annotations
 
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.animation as animation
 import torch
-
+from matplotlib import animation
 from sklearn.neighbors import NearestNeighbors
-from torch_geometric.data import HeteroData, Data
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.transforms import AddLaplacianEigenvectorPE
 
 from src.visualization.main import visualise_singapore_outline
@@ -42,6 +41,7 @@ _DATA_FEATURE_DIM = 2  # [rainfall_value, validity_flag]; LPE columns start at i
 # ---------------------------------------------------------------------------
 # 1.  Grid generation
 # ---------------------------------------------------------------------------
+
 
 def generate_grid_coords(
     bounds: dict,
@@ -61,24 +61,27 @@ def generate_grid_coords(
     grid_coords  : pd.DataFrame  columns ['longitude', 'latitude']
     grid_shape   : (n_rows, n_cols)  – rows = latitude axis, cols = longitude axis
     """
-    lat_centre = (bounds['top'] + bounds['bottom']) / 2.0
-    lat_step = resolution_km / 111.0                                   # degrees per km
+    lat_centre = (bounds["top"] + bounds["bottom"]) / 2.0
+    lat_step = resolution_km / 111.0  # degrees per km
     lon_step = resolution_km / (111.32 * np.cos(np.radians(lat_centre)))
 
-    lats = np.arange(bounds['bottom'], bounds['top'],  lat_step)
-    lons = np.arange(bounds['left'],   bounds['right'], lon_step)
+    lats = np.arange(bounds["bottom"], bounds["top"], lat_step)
+    lons = np.arange(bounds["left"], bounds["right"], lon_step)
 
     lon_grid, lat_grid = np.meshgrid(lons, lats)
-    grid_coords = pd.DataFrame({
-        'longitude': lon_grid.flatten(),
-        'latitude':  lat_grid.flatten(),
-    })
+    grid_coords = pd.DataFrame(
+        {
+            "longitude": lon_grid.flatten(),
+            "latitude": lat_grid.flatten(),
+        }
+    )
     return grid_coords, (len(lats), len(lons))
 
 
 # ---------------------------------------------------------------------------
 # 2.  Graph augmentation + inference
 # ---------------------------------------------------------------------------
+
 
 def predict_on_grid(
     model,
@@ -87,7 +90,7 @@ def predict_on_grid(
     bounds: dict,
     resolution_km: float = 1.0,
     knn_gauge: int = 5,
-    device: str = 'cpu',
+    device: str = "cpu",
     include_lpe: bool = True,
     lpe_k: int = 4,
 ) -> tuple[np.ndarray, pd.DataFrame, tuple[int, int]]:
@@ -122,9 +125,9 @@ def predict_on_grid(
 
     grid_coords, grid_shape = generate_grid_coords(bounds, resolution_km)
     n_grid = len(grid_coords)
-    n_real = heterodata['raingauge'].x.shape[0]
-    T      = heterodata['raingauge'].x.shape[1]
-    F      = heterodata['raingauge'].x.shape[2]
+    n_real = heterodata["raingauge"].x.shape[0]
+    T = heterodata["raingauge"].x.shape[1]
+    F = heterodata["raingauge"].x.shape[2]
 
     # ------------------------------------------------------------------
     # Step 1 – append grid nodes to the raingauge node set
@@ -133,26 +136,26 @@ def predict_on_grid(
 
     # Always work from the raw data features only (strip any pre-existing LPE
     # columns so that include_lpe alone controls whether LPE is present).
-    real_x = heterodata['raingauge'].x[:, :, :_DATA_FEATURE_DIM]  # [n_real, T, 2]
-    grid_x = torch.zeros(n_grid, T, _DATA_FEATURE_DIM)            # [n_grid, T, 2]
+    real_x = heterodata["raingauge"].x[:, :, :_DATA_FEATURE_DIM]  # [n_real, T, 2]
+    grid_x = torch.zeros(n_grid, T, _DATA_FEATURE_DIM)  # [n_grid, T, 2]
     grid_y = torch.zeros(n_grid, T, 1)
-    augmented['raingauge'].x = torch.cat([real_x, grid_x], dim=0)
-    augmented['raingauge'].y = torch.cat([heterodata['raingauge'].y, grid_y], dim=0)
+    augmented["raingauge"].x = torch.cat([real_x, grid_x], dim=0)
+    augmented["raingauge"].y = torch.cat([heterodata["raingauge"].y, grid_y], dim=0)
 
     # Mask: only grid points are "unknown" (to be predicted)
     grid_mask = torch.zeros(n_real + n_grid, dtype=torch.bool)
     grid_mask[n_real:] = True
-    augmented['raingauge'].mask = grid_mask
-    augmented['raingauge'].num_nodes = n_real + n_grid
+    augmented["raingauge"].mask = grid_mask
+    augmented["raingauge"].num_nodes = n_real + n_grid
 
     # ------------------------------------------------------------------
     # Step 2 – build grid-to-gauge KNN edges
     # ------------------------------------------------------------------
     # haversine metric requires (lat, lon) in radians
-    gauge_latlon  = np.radians(mapping_df[['latitude', 'longitude']].values)
-    grid_latlon   = np.radians(grid_coords[['latitude', 'longitude']].values)
+    gauge_latlon = np.radians(mapping_df[["latitude", "longitude"]].values)
+    grid_latlon = np.radians(grid_coords[["latitude", "longitude"]].values)
 
-    nbrs = NearestNeighbors(n_neighbors=knn_gauge, metric='haversine')
+    nbrs = NearestNeighbors(n_neighbors=knn_gauge, metric="haversine")
     nbrs.fit(gauge_latlon)
     distances_rad, nbr_indices = nbrs.kneighbors(grid_latlon)
 
@@ -166,20 +169,20 @@ def predict_on_grid(
             dist_km = float(distances_km[grid_i, k])
             src.append(n_real + grid_i)
             dst.append(gauge_j)
-            weights.append(1.0 / max(dist_km, 1e-3))   # inverse-distance weight
+            weights.append(1.0 / max(dist_km, 1e-3))  # inverse-distance weight
 
-    new_edge_index  = torch.tensor([src, dst], dtype=torch.long)
+    new_edge_index = torch.tensor([src, dst], dtype=torch.long)
     new_edge_weight = torch.tensor(weights, dtype=torch.float32)
-    new_edge_weight = new_edge_weight / new_edge_weight.max()   # normalise to [0, 1]
+    new_edge_weight = new_edge_weight / new_edge_weight.max()  # normalise to [0, 1]
 
     # Add both directions (grid→gauge and gauge→grid)
-    rev_edge_index  = new_edge_index.flip(0)
-    existing_idx    = augmented['raingauge', 'connects', 'raingauge'].edge_index
-    existing_attr   = augmented['raingauge', 'connects', 'raingauge'].edge_attr
-    augmented['raingauge', 'connects', 'raingauge'].edge_index = torch.cat(
+    rev_edge_index = new_edge_index.flip(0)
+    existing_idx = augmented["raingauge", "connects", "raingauge"].edge_index
+    existing_attr = augmented["raingauge", "connects", "raingauge"].edge_attr
+    augmented["raingauge", "connects", "raingauge"].edge_index = torch.cat(
         [existing_idx, new_edge_index, rev_edge_index], dim=1
     )
-    augmented['raingauge', 'connects', 'raingauge'].edge_attr = torch.cat(
+    augmented["raingauge", "connects", "raingauge"].edge_attr = torch.cat(
         [existing_attr, new_edge_weight, new_edge_weight], dim=0
     )
 
@@ -191,16 +194,16 @@ def predict_on_grid(
     if include_lpe and lpe_k > 0:
         temp = Data(
             x=torch.zeros(n_real + n_grid, 1),
-            edge_index=augmented['raingauge', 'connects', 'raingauge'].edge_index,
+            edge_index=augmented["raingauge", "connects", "raingauge"].edge_index,
             num_nodes=n_real + n_grid,
         )
-        lpe_transform = AddLaplacianEigenvectorPE(k=lpe_k, attr_name='laplacian_pe')
+        lpe_transform = AddLaplacianEigenvectorPE(k=lpe_k, attr_name="laplacian_pe")
         temp = lpe_transform(temp)
-        lpe = temp.laplacian_pe                              # [N_total, lpe_k]
-        lpe_expanded = lpe.unsqueeze(1).expand(-1, T, -1)   # [N_total, T, lpe_k]
+        lpe = temp.laplacian_pe  # [N_total, lpe_k]
+        lpe_expanded = lpe.unsqueeze(1).expand(-1, T, -1)  # [N_total, T, lpe_k]
 
-        data_part = augmented['raingauge'].x[:, :, :_DATA_FEATURE_DIM]
-        augmented['raingauge'].x = torch.cat([data_part, lpe_expanded], dim=2)
+        data_part = augmented["raingauge"].x[:, :, :_DATA_FEATURE_DIM]
+        augmented["raingauge"].x = torch.cat([data_part, lpe_expanded], dim=2)
 
     # ------------------------------------------------------------------
     # Step 4 – run inference one timestep at a time
@@ -212,51 +215,54 @@ def predict_on_grid(
             snap = HeteroData()
 
             # Raingauge snapshot at timestep t
-            snap['raingauge'].x         = augmented['raingauge'].x[:, t, :].to(device)
-            snap['raingauge'].y         = augmented['raingauge'].y[:, t, :].to(device)
-            snap['raingauge'].mask      = augmented['raingauge'].mask.to(device)
-            snap['raingauge'].num_nodes = n_real + n_grid
+            snap["raingauge"].x = augmented["raingauge"].x[:, t, :].to(device)
+            snap["raingauge"].y = augmented["raingauge"].y[:, t, :].to(device)
+            snap["raingauge"].mask = augmented["raingauge"].mask.to(device)
+            snap["raingauge"].num_nodes = n_real + n_grid
 
             # All other node types (radar, cml) – slice their timestep
             for node_type in augmented.node_types:
-                if node_type == 'raingauge':
+                if node_type == "raingauge":
                     continue
-                snap[node_type].x         = augmented[node_type].x[:, t, :].to(device)
+                snap[node_type].x = augmented[node_type].x[:, t, :].to(device)
                 snap[node_type].num_nodes = augmented[node_type].x.shape[0]
 
             # Edge indices and attributes
             for edge_type in augmented.edge_types:
                 snap[edge_type].edge_index = augmented[edge_type].edge_index.to(device)
-                if hasattr(augmented[edge_type], 'edge_attr'):
-                    snap[edge_type].edge_attr = augmented[edge_type].edge_attr.to(device)
+                if hasattr(augmented[edge_type], "edge_attr"):
+                    snap[edge_type].edge_attr = augmented[edge_type].edge_attr.to(
+                        device
+                    )
 
             # Zero data features for grid nodes (same masking convention as training)
-            mask_t  = snap['raingauge'].mask
-            x_input = snap['raingauge'].x.clone()
+            mask_t = snap["raingauge"].mask
+            x_input = snap["raingauge"].x.clone()
             x_input[mask_t, :_DATA_FEATURE_DIM] = 0.0
 
             x_dict = {nt: snap[nt].x for nt in snap.node_types}
-            x_dict['raingauge'] = x_input
+            x_dict["raingauge"] = x_input
 
             edge_attr_dict = {
                 et: snap[et].edge_attr
                 for et in snap.edge_types
-                if hasattr(snap[et], 'edge_attr')
+                if hasattr(snap[et], "edge_attr")
             }
 
             out = model(x_dict, snap.edge_index_dict, edge_attr_dict)
 
-            grid_preds = out['raingauge'][mask_t].cpu().numpy().flatten()
+            grid_preds = out["raingauge"][mask_t].cpu().numpy().flatten()
             all_grid_preds.append(grid_preds)
 
-    predictions = np.stack(all_grid_preds, axis=0)          # [T, n_grid]
-    predictions = predictions.reshape(T, *grid_shape)       # [T, n_rows, n_cols]
+    predictions = np.stack(all_grid_preds, axis=0)  # [T, n_grid]
+    predictions = predictions.reshape(T, *grid_shape)  # [T, n_rows, n_cols]
     return predictions, grid_coords, grid_shape
 
 
 # ---------------------------------------------------------------------------
 # 3.  Visualisation helpers
 # ---------------------------------------------------------------------------
+
 
 def plot_rainfall_grid(
     predictions: np.ndarray,
@@ -268,7 +274,7 @@ def plot_rainfall_grid(
     vmin: float = 0.0,
     vmax: float | None = None,
     boundaries: list[float] | None = None,
-    cmap: str = 'YlGnBu',
+    cmap: str = "YlGnBu",
     show_outline: bool = True,
     log_scale: bool = False,
     ax=None,
@@ -299,7 +305,7 @@ def plot_rainfall_grid(
     if ax is None:
         _, ax = plt.subplots(figsize=(10, 8))
 
-    frame = predictions[timestamp_idx]                       # [n_rows, n_cols]
+    frame = predictions[timestamp_idx]  # [n_rows, n_cols]
 
     if vmax is None and boundaries is None:
         raise ValueError(
@@ -310,46 +316,52 @@ def plot_rainfall_grid(
         )
 
     import matplotlib.cm as cm_mod
+
     cmap_obj = cm_mod.get_cmap(cmap)
     if log_scale:
         _lv_min = max(vmin if vmin and vmin > 0 else 0.01, 0.01)
         _lv_max = vmax if vmax else frame.max()
         norm = mcolors.LogNorm(vmin=_lv_min, vmax=_lv_max)
-        cbar_label = 'Predicted Rainfall (mm) [log scale]'
+        cbar_label = "Predicted Rainfall (mm) [log scale]"
     elif boundaries is not None:
         norm = mcolors.BoundaryNorm(boundaries, ncolors=cmap_obj.N, clip=True)
-        cbar_label = 'Predicted Rainfall (mm)'
+        cbar_label = "Predicted Rainfall (mm)"
     else:
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-        cbar_label = 'Predicted Rainfall (mm)'
+        cbar_label = "Predicted Rainfall (mm)"
 
     im = ax.imshow(
         frame,
-        extent=[bounds['left'], bounds['right'], bounds['bottom'], bounds['top']],
-        origin='lower',
+        extent=[bounds["left"], bounds["right"], bounds["bottom"], bounds["top"]],
+        origin="lower",
         cmap=cmap_obj,
         norm=norm,
-        aspect='auto',
-        interpolation='bilinear',
+        aspect="auto",
+        interpolation="bilinear",
     )
     plt.colorbar(im, ax=ax, label=cbar_label, shrink=0.8)
 
     if mapping_df is not None:
         ax.scatter(
-            mapping_df['longitude'], mapping_df['latitude'],
-            c='red', s=25, zorder=5, label='Gauge stations',
-            edgecolors='black', linewidths=0.4,
+            mapping_df["longitude"],
+            mapping_df["latitude"],
+            c="red",
+            s=25,
+            zorder=5,
+            label="Gauge stations",
+            edgecolors="black",
+            linewidths=0.4,
         )
-        ax.legend(loc='lower right', fontsize=8)
+        ax.legend(loc="lower right", fontsize=8)
 
     if show_outline:
         visualise_singapore_outline(ax=ax)
 
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_title(title or f'Predicted Rainfall — timestep {timestamp_idx}')
-    ax.set_xlim(bounds['left'],  bounds['right'])
-    ax.set_ylim(bounds['bottom'], bounds['top'])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_title(title or f"Predicted Rainfall — timestep {timestamp_idx}")
+    ax.set_xlim(bounds["left"], bounds["right"])
+    ax.set_ylim(bounds["bottom"], bounds["top"])
     return ax
 
 
@@ -365,7 +377,7 @@ def plot_rainfall_sequence(
     vmin: float = 0.0,
     vmax: float | None = None,
     boundaries: list[float] | None = None,
-    cmap: str = 'YlGnBu',
+    cmap: str = "YlGnBu",
     log_scale: bool = False,
     save_path: str | None = None,
 ):
@@ -404,9 +416,11 @@ def plot_rainfall_sequence(
     global_vmax = vmax
 
     for i, (t_idx, ax) in enumerate(zip(timestep_indices, axes)):
-        panel_title = titles[i] if titles else f'Timestep {t_idx}'
+        panel_title = titles[i] if titles else f"Timestep {t_idx}"
         plot_rainfall_grid(
-            predictions, grid_shape, bounds,
+            predictions,
+            grid_shape,
+            bounds,
             timestamp_idx=t_idx,
             mapping_df=mapping_df,
             title=panel_title,
@@ -421,7 +435,7 @@ def plot_rainfall_sequence(
 
     fig.tight_layout()
     if save_path:
-        fig.savefig(save_path, dpi=200, bbox_inches='tight')
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
     return fig
 
 
@@ -436,7 +450,7 @@ def animate_rainfall_grid(
     vmin: float = 0.0,
     vmax: float | None = None,
     boundaries: list[float] | None = None,
-    cmap: str = 'YlGnBu',
+    cmap: str = "YlGnBu",
     show_outline: bool = True,
     log_scale: bool = False,
     figsize: tuple[float, float] = (9, 7),
@@ -486,54 +500,58 @@ def animate_rainfall_grid(
         _lv_min = max(vmin if vmin and vmin > 0 else 0.01, 0.01)
         _lv_max = vmax if vmax else subset.max()
         norm = mcolors.LogNorm(vmin=_lv_min, vmax=_lv_max)
-        cbar_label = 'Predicted Rainfall (mm) [log scale]'
+        cbar_label = "Predicted Rainfall (mm) [log scale]"
     elif boundaries is not None:
         norm = mcolors.BoundaryNorm(boundaries, ncolors=cmap_obj.N, clip=True)
-        cbar_label = 'Predicted Rainfall (mm)'
+        cbar_label = "Predicted Rainfall (mm)"
     else:
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-        cbar_label = 'Predicted Rainfall (mm)'
+        cbar_label = "Predicted Rainfall (mm)"
 
     fig, ax = plt.subplots(figsize=figsize)
 
     im = ax.imshow(
         subset[0],
-        extent=[bounds['left'], bounds['right'], bounds['bottom'], bounds['top']],
-        origin='lower',
+        extent=[bounds["left"], bounds["right"], bounds["bottom"], bounds["top"]],
+        origin="lower",
         cmap=cmap_obj,
         norm=norm,
-        aspect='auto',
-        interpolation='bilinear',
+        aspect="auto",
+        interpolation="bilinear",
         animated=True,
     )
     cbar = plt.colorbar(im, ax=ax, label=cbar_label, shrink=0.8)
 
     if mapping_df is not None:
         ax.scatter(
-            mapping_df['longitude'], mapping_df['latitude'],
-            c='red', s=25, zorder=5, label='Gauge stations',
-            edgecolors='black', linewidths=0.4,
+            mapping_df["longitude"],
+            mapping_df["latitude"],
+            c="red",
+            s=25,
+            zorder=5,
+            label="Gauge stations",
+            edgecolors="black",
+            linewidths=0.4,
         )
-        ax.legend(loc='lower right', fontsize=8)
+        ax.legend(loc="lower right", fontsize=8)
 
     if show_outline:
         visualise_singapore_outline(ax=ax)
 
-    ax.set_xlabel('Longitude')
-    ax.set_ylabel('Latitude')
-    ax.set_xlim(bounds['left'],  bounds['right'])
-    ax.set_ylim(bounds['bottom'], bounds['top'])
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    ax.set_xlim(bounds["left"], bounds["right"])
+    ax.set_ylim(bounds["bottom"], bounds["top"])
 
-    label = (
-        str(timestamps[0]) if timestamps else f'Timestep {timestep_indices[0]}'
-    )
+    label = str(timestamps[0]) if timestamps else f"Timestep {timestep_indices[0]}"
     title = ax.set_title(label, fontsize=11)
 
     def _update(frame_i):
         im.set_data(subset[frame_i])
         lbl = (
-            str(timestamps[frame_i]) if timestamps
-            else f'Timestep {timestep_indices[frame_i]}'
+            str(timestamps[frame_i])
+            if timestamps
+            else f"Timestep {timestep_indices[frame_i]}"
         )
         title.set_text(lbl)
         return im, title
@@ -547,7 +565,7 @@ def animate_rainfall_grid(
     )
 
     if save_path:
-        writer = 'pillow' if save_path.endswith('.gif') else 'ffmpeg'
+        writer = "pillow" if save_path.endswith(".gif") else "ffmpeg"
         anim.save(save_path, writer=writer, dpi=150)
         print(f"Animation saved to {save_path}")
 
@@ -558,6 +576,7 @@ def animate_rainfall_grid(
 # 4.  ST model grid inference (GNNInductiveHeteroST)
 # ---------------------------------------------------------------------------
 
+
 def predict_on_grid_st(
     model,
     heterodata: HeteroData,
@@ -566,7 +585,7 @@ def predict_on_grid_st(
     window_size: int = 6,
     resolution_km: float = 1.0,
     knn_gauge: int = 5,
-    device: str = 'cpu',
+    device: str = "cpu",
     include_lpe: bool = True,
     lpe_k: int = 4,
 ) -> tuple[np.ndarray, pd.DataFrame, tuple[int, int]]:
@@ -602,28 +621,28 @@ def predict_on_grid_st(
 
     grid_coords, grid_shape = generate_grid_coords(bounds, resolution_km)
     n_grid = len(grid_coords)
-    n_real = heterodata['raingauge'].x.shape[0]
-    T      = heterodata['raingauge'].x.shape[1]
+    n_real = heterodata["raingauge"].x.shape[0]
+    T = heterodata["raingauge"].x.shape[1]
 
     # ------------------------------------------------------------------
     # Step 1 – append grid nodes to the raingauge node set
     # ------------------------------------------------------------------
     augmented = heterodata.clone()
 
-    real_x = heterodata['raingauge'].x[:, :, :_DATA_FEATURE_DIM]   # [n_real, T, 2]
-    grid_x = torch.zeros(n_grid, T, _DATA_FEATURE_DIM)             # [n_grid, T, 2]
+    real_x = heterodata["raingauge"].x[:, :, :_DATA_FEATURE_DIM]  # [n_real, T, 2]
+    grid_x = torch.zeros(n_grid, T, _DATA_FEATURE_DIM)  # [n_grid, T, 2]
     grid_y = torch.zeros(n_grid, T, 1)
-    augmented['raingauge'].x = torch.cat([real_x, grid_x], dim=0)
-    augmented['raingauge'].y = torch.cat([heterodata['raingauge'].y, grid_y], dim=0)
-    augmented['raingauge'].num_nodes = n_real + n_grid
+    augmented["raingauge"].x = torch.cat([real_x, grid_x], dim=0)
+    augmented["raingauge"].y = torch.cat([heterodata["raingauge"].y, grid_y], dim=0)
+    augmented["raingauge"].num_nodes = n_real + n_grid
 
     # ------------------------------------------------------------------
     # Step 2 – build grid-to-gauge KNN edges
     # ------------------------------------------------------------------
-    gauge_latlon = np.radians(mapping_df[['latitude', 'longitude']].values)
-    grid_latlon  = np.radians(grid_coords[['latitude', 'longitude']].values)
+    gauge_latlon = np.radians(mapping_df[["latitude", "longitude"]].values)
+    grid_latlon = np.radians(grid_coords[["latitude", "longitude"]].values)
 
-    nbrs = NearestNeighbors(n_neighbors=knn_gauge, metric='haversine')
+    nbrs = NearestNeighbors(n_neighbors=knn_gauge, metric="haversine")
     nbrs.fit(gauge_latlon)
     distances_rad, nbr_indices = nbrs.kneighbors(grid_latlon)
 
@@ -638,17 +657,17 @@ def predict_on_grid_st(
             dst.append(gauge_j)
             weights.append(1.0 / max(dist_km, 1e-3))
 
-    new_edge_index  = torch.tensor([src, dst], dtype=torch.long)
+    new_edge_index = torch.tensor([src, dst], dtype=torch.long)
     new_edge_weight = torch.tensor(weights, dtype=torch.float32)
     new_edge_weight = new_edge_weight / new_edge_weight.max()
 
     rev_edge_index = new_edge_index.flip(0)
-    existing_idx   = augmented['raingauge', 'connects', 'raingauge'].edge_index
-    existing_attr  = augmented['raingauge', 'connects', 'raingauge'].edge_attr
-    augmented['raingauge', 'connects', 'raingauge'].edge_index = torch.cat(
+    existing_idx = augmented["raingauge", "connects", "raingauge"].edge_index
+    existing_attr = augmented["raingauge", "connects", "raingauge"].edge_attr
+    augmented["raingauge", "connects", "raingauge"].edge_index = torch.cat(
         [existing_idx, new_edge_index, rev_edge_index], dim=1
     )
-    augmented['raingauge', 'connects', 'raingauge'].edge_attr = torch.cat(
+    augmented["raingauge", "connects", "raingauge"].edge_attr = torch.cat(
         [existing_attr, new_edge_weight, new_edge_weight], dim=0
     )
 
@@ -658,28 +677,27 @@ def predict_on_grid_st(
     if include_lpe and lpe_k > 0:
         temp = Data(
             x=torch.zeros(n_real + n_grid, 1),
-            edge_index=augmented['raingauge', 'connects', 'raingauge'].edge_index,
+            edge_index=augmented["raingauge", "connects", "raingauge"].edge_index,
             num_nodes=n_real + n_grid,
         )
-        lpe_transform = AddLaplacianEigenvectorPE(k=lpe_k, attr_name='laplacian_pe')
+        lpe_transform = AddLaplacianEigenvectorPE(k=lpe_k, attr_name="laplacian_pe")
         temp = lpe_transform(temp)
-        lpe          = temp.laplacian_pe                              # [N_total, lpe_k]
-        lpe_expanded = lpe.unsqueeze(1).expand(-1, T, -1)            # [N_total, T, lpe_k]
+        lpe = temp.laplacian_pe  # [N_total, lpe_k]
+        lpe_expanded = lpe.unsqueeze(1).expand(-1, T, -1)  # [N_total, T, lpe_k]
 
-        data_part = augmented['raingauge'].x[:, :, :_DATA_FEATURE_DIM]
-        augmented['raingauge'].x = torch.cat([data_part, lpe_expanded], dim=2)
+        data_part = augmented["raingauge"].x[:, :, :_DATA_FEATURE_DIM]
+        augmented["raingauge"].x = torch.cat([data_part, lpe_expanded], dim=2)
 
     # ------------------------------------------------------------------
     # Step 4 – precompute static edge data (same for every timestep)
     # ------------------------------------------------------------------
     edge_index_dict = {
-        et: augmented[et].edge_index.to(device)
-        for et in augmented.edge_types
+        et: augmented[et].edge_index.to(device) for et in augmented.edge_types
     }
     edge_attr_dict = {
         et: augmented[et].edge_attr.to(device)
         for et in augmented.edge_types
-        if hasattr(augmented[et], 'edge_attr')
+        if hasattr(augmented[et], "edge_attr")
     }
 
     # ------------------------------------------------------------------
@@ -695,23 +713,25 @@ def predict_on_grid_st(
             x_context_dict: dict = {}
 
             # Raingauge: zero the grid nodes' current-timestep data features
-            x_cur = augmented['raingauge'].x[:, t, :].clone().to(device)
+            x_cur = augmented["raingauge"].x[:, t, :].clone().to(device)
             x_cur[n_real:, :_DATA_FEATURE_DIM] = 0.0
-            x_dict['raingauge']         = x_cur
-            x_context_dict['raingauge'] = augmented['raingauge'].x[:, ctx_idx, :].to(device)
+            x_dict["raingauge"] = x_cur
+            x_context_dict["raingauge"] = (
+                augmented["raingauge"].x[:, ctx_idx, :].to(device)
+            )
 
             # All other node types
             for ntype in augmented.node_types:
-                if ntype == 'raingauge':
+                if ntype == "raingauge":
                     continue
-                x_dict[ntype]         = augmented[ntype].x[:, t, :].to(device)
+                x_dict[ntype] = augmented[ntype].x[:, t, :].to(device)
                 x_context_dict[ntype] = augmented[ntype].x[:, ctx_idx, :].to(device)
 
             out = model(x_dict, x_context_dict, edge_index_dict, edge_attr_dict)
 
-            grid_preds = out['raingauge'][n_real:].cpu().numpy().flatten()
+            grid_preds = out["raingauge"][n_real:].cpu().numpy().flatten()
             all_grid_preds.append(grid_preds)
 
-    predictions = np.stack(all_grid_preds, axis=0)                # [T-W, n_grid]
+    predictions = np.stack(all_grid_preds, axis=0)  # [T-W, n_grid]
     predictions = predictions.reshape(len(all_grid_preds), *grid_shape)
     return predictions, grid_coords, grid_shape

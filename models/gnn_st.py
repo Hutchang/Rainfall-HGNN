@@ -27,9 +27,9 @@ Notes
 """
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import HeteroConv, GraphConv
+from torch import nn
+from torch_geometric.nn import GraphConv, HeteroConv
 
 
 class GNNInductiveHeteroST(nn.Module):
@@ -146,7 +146,9 @@ class GNNInductiveHeteroST(nn.Module):
 
             # ---- Feature fusion & projection ----
             x_aug = torch.cat([x_cur, temp_emb], dim=-1)  # [B*N, F + lstm_hidden]
-            h_dict[ntype] = self.dropout(F.relu(self.input_proj[ntype](x_aug)))  # [B*N, hidden_channels]
+            h_dict[ntype] = self.dropout(
+                F.relu(self.input_proj[ntype](x_aug))
+            )  # [B*N, hidden_channels]
 
         # ---- GNN message-passing ----
         for conv in self.convs:

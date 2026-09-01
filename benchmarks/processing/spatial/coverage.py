@@ -1,7 +1,8 @@
 from builtins import zip
+
 import numpy as np
 import shapely as sh
-import shapely.ops as ops
+from shapely import ops
 from tqdm import tqdm
 
 

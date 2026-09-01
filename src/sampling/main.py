@@ -229,6 +229,7 @@ def stratified_spatial_sampling_dual(
 
     return results
 
+
 def stratified_spatial_kfold_dual(
     raingauge_mapping_df,
     n_splits=5,
@@ -239,9 +240,9 @@ def stratified_spatial_kfold_dual(
 ):
     """
     Perform Spatial K-Fold Cross-Validation with stratified sampling using K-means clustering.
-    
+
     Key feature: Ensures EXACTLY ONE test station per cluster per fold (when cluster size allows).
-    
+
     Each fold has:
       - Statistical method: train/test split (no overlap)
       - ML method: train/validation/test split (same test as statistical)
@@ -275,8 +276,10 @@ def stratified_spatial_kfold_dual(
     """
 
     # --- Step 1: Prepare data
-    raingauge_ids = raingauge_mapping_df['id'].to_numpy()
-    raingauge_coords = np.array(list(zip(raingauge_mapping_df['longitude'], raingauge_mapping_df['latitude'])))
+    raingauge_ids = raingauge_mapping_df["id"].to_numpy()
+    raingauge_coords = np.array(
+        list(zip(raingauge_mapping_df["longitude"], raingauge_mapping_df["latitude"]))
+    )
     n_stations = len(raingauge_ids)
 
     print("=" * 80)
@@ -296,19 +299,21 @@ def stratified_spatial_kfold_dual(
     # Ensures exactly 1 test station per cluster per fold (when possible)
     np.random.seed(seed)
     cluster_rotations = {}
-    
+
     for cluster_id in range(n_clusters):
         cluster_indices = np.where(cluster_labels == cluster_id)[0]
         n_cluster = len(cluster_indices)
-        
+
         # Shuffle stations in this cluster
         shuffled_indices = cluster_indices.copy()
         np.random.shuffle(shuffled_indices)
-        
+
         # Create rotation: each fold gets exactly 1 test station (if cluster has >= n_splits stations)
         # Remaining stations go to training pool
         if n_cluster < n_splits:
-            print(f"WARNING: Cluster {cluster_id} has only {n_cluster} stations (< {n_splits} folds)")
+            print(
+                f"WARNING: Cluster {cluster_id} has only {n_cluster} stations (< {n_splits} folds)"
+            )
             # Pad with None for folds that won't get a test station from this cluster
             test_rotation = list(shuffled_indices) + [None] * (n_splits - n_cluster)
             train_pool = []
@@ -316,23 +321,25 @@ def stratified_spatial_kfold_dual(
             # Each fold gets 1 test station, rest go to train pool
             test_rotation = shuffled_indices[:n_splits].tolist()
             train_pool = shuffled_indices[n_splits:].tolist()
-        
+
         cluster_rotations[cluster_id] = {
-            'test_rotation': test_rotation,  # Length = n_splits
-            'train_pool': train_pool          # Stations never used for testing
+            "test_rotation": test_rotation,  # Length = n_splits
+            "train_pool": train_pool,  # Stations never used for testing
         }
-        
-        print(f"Cluster {cluster_id}: {n_cluster} stations → "
-              f"{len([x for x in test_rotation if x is not None])} test assignments, "
-              f"{len(train_pool)} always-train")
+
+        print(
+            f"Cluster {cluster_id}: {n_cluster} stations → "
+            f"{len([x for x in test_rotation if x is not None])} test assignments, "
+            f"{len(train_pool)} always-train"
+        )
 
     # --- Step 4: Build K-Fold splits
     folds_results = []
 
     for fold_idx in range(n_splits):
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"Creating Fold {fold_idx + 1}/{n_splits}")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
 
         test_indices = []
         train_indices = []
@@ -340,21 +347,21 @@ def stratified_spatial_kfold_dual(
         # Collect data for this fold
         for cluster_id in range(n_clusters):
             rotation = cluster_rotations[cluster_id]
-            
+
             # Get the test station for this fold from this cluster
-            test_station = rotation['test_rotation'][fold_idx]
+            test_station = rotation["test_rotation"][fold_idx]
             if test_station is not None:
                 test_indices.append(test_station)
-            
+
             # Training pool: all stations NOT testing in this fold
             for other_fold_idx in range(n_splits):
                 if other_fold_idx != fold_idx:
-                    other_test_station = rotation['test_rotation'][other_fold_idx]
+                    other_test_station = rotation["test_rotation"][other_fold_idx]
                     if other_test_station is not None:
                         train_indices.append(other_test_station)
-            
+
             # Add stations from train_pool (never used for testing)
-            train_indices.extend(rotation['train_pool'])
+            train_indices.extend(rotation["train_pool"])
 
         test_indices = np.array(test_indices)
         train_indices = np.array(train_indices)
@@ -377,7 +384,11 @@ def stratified_spatial_kfold_dual(
             # Shuffle and split
             np.random.seed(seed + 100 + fold_idx + cluster_id)
             shuffled = np.random.permutation(cluster_train_indices)
-            n_val = max(1, int(len(shuffled) * validation_percent / 100)) if n_cluster_train > 1 else 0
+            n_val = (
+                max(1, int(len(shuffled) * validation_percent / 100))
+                if n_cluster_train > 1
+                else 0
+            )
             cluster_val = shuffled[:n_val]
             cluster_ml_train = shuffled[n_val:]
 
@@ -408,12 +419,20 @@ def stratified_spatial_kfold_dual(
 
         folds_results.append(fold_result)
 
-        print(f"Fold {fold_idx+1} summary:")
-        print(f"  Statistical train: {len(stat_train_stations)} "
-              f"({len(stat_train_stations)/n_stations*100:.1f}%)")
-        print(f"  Test: {len(test_stations)} ({len(test_stations)/n_stations*100:.1f}%)")
-        print(f"  ML train: {len(ml_train_stations)} ({len(ml_train_stations)/n_stations*100:.1f}%)")
-        print(f"  ML validation: {len(ml_val_stations)} ({len(ml_val_stations)/n_stations*100:.1f}%)")
+        print(f"Fold {fold_idx + 1} summary:")
+        print(
+            f"  Statistical train: {len(stat_train_stations)} "
+            f"({len(stat_train_stations) / n_stations * 100:.1f}%)"
+        )
+        print(
+            f"  Test: {len(test_stations)} ({len(test_stations) / n_stations * 100:.1f}%)"
+        )
+        print(
+            f"  ML train: {len(ml_train_stations)} ({len(ml_train_stations) / n_stations * 100:.1f}%)"
+        )
+        print(
+            f"  ML validation: {len(ml_val_stations)} ({len(ml_val_stations) / n_stations * 100:.1f}%)"
+        )
 
         if plot:
             raise NotImplementedError(
@@ -422,17 +441,19 @@ def stratified_spatial_kfold_dual(
             )
 
     # --- Verification: Ensure no station appears in multiple test sets
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("VERIFICATION")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     all_test_stations = set()
     for fold in folds_results:
-        fold_test = set(fold['test_stations'])
+        fold_test = set(fold["test_stations"])
         overlap = all_test_stations & fold_test
         if overlap:
-            print(f"ERROR: Fold {fold['fold_index']+1} has overlapping test stations: {overlap}")
+            print(
+                f"ERROR: Fold {fold['fold_index'] + 1} has overlapping test stations: {overlap}"
+            )
         all_test_stations.update(fold_test)
-    
+
     print(f"Total unique test stations across all folds: {len(all_test_stations)}")
     print(f"Expected: {min(n_clusters * n_splits, n_stations)}")
     print("✓ K-Fold validation complete!")

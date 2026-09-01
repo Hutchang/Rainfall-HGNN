@@ -1,11 +1,11 @@
-import pandas as pd
-from pathlib import Path
-import rasterio
-from rasterio.windows import Window
 from datetime import datetime
-import tqdm
-from typing import Tuple, List
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+import rasterio
+import tqdm
+from rasterio.windows import Window
 from scipy.spatial import cKDTree
 
 from src.raingauge.utils import load_weather_station_dataset
@@ -64,7 +64,7 @@ class RadarPreprocessor:
             print(f"Error parsing filename {filename}: {e}")
             return None
 
-    def get_all_radar_files(self) -> List[Tuple[datetime, Path]]:
+    def get_all_radar_files(self) -> list[tuple[datetime, Path]]:
         """
         Scan radar directory and get all radar files with their timestamps.
 
@@ -91,10 +91,10 @@ class RadarPreprocessor:
 
     def match_with_weather_data(
         self,
-        radar_files: List[Tuple[datetime, Path]],
+        radar_files: list[tuple[datetime, Path]],
         unmatched_radar_csv_path: str = "database/unmatched_radar_files.csv",
         unmatched_weather_csv_path: str = "database/unmatched_weather_files.csv",
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Match radar files with weather station timestamps.
         Also identifies unmatched radar files and saves them to a CSV.

@@ -1,21 +1,23 @@
-from dataset.weather_graph_dataset import (
-    HomogeneousWeatherGraphDatasetInductive,
-    WeatherGraphDataset,
-    WeatherGraphDatasetNew,
-    HomogeneousWeatherGraphDatasetNew,
-)
-import xarray as xr
-import rasterio
-import yaml
-import numpy as np
 import math
-import torch
+
 import networkx as nx
+import numpy as np
+import rasterio
+import torch
+import xarray as xr
+import yaml
 from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader
-from torch_geometric.loader import DataLoader as GeometricDataLoader
 from torch_geometric.data import Batch
+from torch_geometric.loader import DataLoader as GeometricDataLoader
 from torch_geometric.utils import subgraph
+
+from dataset.weather_graph_dataset import (
+    HomogeneousWeatherGraphDatasetInductive,
+    HomogeneousWeatherGraphDatasetNew,
+    WeatherGraphDataset,
+    WeatherGraphDatasetNew,
+)
 
 
 def read_config(config_file):
@@ -70,19 +72,22 @@ def add_homogeneous_weather_station_data(
         )
 
     rainfall_station_data_tensor = torch.tensor(
-        np.array(rainfall_station_features).transpose(1,0), dtype=dtype
+        np.array(rainfall_station_features).transpose(1, 0), dtype=dtype
     )
     print("HERE")
 
     # Add station targets
     if general_station_features:
         general_station_target_tensor = torch.tensor(
-            np.array(general_station_features)[:, :, 0:1].transpose(1, 0, 2), dtype=dtype
+            np.array(general_station_features)[:, :, 0:1].transpose(1, 0, 2),
+            dtype=dtype,
         )
     rainfall_station_target_tensor = torch.tensor(
-        np.array(rainfall_station_features).transpose(1,0), dtype=dtype
+        np.array(rainfall_station_features).transpose(1, 0), dtype=dtype
     )
-    rain_ids = torch.tensor(np.arange(np.array(rainfall_station_features).shape[0]), dtype = torch.long)
+    rain_ids = torch.tensor(
+        np.arange(np.array(rainfall_station_features).shape[0]), dtype=torch.long
+    )
 
     if general_station_features:
         station_data_tensor = torch.concat(
@@ -197,15 +202,15 @@ def add_mask_to_data(data, split_info, general_station, rainfall_station):
 
 
 def add_homogeneous_mask_to_data(data, split_info, stations):
-    data.train_mask = torch.tensor([
-        1 if station in split_info["ml"]["train"] else 0 for station in stations
-    ])
-    data.val_mask = torch.tensor([
-        1 if station in split_info["ml"]["validation"] else 0 for station in stations
-    ])
-    data.test_mask = torch.tensor([
-        1 if station in split_info["ml"]["test"] else 0 for station in stations
-    ])
+    data.train_mask = torch.tensor(
+        [1 if station in split_info["ml"]["train"] else 0 for station in stations]
+    )
+    data.val_mask = torch.tensor(
+        [1 if station in split_info["ml"]["validation"] else 0 for station in stations]
+    )
+    data.test_mask = torch.tensor(
+        [1 if station in split_info["ml"]["test"] else 0 for station in stations]
+    )
 
     return data
 
@@ -664,7 +669,7 @@ def prepare_homogeneous_inductive_dataset(
         print("PREPARING TRAIN/VAL DATALOADERS (using train_graph)")
         print(f"{'=' * 60}")
 
-        #train_graph = filter_edges_for_inductive(train_graph)
+        # train_graph = filter_edges_for_inductive(train_graph)
         train_dataset = HomogeneousWeatherGraphDatasetInductive(
             train_graph, mode="train"
         )
@@ -672,8 +677,7 @@ def prepare_homogeneous_inductive_dataset(
             validation_graph, mode="val"
         )
 
-        #Duplicate train graph N (no. of nodes) times to generate mask one graphs
-        
+        # Duplicate train graph N (no. of nodes) times to generate mask one graphs
 
         # Inspect one sample
         sample = train_dataset[0]
@@ -811,7 +815,6 @@ def build_train_and_full_graph_homogeneous(
     full_graph.train_mask = train_mask
     full_graph.val_mask = val_mask
     full_graph.test_mask = test_mask
-
 
     # 2. Build train_graph (subgraph)
     # -------------------------------------------------

@@ -21,37 +21,35 @@ Key differences vs train_fused.py
                    model is never trained to predict an imputed zero value.
 """
 
-from src.sampling.main import stratified_spatial_kfold_dual  # must be first
-
 import gc
-
-import torch
 import os
 import shutil
 import time
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-
 from datetime import datetime
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
 from torch_geometric.loader import DataLoader as GeometricDataLoader
 
-from src.performance_logger import PerformanceLogger
 from models.gnn_st import GNNInductiveHeteroST
-from src.utils import read_config
-from src.raingauge.utils import load_raingauge_dataset
-from src.radar.utils import load_processed_dataset
 from src.cml.utils import load_cml_dataset
-from training.logic_st import train_epoch_st, validate_st, test_model_st
 from src.graph.cmlgraph import CMLGraph
-from src.graph.radargraph import RadarGraph
 from src.graph.gaugegraphnew import GaugeGraphNew
+from src.graph.radargraph import RadarGraph
 from src.graph.st_dataset import SpatioTemporalDataset
-
+from src.performance_logger import PerformanceLogger
+from src.radar.utils import load_processed_dataset
+from src.raingauge.utils import load_raingauge_dataset
+from src.sampling.main import stratified_spatial_kfold_dual  # must be first
+from src.utils import read_config
+from training.logic_st import test_model_st, train_epoch_st, validate_st
 
 # ---------------------------------------------------------------------------
 # Normalisation helpers  (identical to train_fused.py)
 # ---------------------------------------------------------------------------
+
 
 def compute_norm_stats(heterodata):
     stats = {}
@@ -81,15 +79,22 @@ def apply_norm(heterodata, stats):
 # (timestamp × link × station) index.  Any subset that is missing from the
 # actual CML dataframe is silently ignored.
 _CML_STATIC_COLS = [
-    "link_id", "station",
-    "site_a_latitude", "site_a_longitude",
-    "site_b_latitude", "site_b_longitude",
-    "length", "frequency", "polarization",
+    "link_id",
+    "station",
+    "site_a_latitude",
+    "site_a_longitude",
+    "site_b_latitude",
+    "site_b_longitude",
+    "length",
+    "frequency",
+    "polarization",
 ]
 _CML_INDEX_COLS = ["timestamp", "link_id", "station"]
 
 
-def _expand_cml_to_dense_grid(cml_df: pd.DataFrame, complete_df: pd.DataFrame) -> pd.DataFrame:
+def _expand_cml_to_dense_grid(
+    cml_df: pd.DataFrame, complete_df: pd.DataFrame
+) -> pd.DataFrame:
     """
     Expand a long-format CML dataframe to cover every timestamp in
     complete_df for every (link_id, station) pair.
@@ -119,9 +124,7 @@ def _expand_cml_to_dense_grid(cml_df: pd.DataFrame, complete_df: pd.DataFrame) -
     )
 
     # Left-join dynamic features
-    cml_expanded = complete_cml_index.merge(
-        cml_dynamic, on=_CML_INDEX_COLS, how="left"
-    )
+    cml_expanded = complete_cml_index.merge(cml_dynamic, on=_CML_INDEX_COLS, how="left")
 
     # Restore static columns (may be NaN after merge due to column overlap)
     cml_expanded = cml_expanded.merge(
@@ -146,6 +149,7 @@ def _expand_cml_to_dense_grid(cml_df: pd.DataFrame, complete_df: pd.DataFrame) -
 # Main training function
 # ---------------------------------------------------------------------------
 
+
 def train_st(config):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     batch_size = config["training_params"]["batch_size"]
@@ -153,13 +157,13 @@ def train_st(config):
     datasources = config["datasources"]
 
     tp = config.get("temporal_params", {})
-    window_size      = tp.get("window_size",      6)
-    max_gap_minutes  = tp.get("max_gap_minutes",  30)
-    lstm_hidden      = tp.get("lstm_hidden",       32)
-    lstm_layers      = tp.get("lstm_layers",       1)
-    window_size     = tp.get("window_size",      6)
-    lstm_hidden     = tp.get("lstm_hidden",       32)
-    lstm_layers     = tp.get("lstm_layers",       1)
+    window_size = tp.get("window_size", 6)
+    max_gap_minutes = tp.get("max_gap_minutes", 30)
+    lstm_hidden = tp.get("lstm_hidden", 32)
+    lstm_layers = tp.get("lstm_layers", 1)
+    window_size = tp.get("window_size", 6)
+    lstm_hidden = tp.get("lstm_hidden", 32)
+    lstm_layers = tp.get("lstm_layers", 1)
 
     # ------------------------------------------------------------------
     # Experiment folder
@@ -173,8 +177,8 @@ def train_st(config):
     # 1. Load raw data
     # ------------------------------------------------------------------
     uptime_threshold = config["filters"]["uptime_threshold"]
-    start_year       = config["dataset_parameters"]["start_year"]
-    end_year         = config["dataset_parameters"]["end_year"]
+    start_year = config["dataset_parameters"]["start_year"]
+    end_year = config["dataset_parameters"]["end_year"]
 
     raingauge_df_raw, raingauge_station_mappings_df = load_raingauge_dataset(
         start=start_year, end=end_year, uptime_threshold=uptime_threshold
@@ -194,15 +198,19 @@ def train_st(config):
     # Raingauge data is at 5-min intervals; radar/CML are at 15-min.
     # Resample to 15-min averages while the timestamp is still the index,
     # then promote it to a column for the subsequent left-join.
-    raingauge_df_raw = raingauge_df_raw.resample('15min', closed='left', label='left').mean()
+    raingauge_df_raw = raingauge_df_raw.resample(
+        "15min", closed="left", label="left"
+    ).mean()
     raingauge_df_raw = raingauge_df_raw[raingauge_df_raw.index.minute % 15 == 0]
 
     # raingauge_df_raw comes from pivot(index="timestamp"), so timestamp is the
     # index, not a column.  reset_index() promotes it to a column so that
     # sort_values and the subsequent left-join on "timestamp" both work.
-    raingauge_df_raw = raingauge_df_raw.reset_index().sort_values("timestamp").reset_index(drop=True)
-    radar_df_raw     = radar_df_raw.sort_values("timestamp").reset_index(drop=True)
-    cml_df_raw       = cml_df_raw.sort_values("timestamp").reset_index(drop=True)
+    raingauge_df_raw = (
+        raingauge_df_raw.reset_index().sort_values("timestamp").reset_index(drop=True)
+    )
+    radar_df_raw = radar_df_raw.sort_values("timestamp").reset_index(drop=True)
+    cml_df_raw = cml_df_raw.sort_values("timestamp").reset_index(drop=True)
 
     all_ts = pd.to_datetime(raingauge_df_raw["timestamp"])
     complete_ts_index = pd.date_range(
@@ -210,8 +218,10 @@ def train_st(config):
     )
     complete_df = pd.DataFrame({"timestamp": complete_ts_index})
     T = len(complete_ts_index)
-    print(f"Complete 15-min grid: {T} timesteps "
-          f"({complete_ts_index[0]} → {complete_ts_index[-1]})")
+    print(
+        f"Complete 15-min grid: {T} timesteps "
+        f"({complete_ts_index[0]} → {complete_ts_index[-1]})"
+    )
 
     # ------------------------------------------------------------------
     # 3. Raingauge — left-join onto complete grid
@@ -219,7 +229,9 @@ def train_st(config):
     #    (notna() returns 0 for NaN rows, so validity flag is automatically 0)
     # ------------------------------------------------------------------
     raingauge_deduped = raingauge_df_raw.drop_duplicates("timestamp")
-    raingauge_df = complete_df.merge(raingauge_deduped, on="timestamp", how="left").reset_index(drop=True)
+    raingauge_df = complete_df.merge(
+        raingauge_deduped, on="timestamp", how="left"
+    ).reset_index(drop=True)
 
     # ------------------------------------------------------------------
     # 4. Radar — left-join, fill missing rows with zero arrays
@@ -232,8 +244,8 @@ def train_st(config):
         dtype=np.float32,
     )  # [T]
 
-    first_valid_data   = radar_deduped["data"].dropna().iloc[0]
-    zero_radar_array   = np.zeros_like(first_valid_data)
+    first_valid_data = radar_deduped["data"].dropna().iloc[0]
+    zero_radar_array = np.zeros_like(first_valid_data)
 
     radar_full = complete_df.merge(radar_deduped, on="timestamp", how="left")
     radar_full["data"] = [
@@ -251,9 +263,11 @@ def train_st(config):
     #    CMLGraph.prepare_tensor as an extra feature automatically.
     # ------------------------------------------------------------------
     cml_df = _expand_cml_to_dense_grid(cml_df_raw, complete_df)
-    print(f"CML expanded: {len(cml_df)} rows  "
-          f"({int(cml_df['valid'].sum())} real, "
-          f"{int((cml_df['valid'] == 0).sum())} padded)")
+    print(
+        f"CML expanded: {len(cml_df)} rows  "
+        f"({int(cml_df['valid'].sum())} real, "
+        f"{int((cml_df['valid'] == 0).sum())} padded)"
+    )
 
     print(f"raingauge_df : {raingauge_df.shape}")
     print(f"radar_df     : {radar_df.shape}")
@@ -274,13 +288,13 @@ def train_st(config):
     #    [N_radar, T, 2]) for each fold.
     # ------------------------------------------------------------------
     shared_radar_heterodata = None
-    shared_radar_coords     = None
-    shared_cml_heterodata   = None
+    shared_radar_coords = None
+    shared_cml_heterodata = None
 
     if "radar" in datasources:
-        radar_graph             = RadarGraph(radar_df)
+        radar_graph = RadarGraph(radar_df)
         shared_radar_heterodata = radar_graph.get_radar_heterodata()
-        shared_radar_coords     = radar_graph.grid_coords
+        shared_radar_coords = radar_graph.grid_coords
 
         # Append per-timestep validity flag as a second radar feature.
         # Use expand() without clone() — torch.cat materialises its own
@@ -294,14 +308,14 @@ def train_st(config):
         print(f"Radar heterodata shape: {shared_radar_heterodata['radar'].x.shape}")
 
     if "cml" in datasources:
-        cml_graph             = CMLGraph(cml_df, cml_coordinates_df)
+        cml_graph = CMLGraph(cml_df, cml_coordinates_df)
         shared_cml_heterodata = cml_graph.get_heterodata()
         del cml_graph
 
     hidden_channels = config["model"]["hidden_channels"]
-    num_layers      = config["model"]["num_layers"]
-    dropout         = config["model"].get("dropout", 0.0)
-    out_channels    = 1
+    num_layers = config["model"]["num_layers"]
+    dropout = config["model"].get("dropout", 0.0)
+    out_channels = 1
 
     # ------------------------------------------------------------------
     # 8. Training helper (defined here so it closes over experiment_name,
@@ -309,7 +323,7 @@ def train_st(config):
     # ------------------------------------------------------------------
 
     def train_fold(model, train_loader, val_loader, fold, device="cpu"):
-        print(f"\n{'='*50}\n  FOLD {fold}  |  device: {device}\n{'='*50}")
+        print(f"\n{'=' * 50}\n  FOLD {fold}  |  device: {device}\n{'=' * 50}")
         first_param = next(model.parameters())
         print(f"Initial weight sample: {first_param.data.flatten()[:5]}")
 
@@ -318,15 +332,15 @@ def train_st(config):
             lr=float(config["model"]["learning_rate"]),
             weight_decay=float(config["model"]["weight_decay"]),
         )
-        weighted_alpha    = config["training_params"].get("weighted_loss_alpha", 0.0)
+        weighted_alpha = config["training_params"].get("weighted_loss_alpha", 0.0)
         stopping_patience = config["training_params"]["early_stop"]
-        total_epochs      = config["training_params"]["epochs"]
+        total_epochs = config["training_params"]["epochs"]
 
-        training_loss_arr   = []
+        training_loss_arr = []
         validation_loss_arr = []
-        early_counter       = 0
-        best_val_loss       = float("inf")
-        epochs_run          = 0
+        early_counter = 0
+        best_val_loss = float("inf")
+        epochs_run = 0
 
         training_start = time.time()
         for epoch in range(total_epochs):
@@ -334,11 +348,16 @@ def train_st(config):
             print(f"\n--- Epoch {epoch + 1} ---")
 
             train_loss = train_epoch_st(
-                model, train_loader, optimizer, device,
+                model,
+                train_loader,
+                optimizer,
+                device,
                 weighted_loss_alpha=weighted_alpha,
             )
             val_loss = validate_st(
-                model, val_loader, device,
+                model,
+                val_loader,
+                device,
                 weighted_loss_alpha=weighted_alpha,
             )
 
@@ -360,11 +379,14 @@ def train_st(config):
             epochs_run += 1
             print(f"  Train loss: {train_loss:.4f}  |  Val loss: {val_loss:.4f}")
 
-            total_norm = sum(
-                p.grad.data.norm(2).item() ** 2
-                for p in model.parameters()
-                if p.grad is not None
-            ) ** 0.5
+            total_norm = (
+                sum(
+                    p.grad.data.norm(2).item() ** 2
+                    for p in model.parameters()
+                    if p.grad is not None
+                )
+                ** 0.5
+            )
             print(f"  Gradient norm: {total_norm:.6f}")
             print(f"  Epoch time: {time.time() - epoch_start:.1f}s")
 
@@ -376,7 +398,7 @@ def train_st(config):
         perf.finalise(total_time)
         print(f"\nTraining complete: {total_time:.1f}s over {epochs_run} epochs")
 
-        plt.plot(training_loss_arr,   label="train",      color="blue")
+        plt.plot(training_loss_arr, label="train", color="blue")
         plt.plot(validation_loss_arr, label="validation", color="red")
         plt.legend()
         plt.savefig(
@@ -391,11 +413,13 @@ def train_st(config):
     #    torch.cuda.empty_cache() before the next fold.  Only one fold's
     #    data is in memory at a time.
     # ------------------------------------------------------------------
-    fold_metrics    = []
+    fold_metrics = []
     in_channels_dict = None
 
     for i in range(fold_count):
-        print(f"\n{'='*60}\n  Building graph for fold {i} / {fold_count - 1}\n{'='*60}")
+        print(
+            f"\n{'=' * 60}\n  Building graph for fold {i} / {fold_count - 1}\n{'=' * 60}"
+        )
 
         # Build raingauge graph for this fold only
         gauge_graph = GaugeGraphNew(
@@ -424,8 +448,7 @@ def train_st(config):
         if in_channels_dict is None:
             sample_hd = gauge_graph.get_train_heterodata()
             in_channels_dict = {
-                ntype: sample_hd[ntype].x.shape[2]
-                for ntype in sample_hd.node_types
+                ntype: sample_hd[ntype].x.shape[2] for ntype in sample_hd.node_types
             }
             print("in_channels_dict:", in_channels_dict)
 
@@ -444,8 +467,8 @@ def train_st(config):
 
         # Build DataLoaders
         train_data = gauge_graph.get_train_heterodata()
-        val_data   = gauge_graph.get_validation_heterodata()
-        test_data  = gauge_graph.get_test_heterodata()
+        val_data = gauge_graph.get_validation_heterodata()
+        test_data = gauge_graph.get_test_heterodata()
 
         stats = compute_norm_stats(train_data)
 
@@ -470,9 +493,15 @@ def train_st(config):
         # Drop the un-normalised references; datasets hold their own copies.
         del train_data, val_data, test_data
 
-        train_loader = GeometricDataLoader(train_dataset, batch_size=batch_size, shuffle=False)
-        val_loader   = GeometricDataLoader(val_dataset,   batch_size=batch_size, shuffle=False)
-        test_loader  = GeometricDataLoader(test_dataset,  batch_size=batch_size, shuffle=False)
+        train_loader = GeometricDataLoader(
+            train_dataset, batch_size=batch_size, shuffle=False
+        )
+        val_loader = GeometricDataLoader(
+            val_dataset, batch_size=batch_size, shuffle=False
+        )
+        test_loader = GeometricDataLoader(
+            test_dataset, batch_size=batch_size, shuffle=False
+        )
 
         # Train
         train_fold(model, train_loader, val_loader, fold=i, device=device)
@@ -504,8 +533,15 @@ def train_st(config):
 
     averaged = {
         key: float(np.mean([m[key] for m in fold_metrics]))
-        for key in ["rmse", "mae", "pearson_r", "timestep_rmse",
-                    "precision", "recall", "f1"]
+        for key in [
+            "rmse",
+            "mae",
+            "pearson_r",
+            "timestep_rmse",
+            "precision",
+            "recall",
+            "f1",
+        ]
     }
     print("\n=== Cross-fold averaged metrics ===")
     for k, v in averaged.items():

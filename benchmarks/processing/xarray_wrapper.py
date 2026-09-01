@@ -1,6 +1,7 @@
-from functools import wraps
-from collections import OrderedDict
 import inspect
+from collections import OrderedDict
+from functools import wraps
+
 import xarray as xr
 
 

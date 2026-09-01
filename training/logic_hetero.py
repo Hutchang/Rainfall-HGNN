@@ -1,27 +1,28 @@
-import torch
-import tqdm
-import numpy as np
-import torch.nn.functional as F
-import pandas as pd
+import os
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn.functional as F
+import tqdm
+from scipy.stats import pearsonr
 from sklearn.metrics import (
+    confusion_matrix,
     f1_score,
+    mean_absolute_error,
     precision_score,
     recall_score,
-    confusion_matrix,
-    mean_absolute_error,
 )
-import matplotlib.pyplot as plt
-from scipy.stats import pearsonr
-from src.utils import read_config
 
-import os
+from src.utils import read_config
 
 config = read_config("config.yaml")
 
 # Number of data features per raingauge node (rainfall value + validity flag).
 # LPE columns start at index _DATA_FEATURE_DIM and must NOT be zeroed during masking.
 _DATA_FEATURE_DIM = 2
+
 
 def train_epoch(
     model,
@@ -39,24 +40,23 @@ def train_epoch(
     charge_bar = tqdm.tqdm(dataloader, desc="training")
 
     for batch_idx, batch in enumerate(charge_bar):
-
         optimizer.zero_grad()
 
         # PyG Batch object - move to device
         batch = batch.to(device)
 
         # Extract from PyG Batch format
-        x = batch['raingauge'].x  # [B*N, F]
-        y = batch['raingauge'].y  # [B*N, Tgt]
+        x = batch["raingauge"].x  # [B*N, F]
+        y = batch["raingauge"].y  # [B*N, Tgt]
 
         edge_index_dict = batch.edge_index_dict
-        num_graphs = batch['raingauge'].ptr.size(0) - 1
+        num_graphs = batch["raingauge"].ptr.size(0) - 1
         num_nodes = x.shape[0] // num_graphs
 
         edge_attr_dict = {
             edge_type: batch[edge_type].edge_attr
             for edge_type in batch.edge_types
-            if hasattr(batch[edge_type], 'edge_attr')
+            if hasattr(batch[edge_type], "edge_attr")
         }
 
         # Per-node-position backward (mirrors logic_st.py).
@@ -71,21 +71,29 @@ def train_epoch(
 
         for node_pos in range(num_nodes):
             x_masked = x.clone()
-            indices_to_mask = torch.arange(num_graphs, device=device) * num_nodes + node_pos
-            x_masked[indices_to_mask, :_DATA_FEATURE_DIM] = 0  # zero data features only; preserve LPE
+            indices_to_mask = (
+                torch.arange(num_graphs, device=device) * num_nodes + node_pos
+            )
+            x_masked[indices_to_mask, :_DATA_FEATURE_DIM] = (
+                0  # zero data features only; preserve LPE
+            )
 
             x_dict = {ntype: batch[ntype].x for ntype in batch.node_types}
-            x_dict['raingauge'] = x_masked
+            x_dict["raingauge"] = x_masked
 
             out = model(x_dict, edge_index_dict, edge_attr_dict)
 
             # Compute loss ONLY on masked node
             if weighted_loss_alpha > 0.0:
-                loss = weighted_mse(out['raingauge'][indices_to_mask], y[indices_to_mask], alpha=weighted_loss_alpha)
+                loss = weighted_mse(
+                    out["raingauge"][indices_to_mask],
+                    y[indices_to_mask],
+                    alpha=weighted_loss_alpha,
+                )
             else:
-                loss = F.mse_loss(out['raingauge'][indices_to_mask], y[indices_to_mask])
+                loss = F.mse_loss(out["raingauge"][indices_to_mask], y[indices_to_mask])
 
-            (loss * scale).backward()   # frees this graph immediately
+            (loss * scale).backward()  # frees this graph immediately
             batch_loss_val += loss.item()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -101,7 +109,10 @@ def train_epoch(
 
 
 def validate(
-    model, dataloader, device, weighted_loss_alpha: float = 0.0,
+    model,
+    dataloader,
+    device,
+    weighted_loss_alpha: float = 0.0,
 ):
     """
     Validation loop for PyG batched graph data (inductive setting).
@@ -124,38 +135,43 @@ def validate(
             batch = batch.to(device)
 
             # Extract from PyG Batch format
-            x = batch['raingauge'].x  # [B*N, F] - already batched and flattened
-            y = batch['raingauge'].y  # [B*N, Tgt] - already batched and flattened
-            val_mask = batch['raingauge'].mask  # [N] - single mask for one graph
+            x = batch["raingauge"].x  # [B*N, F] - already batched and flattened
+            y = batch["raingauge"].y  # [B*N, Tgt] - already batched and flattened
+            val_mask = batch["raingauge"].mask  # [N] - single mask for one graph
             edge_index_dict = batch.edge_index_dict  # [2, E*B] - offset edge indices
             edge_attr_dict = {
                 edge_type: batch[edge_type].edge_attr
                 for edge_type in batch.edge_types
-                if hasattr(batch[edge_type], 'edge_attr')
+                if hasattr(batch[edge_type], "edge_attr")
             }
 
             x_masked = x.clone()
-            x_masked[val_mask, :_DATA_FEATURE_DIM] = 0.0  # zero data features only; preserve LPE
+            x_masked[val_mask, :_DATA_FEATURE_DIM] = (
+                0.0  # zero data features only; preserve LPE
+            )
 
             x_dict = {}
             for nodetype in batch.node_types:
                 x_dict[nodetype] = batch[nodetype].x
-            x_dict['raingauge'] = x_masked
+            x_dict["raingauge"] = x_masked
 
             # Forward pass; clamp to >= 0 since rainfall cannot be negative.
             out = model(x_dict, edge_index_dict, edge_attr_dict)  # [B*N, out_channels]
-            out['raingauge'] = out['raingauge'].clamp(min=0.0)
+            out["raingauge"] = out["raingauge"].clamp(min=0.0)
 
             if weighted_loss_alpha > 0.0:
-                loss = weighted_mse(out['raingauge'][val_mask], y[val_mask], alpha=weighted_loss_alpha)
+                loss = weighted_mse(
+                    out["raingauge"][val_mask], y[val_mask], alpha=weighted_loss_alpha
+                )
             else:
-                loss = F.mse_loss(out['raingauge'][val_mask], y[val_mask])
+                loss = F.mse_loss(out["raingauge"][val_mask], y[val_mask])
             epoch_losses.append(loss.item())
 
     # Compute metrics
     mean_loss = float(np.mean(epoch_losses))
 
     return mean_loss
+
 
 def test_model(
     model,
@@ -194,38 +210,40 @@ def test_model(
         for batch in test_bar:
             batch = batch.to(device)
             # ----- Extract inputs from batch -----
-            x = batch['raingauge'].x
-            y = batch['raingauge'].y
-            mask = batch['raingauge'].mask
+            x = batch["raingauge"].x
+            y = batch["raingauge"].y
+            mask = batch["raingauge"].mask
             edge_index = batch.edge_index_dict
-            num_graphs = batch['raingauge'].ptr.size(0) - 1
+            num_graphs = batch["raingauge"].ptr.size(0) - 1
             num_nodes = x.shape[0] // num_graphs
 
             assert mask.shape[0] == x.shape[0], "Mask and x size mismatch"
             x_masked = x.clone()
-            x_masked[mask, :_DATA_FEATURE_DIM] = 0.0  # zero data features only; preserve LPE
+            x_masked[mask, :_DATA_FEATURE_DIM] = (
+                0.0  # zero data features only; preserve LPE
+            )
 
             edge_attr_dict = {
                 edge_type: batch[edge_type].edge_attr
                 for edge_type in batch.edge_types
-                if hasattr(batch[edge_type], 'edge_attr')
+                if hasattr(batch[edge_type], "edge_attr")
             }
 
             x_dict = {}
             for nodetype in batch.node_types:
                 x_dict[nodetype] = batch[nodetype].x
-            x_dict['raingauge'] = x_masked
+            x_dict["raingauge"] = x_masked
 
             # ----- Model forward -----
             out = model(x_dict, edge_index, edge_attr_dict)
-            out['raingauge'] = out['raingauge'].clamp(min=0.0)  # rainfall >= 0
+            out["raingauge"] = out["raingauge"].clamp(min=0.0)  # rainfall >= 0
 
             # ----- Compute test loss -----
-            loss = F.mse_loss(out['raingauge'][mask], y[mask])
+            loss = F.mse_loss(out["raingauge"][mask], y[mask])
             epoch_losses.append(loss.item())
 
             # ----- Collect outputs -----
-            all_preds.append(out['raingauge'][mask].detach().cpu())
+            all_preds.append(out["raingauge"][mask].detach().cpu())
             all_targets.append(y[mask].detach().cpu())
             all_station_ids.append(
                 (mask.nonzero(as_tuple=False).squeeze() % num_nodes).cpu()
@@ -306,18 +324,20 @@ def test_model(
     rows = []
     for sid in sorted(per_station.keys()):
         m = per_station[sid]
-        rows.append({
-            "station_id": sid,
-            "mae": m["mae"],
-            "rmse": m["rmse"],
-            "bias": m["bias"],
-            "pearson_r": m["pearson_r"],
-            "precision": m["precision"],
-            "recall": m["recall"],
-            "f1": m["f1"],
-            "support_pos": m["support_pos"],
-            "support_neg": m["support_neg"],
-        })
+        rows.append(
+            {
+                "station_id": sid,
+                "mae": m["mae"],
+                "rmse": m["rmse"],
+                "bias": m["bias"],
+                "pearson_r": m["pearson_r"],
+                "precision": m["precision"],
+                "recall": m["recall"],
+                "f1": m["f1"],
+                "support_pos": m["support_pos"],
+                "support_neg": m["support_neg"],
+            }
+        )
     metrics_df = pd.DataFrame(rows)
     csv_path = f"{exp_dir}/per_station_metrics_f{fold}.csv"
     metrics_df.to_csv(csv_path, index=False)
@@ -348,7 +368,9 @@ def test_model(
         f"F1 = {global_cls['f1']:.3f}"
     )
     plt.text(
-        0.05, 0.95, text,
+        0.05,
+        0.95,
+        text,
         transform=plt.gca().transAxes,
         verticalalignment="top",
         fontsize=9,
@@ -391,7 +413,9 @@ def test_model(
                 f"Rec = {station_m['recall']:.3f}"
             )
             plt.text(
-                0.05, 0.95, ann,
+                0.05,
+                0.95,
+                ann,
                 transform=plt.gca().transAxes,
                 verticalalignment="top",
                 fontsize=9,
@@ -408,7 +432,10 @@ def test_model(
 
         # Draw threshold line for context
         plt.axhline(
-            y=rain_threshold, color="gray", linestyle=":", alpha=0.5,
+            y=rain_threshold,
+            color="gray",
+            linestyle=":",
+            alpha=0.5,
             label=f"Threshold ({rain_threshold} mm)",
         )
 
@@ -434,6 +461,8 @@ def test_model(
         "threshold": rain_threshold,
         "per_station_metrics": per_station,
     }
+
+
 def weighted_mse(pred, target, alpha: float = 1.0):
     """
     Weighted MSE loss that up-weights high-rainfall timesteps.
@@ -452,6 +481,7 @@ def weighted_mse(pred, target, alpha: float = 1.0):
     """
     weights = 1.0 + alpha * torch.log1p(target.clamp(min=0.0))
     return (weights * (pred - target) ** 2).mean()
+
 
 def compute_mae(preds: np.ndarray, targets: np.ndarray) -> float:
     """Compute Mean Absolute Error between predictions and targets."""
@@ -490,9 +520,15 @@ def compute_binary_classification_metrics(
     pred_labels = (preds_v >= threshold).astype(int)
     true_labels = (targets_v >= threshold).astype(int)
 
-    precision = precision_score(true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division)
-    recall = recall_score(true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division)
-    f1 = f1_score(true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division)
+    precision = precision_score(
+        true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division
+    )
+    recall = recall_score(
+        true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division
+    )
+    f1 = f1_score(
+        true_labels, pred_labels, pos_label=pos_label, zero_division=zero_division
+    )
     cm = confusion_matrix(true_labels, pred_labels, labels=[0, 1])
 
     return {
@@ -509,6 +545,7 @@ def compute_binary_classification_metrics(
 # ================================================================
 # ===  PER-STATION WRAPPER
 # ================================================================
+
 
 def compute_per_station_metrics(
     preds: np.ndarray,
@@ -543,7 +580,7 @@ def compute_per_station_metrics(
 
         mae = compute_mae(p, t)
         rmse = float(np.sqrt(np.mean((p - t) ** 2)))
-        bias = float(np.mean(p - t))          # positive → over-prediction
+        bias = float(np.mean(p - t))  # positive → over-prediction
         cls = compute_binary_classification_metrics(p, t, threshold=threshold)
 
         valid = (~np.isnan(p)) & (~np.isnan(t))
@@ -551,7 +588,7 @@ def compute_per_station_metrics(
             r, _ = pearsonr(t[valid], p[valid])
             r = float(r)
         else:
-            r = float('nan')
+            r = float("nan")
 
         results[int(sid)] = {
             "mae": mae,
@@ -577,9 +614,9 @@ def print_metrics_summary(global_metrics: dict, per_station: dict = None):
     print(f"  Support (pos)  : {global_metrics['support_pos']}")
     print(f"  Support (neg)  : {global_metrics['support_neg']}")
     cm = global_metrics["confusion_matrix"]
-    print(f"  Confusion Matrix:")
-    print(f"    TN={cm[0,0]}  FP={cm[0,1]}")
-    print(f"    FN={cm[1,0]}  TP={cm[1,1]}")
+    print("  Confusion Matrix:")
+    print(f"    TN={cm[0, 0]}  FP={cm[0, 1]}")
+    print(f"    FN={cm[1, 0]}  TP={cm[1, 1]}")
 
     if per_station:
         print("\n" + "=" * 60)

@@ -9,8 +9,7 @@ def save_sampling_results(results, filename="sampling_results.txt"):
         f.write("-" * 70 + "\n")
         f.write(f"Number of stations: {len(results['test_stations'])}\n")
         f.write("Station IDs:\n")
-        for station_id in sorted(results["test_stations"]):
-            f.write(f"  {station_id}\n")
+        f.writelines(f"  {station_id}\n" for station_id in sorted(results["test_stations"]))
 
         f.write("\n" + "=" * 70 + "\n\n")
 
@@ -20,8 +19,7 @@ def save_sampling_results(results, filename="sampling_results.txt"):
         f.write(f"Test stations: {len(results['statistical']['test'])}\n\n")
 
         f.write("Training Station IDs:\n")
-        for station_id in sorted(results["statistical"]["train"]):
-            f.write(f"  {station_id}\n")
+        f.writelines(f"  {station_id}\n" for station_id in sorted(results["statistical"]["train"]))
 
         f.write("\n" + "=" * 70 + "\n\n")
 
@@ -32,11 +30,9 @@ def save_sampling_results(results, filename="sampling_results.txt"):
         f.write(f"Test stations: {len(results['ml']['test'])}\n\n")
 
         f.write("Training Station IDs:\n")
-        for station_id in sorted(results["ml"]["train"]):
-            f.write(f"  {station_id}\n")
+        f.writelines(f"  {station_id}\n" for station_id in sorted(results["ml"]["train"]))
 
         f.write("\nValidation Station IDs:\n")
-        for station_id in sorted(results["ml"]["validation"]):
-            f.write(f"  {station_id}\n")
+        f.writelines(f"  {station_id}\n" for station_id in sorted(results["ml"]["validation"]))
 
     print(f"Results saved to '{filename}'")

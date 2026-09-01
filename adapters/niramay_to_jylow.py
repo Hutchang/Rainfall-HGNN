@@ -40,7 +40,6 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 # Parked per DATA_CONTRACT.md §4 — excluded with cause, not silently.
@@ -50,14 +49,15 @@ DEFAULT_EXCLUDE = {
     "563086": "listed coordinate is a copy of 212285's; true location unknown",
 }
 
-UPTIME_THRESHOLD = 0.9   # matches both configs (Niramay data.uptime_threshold, Jylow filters.uptime_threshold)
-SPLIT_SEED = 123         # matches both configs
+UPTIME_THRESHOLD = 0.9  # matches both configs (Niramay data.uptime_threshold, Jylow filters.uptime_threshold)
+SPLIT_SEED = 123  # matches both configs
 N_SPLITS = 5
 
 
 def resolve_source() -> Path:
     """Same resolution order as tests/conftest.py (NFR-002)."""
     import os
+
     candidates = []
     env = os.environ.get("SYDNEY_GAUGE_ROOT")
     if env:
@@ -90,15 +90,17 @@ def load_source(source: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
         )
 
     meta = pd.read_csv(
-        source / "station_metadata.csv", header=None,
+        source / "station_metadata.csv",
+        header=None,
         names=["name", "id", "network", "latitude", "longitude"],
     )
     meta["id"] = meta["id"].astype(str)
     return long_df, meta
 
 
-def reference_split(source: Path, long_df: pd.DataFrame, meta_all: pd.DataFrame,
-                    manifest: dict) -> list[dict]:
+def reference_split(
+    source: Path, long_df: pd.DataFrame, meta_all: pd.DataFrame, manifest: dict
+) -> list[dict]:
     """Replay data/loader.py + train.py's split exactly, then reconcile to
     one-row-per-id (FR-303). Imports Niramay's own sampler — no reimplementation."""
     niramay_root = source.parent.parent  # <source>=.../database/australia
@@ -112,10 +114,11 @@ def reference_split(source: Path, long_df: pd.DataFrame, meta_all: pd.DataFrame,
     station_meta = meta_all[meta_all["id"].isin(keep)].copy().reset_index(drop=True)
     station_meta["order"] = range(len(station_meta))
     manifest["reference_split"] = {
-        "stations_passing_uptime": int(len(keep)),
-        "metadata_rows_entering_sampler": int(len(station_meta)),
+        "stations_passing_uptime": len(keep),
+        "metadata_rows_entering_sampler": len(station_meta),
         "sampler": "data.sampling.stratified_spatial_kfold (Niramay, imported)",
-        "seed": SPLIT_SEED, "n_splits": N_SPLITS,
+        "seed": SPLIT_SEED,
+        "n_splits": N_SPLITS,
     }
 
     folds = stratified_spatial_kfold(station_meta, n_splits=N_SPLITS, seed=SPLIT_SEED)
@@ -127,19 +130,32 @@ def reference_split(source: Path, long_df: pd.DataFrame, meta_all: pd.DataFrame,
     clean_folds = []
     for f in folds:
         test = list(dict.fromkeys(str(s) for s in f["ml"]["test"]))
-        val = [s for s in dict.fromkeys(str(s) for s in f["ml"]["validation"]) if s not in test]
-        train = [s for s in dict.fromkeys(str(s) for s in f["ml"]["train"])
-                 if s not in test and s not in val]
-        moved = (set(str(s) for s in f["ml"]["train"]) | set(str(s) for s in f["ml"]["validation"])) \
-            & set(test)
+        val = [
+            s
+            for s in dict.fromkeys(str(s) for s in f["ml"]["validation"])
+            if s not in test
+        ]
+        train = [
+            s
+            for s in dict.fromkeys(str(s) for s in f["ml"]["train"])
+            if s not in test and s not in val
+        ]
+        moved = (
+            set(str(s) for s in f["ml"]["train"])
+            | set(str(s) for s in f["ml"]["validation"])
+        ) & set(test)
         moved |= set(str(s) for s in f["ml"]["train"]) & set(val)
         if moved:
             straddlers[f"fold_{f['fold_index']}"] = sorted(moved)
-        clean_folds.append({
-            "fold_index": f["fold_index"],
-            "ml": {"train": train, "validation": val, "test": test},
-        })
-    manifest["reference_split"]["duplicate_id_straddlers_resolved_test_gt_val_gt_train"] = straddlers
+        clean_folds.append(
+            {
+                "fold_index": f["fold_index"],
+                "ml": {"train": train, "validation": val, "test": test},
+            }
+        )
+    manifest["reference_split"][
+        "duplicate_id_straddlers_resolved_test_gt_val_gt_train"
+    ] = straddlers
     return clean_folds
 
 
@@ -147,7 +163,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", type=Path, default=None)
     ap.add_argument("--out", type=Path, default=Path("database/raingauge_nea_data"))
-    ap.add_argument("--split-out", type=Path, default=Path("database/sydney_split_info.json"))
+    ap.add_argument(
+        "--split-out", type=Path, default=Path("database/sydney_split_info.json")
+    )
     args = ap.parse_args()
 
     source = args.source or resolve_source()
@@ -158,28 +176,32 @@ def main() -> None:
         "contract": "docs/baseline-reconciliation/DATA_CONTRACT.md",
         "source": str(source),
         "units": "rainfall values passed through UNSCALED (unit provenance parked, "
-                 "DATA_CONTRACT.md §4); Jylow's x12 must be neutralised via "
-                 "dataset_parameters.gauge_accumulation_minutes: 60",
+        "DATA_CONTRACT.md §4); Jylow's x12 must be neutralised via "
+        "dataset_parameters.gauge_accumulation_minutes: 60",
         "timezone": "timestamps reformatted to literal +08:00 shape for Jylow's parser; "
-                    "NOT shifted to Singapore time; source tz remains undocumented",
+        "NOT shifted to Singapore time; source tz remains undocumented",
     }
 
     long_df, meta_all = load_source(source)
     data_ids = sorted(long_df["station_id"].unique())
     manifest["input"] = {
-        "raw_rows": int(len(long_df)),
+        "raw_rows": len(long_df),
         "station_ids_with_data": len(data_ids),
-        "metadata_rows_total": int(len(meta_all)),
+        "metadata_rows_total": len(meta_all),
         "metadata_unique_ids": int(meta_all["id"].nunique()),
     }
-    print(f"input: {len(long_df):,} rows, {len(data_ids)} station ids, "
-          f"{len(meta_all)} metadata rows ({meta_all['id'].nunique()} unique ids)")
+    print(
+        f"input: {len(long_df):,} rows, {len(data_ids)} station ids, "
+        f"{len(meta_all)} metadata rows ({meta_all['id'].nunique()} unique ids)"
+    )
 
     # Reference split BEFORE exclusions — it must reproduce Niramay's run as-was.
     folds = reference_split(source, long_df, meta_all, manifest)
 
     # --- Exclusions (parked ids) ---------------------------------------------
-    excluded_present = {sid: why for sid, why in DEFAULT_EXCLUDE.items() if sid in data_ids}
+    excluded_present = {
+        sid: why for sid, why in DEFAULT_EXCLUDE.items() if sid in data_ids
+    }
     manifest["exclusions"] = excluded_present
     long_df = long_df[~long_df["station_id"].isin(excluded_present)]
     for f in folds:
@@ -203,49 +225,68 @@ def main() -> None:
     if no_meta:
         manifest["excluded_no_metadata"] = no_meta
         long_df = long_df[~long_df["station_id"].isin(no_meta)]
-        print(f"WARNING: {len(no_meta)} station(s) have data but no metadata row "
-              f"— excluded: {no_meta}")
+        print(
+            f"WARNING: {len(no_meta)} station(s) have data but no metadata row "
+            f"— excluded: {no_meta}"
+        )
 
     # --- Emit per-year Jylow-format files -------------------------------------
     long_df = long_df.dropna(subset=["rainfall_mm"])  # NaN -> row absence
     long_df = long_df.sort_values(["timestamp", "station_id"])
     out_stamp = long_df["timestamp"].dt.strftime("%Y-%m-%dT%H:%M:00+08:00")
-    emit = pd.DataFrame({
-        "timestamp": out_stamp,
-        "stationId": long_df["station_id"],
-        "value": long_df["rainfall_mm"],
-    })
+    emit = pd.DataFrame(
+        {
+            "timestamp": out_stamp,
+            "stationId": long_df["station_id"],
+            "value": long_df["rainfall_mm"],
+        }
+    )
     emit["year"] = long_df["timestamp"].dt.year.values
 
-    stations_out = pd.DataFrame({
-        "id": meta["id"], "latitude": meta["latitude"], "longitude": meta["longitude"],
-        "deviceId": meta["id"],  # required-but-unused by Jylow's loader
-        "name": meta["name"],
-    })
+    stations_out = pd.DataFrame(
+        {
+            "id": meta["id"],
+            "latitude": meta["latitude"],
+            "longitude": meta["longitude"],
+            "deviceId": meta["id"],  # required-but-unused by Jylow's loader
+            "name": meta["name"],
+        }
+    )
 
     manifest["output"] = {"final_station_count": int(meta["id"].nunique()), "years": {}}
     for year, grp in emit.groupby("year"):
         ydir = args.out / str(year)
         ydir.mkdir(parents=True, exist_ok=True)
-        grp.drop(columns="year").to_csv(ydir / f"weather_station_data_{year}.csv", index=False)
+        grp.drop(columns="year").to_csv(
+            ydir / f"weather_station_data_{year}.csv", index=False
+        )
         stations_out.to_csv(ydir / f"weather_stations_{year}.csv", index=False)
         manifest["output"]["years"][str(year)] = {
-            "rows": int(len(grp)), "stations": int(grp["stationId"].nunique()),
+            "rows": len(grp),
+            "stations": int(grp["stationId"].nunique()),
         }
         print(f"  {year}: {len(grp):,} rows, {grp['stationId'].nunique()} stations")
 
     args.split_out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.split_out, "w") as fh:
-        json.dump({"provenance": manifest["reference_split"],
-                   "exclusions_applied": sorted(excluded_present),
-                   "folds": folds}, fh, indent=1)
+        json.dump(
+            {
+                "provenance": manifest["reference_split"],
+                "exclusions_applied": sorted(excluded_present),
+                "folds": folds,
+            },
+            fh,
+            indent=1,
+        )
     print(f"reference split -> {args.split_out}")
 
     with open(args.out / "ADAPTER_MANIFEST.json", "w") as fh:
         json.dump(manifest, fh, indent=1, default=str)
     print(f"manifest -> {args.out / 'ADAPTER_MANIFEST.json'}")
-    print(f"final station count: {meta['id'].nunique()} "
-          f"(excluded with cause: {sorted(excluded_present) + no_meta})")
+    print(
+        f"final station count: {meta['id'].nunique()} "
+        f"(excluded with cause: {sorted(excluded_present) + no_meta})"
+    )
 
 
 if __name__ == "__main__":

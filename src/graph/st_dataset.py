@@ -51,9 +51,9 @@ class SpatioTemporalDataset(Dataset):
     """
 
     def __init__(self, heterodata: HeteroData, window_size: int = 6):
-        self.heterodata  = heterodata
+        self.heterodata = heterodata
         self.window_size = window_size
-        self.mask        = heterodata["raingauge"].mask
+        self.mask = heterodata["raingauge"].mask
 
         self.valid_indices = self._find_valid_indices()
 
@@ -80,10 +80,7 @@ class SpatioTemporalDataset(Dataset):
         validity = self.heterodata["raingauge"].x[:, :, _VALIDITY_IDX]  # [N, T]
         T = validity.shape[1]
 
-        valid = [
-            t for t in range(self.window_size, T)
-            if validity[:, t].sum() > 0
-        ]
+        valid = [t for t in range(self.window_size, T) if validity[:, t].sum() > 0]
         return valid
 
     # ------------------------------------------------------------------
@@ -94,7 +91,7 @@ class SpatioTemporalDataset(Dataset):
         return len(self.valid_indices)
 
     def __getitem__(self, idx: int) -> HeteroData:
-        t       = self.valid_indices[idx]
+        t = self.valid_indices[idx]
         ctx_idx = list(range(t - self.window_size, t))
 
         data = HeteroData()
@@ -106,9 +103,9 @@ class SpatioTemporalDataset(Dataset):
         # x        : [N, F]     — current timestep (masking done in logic_st.py)
         # y        : [N, 1]     — ground truth at current timestep
         data["raingauge"].x_context = self.heterodata["raingauge"].x[:, ctx_idx, :]
-        data["raingauge"].x         = self.heterodata["raingauge"].x[:, t, :]
-        data["raingauge"].y         = self.heterodata["raingauge"].y[:, t, :]
-        data["raingauge"].mask      = torch.tensor(self.mask)
+        data["raingauge"].x = self.heterodata["raingauge"].x[:, t, :]
+        data["raingauge"].y = self.heterodata["raingauge"].y[:, t, :]
+        data["raingauge"].mask = torch.tensor(self.mask)
         data["raingauge"].num_nodes = self.heterodata["raingauge"].x.shape[0]
 
         # --- Other node types (radar, cml, …) ---
@@ -116,7 +113,7 @@ class SpatioTemporalDataset(Dataset):
             if ntype == "raingauge":
                 continue
             data[ntype].x_context = self.heterodata[ntype].x[:, ctx_idx, :]
-            data[ntype].x         = self.heterodata[ntype].x[:, t, :]
+            data[ntype].x = self.heterodata[ntype].x[:, t, :]
             data[ntype].num_nodes = self.heterodata[ntype].x.shape[0]
 
         # --- Edges (topology fixed across all timesteps) ---

@@ -1,13 +1,12 @@
-import torch
-import tqdm
-import numpy as np
-import torch.nn.functional as F
-import time
+import os
 
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn.functional as F
+import tqdm
 from scipy.stats import pearsonr
 
-import os
 
 def train_epoch(
     model,
@@ -27,7 +26,6 @@ def train_epoch(
     charge_bar = tqdm.tqdm(dataloader, desc="training")
 
     for batch_idx, batch in enumerate(charge_bar):
-
         optimizer.zero_grad()
 
         # PyG Batch object - move to device
@@ -36,7 +34,7 @@ def train_epoch(
         # Extract from PyG Batch format
         x = batch.x  # [B*N, F]
         y = batch.y  # [B*N, Tgt]
-        #mask = batch.mask  # [N] - PROBLEM: single mask for one graph
+        # mask = batch.mask  # [N] - PROBLEM: single mask for one graph
         edge_index = batch.edge_index
         edge_attr = batch.edge_attr if batch.edge_attr is not None else None
         num_graphs = batch.num_graphs
@@ -45,7 +43,10 @@ def train_epoch(
         batch_loss = torch.tensor(0.0, device=device)
         for node_pos in range(num_nodes):
             x_masked = x.clone()
-            indices_to_mask = torch.arange(num_graphs, device=device) * x.shape[0] // num_graphs + node_pos
+            indices_to_mask = (
+                torch.arange(num_graphs, device=device) * x.shape[0] // num_graphs
+                + node_pos
+            )
             x_masked[indices_to_mask] = 0.0
             out = model(x_masked, edge_index, edge_attributes=edge_attr)
 
@@ -53,21 +54,19 @@ def train_epoch(
             loss = F.mse_loss(out[indices_to_mask], y[indices_to_mask])
             batch_loss += loss
 
-
         batch_loss = batch_loss / num_nodes
         if scheduler is not None:
             scheduler.step()
         batch_loss.backward()
 
-
         epoch_losses.append(batch_loss.item())
         charge_bar.set_postfix(
             {
                 "loss": batch_loss.item(),
-                #"grad_norm": total_grad_norm,
+                # "grad_norm": total_grad_norm,
             }
         )
-        #Step only at the end of each batch
+        # Step only at the end of each batch
         optimizer.step()
 
     return float(np.mean(epoch_losses))
@@ -91,50 +90,48 @@ def train_epoch_hetero(
     charge_bar = tqdm.tqdm(dataloader, desc="training")
 
     for batch_idx, batch in enumerate(charge_bar):
-
         optimizer.zero_grad()
 
         # PyG Batch object - move to device
         batch = batch.to(device)
 
         # Extract from PyG Batch format
-        x = batch['raingauge'].x  # [B*N, F]
-        y = batch['raingauge'].y  # [B*N, Tgt]
-        mask = batch['raingauge'].mask  # [N] - PROBLEM: single mask for one graph
+        x = batch["raingauge"].x  # [B*N, F]
+        y = batch["raingauge"].y  # [B*N, Tgt]
+        mask = batch["raingauge"].mask  # [N] - PROBLEM: single mask for one graph
         edge_index_dict = batch.edge_index_dict
-        #edge_attr = batch.edge_attr if batch.edge_attr is not None else None
-        num_graphs = batch['raingauge'].ptr.size(0) - 1
+        # edge_attr = batch.edge_attr if batch.edge_attr is not None else None
+        num_graphs = batch["raingauge"].ptr.size(0) - 1
         num_nodes = x.shape[0] // num_graphs
 
         batch_loss = torch.tensor(0.0, device=device)
         for node_pos in range(num_nodes):
             x_masked = x.clone()
-            indices_to_mask = torch.arange(num_graphs, device=device) * x.shape[0] // num_graphs + node_pos
+            indices_to_mask = (
+                torch.arange(num_graphs, device=device) * x.shape[0] // num_graphs
+                + node_pos
+            )
             x_masked[indices_to_mask] = 0.0
-            x_dict = {
-                'raingauge': x_masked
-            }
+            x_dict = {"raingauge": x_masked}
             out = model(x_dict, edge_index_dict)
 
             # Compute loss ONLY on trainable nodes
-            loss = F.mse_loss(out['raingauge'][indices_to_mask], y[indices_to_mask])
+            loss = F.mse_loss(out["raingauge"][indices_to_mask], y[indices_to_mask])
             batch_loss += loss
-
 
         batch_loss = batch_loss / num_nodes
         if scheduler is not None:
             scheduler.step()
         batch_loss.backward()
 
-
         epoch_losses.append(batch_loss.item())
         charge_bar.set_postfix(
             {
                 "loss": batch_loss.item(),
-                #"grad_norm": total_grad_norm,
+                # "grad_norm": total_grad_norm,
             }
         )
-        #Step only at the end of each batch
+        # Step only at the end of each batch
         optimizer.step()
 
     return float(np.mean(epoch_losses))
@@ -178,7 +175,7 @@ def validate(
             out = model(x, edge_index, edge_attributes=edge_attr)  # [B*N, out_channels]
 
             # Compute loss ONLY on validation nodes
-            val_mask = batch.mask # [B*N] boolean mask
+            val_mask = batch.mask  # [B*N] boolean mask
 
             loss = F.mse_loss(out[val_mask], y[val_mask])
             epoch_losses.append(loss.item())
@@ -198,7 +195,10 @@ def validate(
 
     return mean_loss
 
-def test_model(model, dataloader, device, fold=0, verbose=False, experiment_name= "test"):
+
+def test_model(
+    model, dataloader, device, fold=0, verbose=False, experiment_name="test"
+):
     """
     Test loop following the SAME structure as validate():
       - PyG batch format
@@ -212,7 +212,7 @@ def test_model(model, dataloader, device, fold=0, verbose=False, experiment_name
 
     all_preds = []
     all_targets = []
-    all_station_ids = []   # <-- FIXED: collect all station IDs here
+    all_station_ids = []  # <-- FIXED: collect all station IDs here
     epoch_losses = []
 
     test_bar = tqdm.tqdm(dataloader, desc="Testing")
@@ -249,7 +249,7 @@ def test_model(model, dataloader, device, fold=0, verbose=False, experiment_name
             mask = batch.mask.bool()
             edge_index = batch.edge_index
             edge_attr = batch.edge_attr if batch.edge_attr is not None else None
-            station_id = batch.station_id               # <--- REQUIRED
+            station_id = batch.station_id  # <--- REQUIRED
 
             assert mask.shape[0] == x.shape[0], "Mask and x size mismatch"
             x_masked = x.clone()
@@ -265,7 +265,7 @@ def test_model(model, dataloader, device, fold=0, verbose=False, experiment_name
             # ----- Collect outputs -----
             all_preds.append(out[mask].detach().cpu())
             all_targets.append(y[mask].detach().cpu())
-            all_station_ids.append(station_id[mask].detach().cpu())   # <-- FIXED
+            all_station_ids.append(station_id[mask].detach().cpu())  # <-- FIXED
 
             test_bar.set_postfix({"loss": loss.item()})
 
@@ -274,7 +274,7 @@ def test_model(model, dataloader, device, fold=0, verbose=False, experiment_name
     # ============================================================
     all_preds = torch.cat(all_preds, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
-    all_station_ids = torch.cat(all_station_ids, dim=0)   # <-- FIXED
+    all_station_ids = torch.cat(all_station_ids, dim=0)  # <-- FIXED
 
     print("Final aggregated prediction shape:", all_preds.shape)
     print("Final aggregated target shape:", all_targets.shape)
@@ -310,7 +310,14 @@ def test_model(model, dataloader, device, fold=0, verbose=False, experiment_name
     plt.title("Test Set Performance")
     plt.grid(True)
     text = f"Pearson r = {pearson_r:.3f}\nRMSE = {rmse:.3f}"
-    plt.text( 0.05, 0.95, text, transform=plt.gca().transAxes, verticalalignment="top", bbox=dict(facecolor="white", alpha=0.7, edgecolor="black"), )
+    plt.text(
+        0.05,
+        0.95,
+        text,
+        transform=plt.gca().transAxes,
+        verticalalignment="top",
+        bbox=dict(facecolor="white", alpha=0.7, edgecolor="black"),
+    )
     plt.savefig(f"experiments/{experiment_name}/test_scatter_plot_{fold}.png", dpi=300)
     plt.close()
 
@@ -321,7 +328,7 @@ def test_model(model, dataloader, device, fold=0, verbose=False, experiment_name
     os.makedirs(save_dir, exist_ok=True)
 
     for sid in unique_stations:
-        mask_sid = (all_station_ids == sid)
+        mask_sid = all_station_ids == sid
 
         preds_sid = all_preds[mask_sid].numpy().flatten()
         targets_sid = all_targets[mask_sid].numpy().flatten()

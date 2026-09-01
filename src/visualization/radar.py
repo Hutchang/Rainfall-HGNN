@@ -1,7 +1,7 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
 import cartopy.crs as ccrs
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 
 def improved_visualise_radar_grid(
@@ -95,11 +95,12 @@ def improved_visualise_radar_grid(
 
     return im, ax
 
+
 def visualize_one_radar_image_with_cropping(radar_df, sg_bounds):
     # pick one radar frame
-    radar_row = radar_df.iloc[0]   # first frame
-    data = radar_row['data']       # 2D numpy array
-    bounds = radar_row['bounds']   # (left, bottom, right, top)
+    radar_row = radar_df.iloc[0]  # first frame
+    data = radar_row["data"]  # 2D numpy array
+    bounds = radar_row["bounds"]  # (left, bottom, right, top)
 
     # extract bounds
     left, bottom, right, top = bounds
@@ -109,15 +110,15 @@ def visualize_one_radar_image_with_cropping(radar_df, sg_bounds):
     print(f"Data shape: {data.shape}")
     print(f"Data min: {data.min()}, max: {data.max()}, mean: {data.mean()}")
     print(f"Non-zero values: {(data > 0).sum()} out of {data.size}")
-    
+
     # make coordinate grids
     x = np.linspace(left, right, ncols)
     y = np.linspace(bottom, top, nrows)
     X, Y = np.meshgrid(x, y)
 
     # boolean mask for the coordinate grids
-    mask_lon = (X[0,:] >= sg_bounds["left"]) & (X[0,:] <= sg_bounds["right"])
-    mask_lat = (Y[:,0] >= sg_bounds["bottom"]) & (Y[:,0] <= sg_bounds["top"])
+    mask_lon = (X[0, :] >= sg_bounds["left"]) & (X[0, :] <= sg_bounds["right"])
+    mask_lat = (Y[:, 0] >= sg_bounds["bottom"]) & (Y[:, 0] <= sg_bounds["top"])
 
     # crop data and grids
     data_crop = data[np.ix_(mask_lat, mask_lon)]
@@ -133,38 +134,47 @@ def visualize_one_radar_image_with_cropping(radar_df, sg_bounds):
     data_crop_masked = np.ma.masked_where(data_crop <= 0, data_crop)
 
     # plot cropped radar
-    fig, ax = plt.subplots(figsize=(8,6), subplot_kw={'projection': ccrs.PlateCarree()})
-    ax.set_extent([sg_bounds["left"], sg_bounds["right"], sg_bounds["bottom"], sg_bounds["top"]],
-                crs=ccrs.PlateCarree())
-    
+    fig, ax = plt.subplots(
+        figsize=(8, 6), subplot_kw={"projection": ccrs.PlateCarree()}
+    )
+    ax.set_extent(
+        [sg_bounds["left"], sg_bounds["right"], sg_bounds["bottom"], sg_bounds["top"]],
+        crs=ccrs.PlateCarree(),
+    )
+
     # Use better colormap and set vmin/vmax explicitly
     cmap = plt.get_cmap("Blues")
-    cmap.set_bad(color='white')  # Show masked values as white
-    
-    im = ax.pcolormesh(X_crop, Y_crop, data_crop_masked, 
-                       cmap=cmap, 
-                       vmin=0.1,  # Start colormap at 0.1 mm/hr
-                       vmax=data_crop.max() if data_crop.max() > 0 else 10)
-    
-    plt.colorbar(im, ax=ax, orientation='vertical', label="Rainfall (mm/hr)")
+    cmap.set_bad(color="white")  # Show masked values as white
+
+    im = ax.pcolormesh(
+        X_crop,
+        Y_crop,
+        data_crop_masked,
+        cmap=cmap,
+        vmin=0.1,  # Start colormap at 0.1 mm/hr
+        vmax=data_crop.max() if data_crop.max() > 0 else 10,
+    )
+
+    plt.colorbar(im, ax=ax, orientation="vertical", label="Rainfall (mm/hr)")
     plt.title(f"Radar frame (Singapore crop): {radar_row['time_sgt']}")
-    
+
     # Add coastlines for reference
     ax.coastlines()
-    
+
     plt.show()
 
-def visualize_one_radar_image(radar_df, n = 1):
+
+def visualize_one_radar_image(radar_df, n=1):
     """
     Visualizes the first radar frame from the DataFrame without cropping.
-    
+
     Assumes 'data', 'bounds', and 'time_sgt' columns exist.
     """
     # pick one radar frame
     for i in range(n):
-        radar_row = radar_df.iloc[i]   # first frame
-        data = radar_row['data']       # 2D numpy array
-        bounds = radar_row['bounds']   # (left, bottom, right, top)
+        radar_row = radar_df.iloc[i]  # first frame
+        data = radar_row["data"]  # 2D numpy array
+        bounds = radar_row["bounds"]  # (left, bottom, right, top)
 
         # extract bounds
         left, bottom, right, top = bounds
@@ -174,7 +184,7 @@ def visualize_one_radar_image(radar_df, n = 1):
         print(f"Data shape: {data.shape}")
         print(f"Data min: {data.min()}, max: {data.max()}, mean: {data.mean()}")
         print(f"Non-zero values: {(data > 0).sum()} out of {data.size}")
-        
+
         # make coordinate grids for the full image
         x = np.linspace(left, right, ncols)
         y = np.linspace(bottom, top, nrows)
@@ -184,25 +194,30 @@ def visualize_one_radar_image(radar_df, n = 1):
         data_masked = np.ma.masked_where(data <= 0, data)
 
         # plot full radar
-        fig, ax = plt.subplots(figsize=(8,6), subplot_kw={'projection': ccrs.PlateCarree()})
-        
+        fig, ax = plt.subplots(
+            figsize=(8, 6), subplot_kw={"projection": ccrs.PlateCarree()}
+        )
+
         # Set extent to the full image bounds
-        ax.set_extent([left, right, bottom, top],
-                    crs=ccrs.PlateCarree())
-        
+        ax.set_extent([left, right, bottom, top], crs=ccrs.PlateCarree())
+
         # Use better colormap and set vmin/vmax explicitly
         cmap = plt.get_cmap("Blues")
-        cmap.set_bad(color='white')  # Show masked values as white
-        
-        im = ax.pcolormesh(X, Y, data_masked, 
-                        cmap=cmap, 
-                        vmin=0.1,  # Start colormap at 0.1 mm/hr
-                        vmax=data.max() if data.max() > 0 else 10)
-        
-        plt.colorbar(im, ax=ax, orientation='vertical', label="Rainfall (mm/hr)")
+        cmap.set_bad(color="white")  # Show masked values as white
+
+        im = ax.pcolormesh(
+            X,
+            Y,
+            data_masked,
+            cmap=cmap,
+            vmin=0.1,  # Start colormap at 0.1 mm/hr
+            vmax=data.max() if data.max() > 0 else 10,
+        )
+
+        plt.colorbar(im, ax=ax, orientation="vertical", label="Rainfall (mm/hr)")
         plt.title(f"Radar frame (Full): {radar_row['time_sgt']}")
-        
+
         # Add coastlines for reference
         ax.coastlines()
-        
+
         plt.show()
