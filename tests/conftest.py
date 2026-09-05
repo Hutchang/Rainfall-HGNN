@@ -103,7 +103,9 @@ def station_meta(data_root, gauge_wide):
 
 
 def pytest_collection_modifyitems(items):
-    """Skip everything if the dataset is absent."""
+    """Skip tests that need the legacy dataset when it is absent. Tests that do not
+    use the data_root fixture (directly or through another fixture) still run."""
     if DATA_ROOT is None:
         for item in items:
-            item.add_marker(_SKIP)
+            if "data_root" in getattr(item, "fixturenames", ()):
+                item.add_marker(_SKIP)
