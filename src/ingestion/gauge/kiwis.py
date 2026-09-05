@@ -62,10 +62,14 @@ class KiwisClient:
 
     # ---- the three calls ---------------------------------------------------
 
-    def station_list(self, bounds: dict | None = None) -> tuple[bytes, list[dict]]:
-        """Rainfall stations, optionally inside a bounding box.
+    def station_list(
+        self, bounds: dict | None = None, station_no: str | None = None
+    ) -> tuple[bytes, list[dict]]:
+        """Rainfall stations, optionally inside a bounding box or by public number.
         Returns raw bytes and rows as dicts keyed by STATION_FIELDS."""
         params = {"parametertype_name": "Rainfall", "returnfields": STATION_FIELDS}
+        if station_no:
+            params["station_no"] = station_no
         if bounds:
             # KiWIS bbox order is min_lon,min_lat,max_lon,max_lat
             params["bbox"] = ",".join(
