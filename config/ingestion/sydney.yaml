@@ -1,0 +1,48 @@
+# Component 01 ingestion settings for the Greater Sydney baseline.
+# One file per region. Everything that decides WHICH data is fetched lives here, not
+# in Python. Each source has its own section; settings under `gauge:` apply to gauges
+# only.
+
+region: sydney
+
+# Study period, inclusive. Fixed by the project handoff, do not change here.
+start: 2021-01-01
+end: 2022-12-31
+
+output_dir: database/raw
+
+# ---------------------------------------------------------------------------
+# Gauges: BoM Water Data Online, fetched from the KiWIS API.
+# ---------------------------------------------------------------------------
+gauge:
+  # Bounding box in WGS84 degrees. Hand-drawn to cover the Sydney basin from the
+  # Blue Mountains foothills to the coast, Gosford to Campbelltown. Upper Blue
+  # Mountains (Katoomba, Blackheath, lon < 150.4) are excluded pending a decision
+  # from the project lead. Preview with:
+  #   python -m src.ingestion.gauge.survey config/ingestion/sydney.yaml
+  bounds:
+    min_lat: -34.3
+    max_lat: -33.4
+    min_lon: 150.4
+    max_lon: 151.4
+
+  # Note https: the http address in the requirements doc now redirects
+  # (verified 2026-09-05).
+  api:
+    base_url: https://www.bom.gov.au/waterdata/services
+    request_delay_seconds: 1
+    timeout_seconds: 120
+    user_agent: COMP3888-P23-ingestion/0.1 (university capstone)
+
+  # The two series fetched per station. Tips are the data, daily totals are the
+  # independent check Component 02 uses to tell dry from missing.
+  series:
+    tips: DMQaQc.Merged.AsStored.1
+    daily: DMQaQc.Merged.DailyTotal.09HR
+
+# ---------------------------------------------------------------------------
+# Radar and satellite: preprocessed 2022 files already on disk. Owner: TBC.
+# Fill in source paths here when that work starts; see requirements doc 01.
+# ---------------------------------------------------------------------------
+radar: {}
+satellite: {}
