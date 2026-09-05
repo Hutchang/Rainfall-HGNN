@@ -349,6 +349,28 @@ def write_report(
         "",
     ]
     lines += [f"- {sid}: {why}" for sid, why in no_series.items()] or ["- none"]
+    # Stations whose every file came back empty: real API answers (status ok), stored
+    # and indexed, but a reader of this report should not have to compute it.
+    by_station = {}
+    for r in ok:
+        by_station.setdefault(r["station_id"], []).append(int(r["n_records"]))
+    silent = sorted(sid for sid, c in by_station.items() if sum(c) == 0)
+    partial = sorted(sid for sid, c in by_station.items() if 0 in c and sum(c) > 0)
+    names = {st["station_id"]: st["station_name"] for st in stations}
+    lines += [
+        "",
+        "## Stations with no records in the period",
+        "",
+        f"{len(silent)} stations returned zero records for every file (tips and daily).",
+        "They are fetched and indexed like any other; deciding whether they are dry,",
+        "dead or absent is Component 02's job.",
+        "",
+    ]
+    lines += [f"- {sid} {names.get(sid, '')}" for sid in silent] or ["- none"]
+    lines += [
+        "",
+        f"{len(partial)} further stations have some empty months but records elsewhere.",
+    ]
     lines += [
         "",
         "## Failed files (rerun the command to retry; only missing files are fetched)",
