@@ -9,6 +9,7 @@ from src.study.schema import StationRecord
 from src.study.split import (
     assign_spatial_clusters,
     convert_coordinates_to_km,
+    create_test_folds,
     validate_station_records,
 )
 
@@ -42,8 +43,11 @@ def test_only_eligible_stations_receive_clusters():
     ]
 
     clusters = assign_spatial_clusters(stations, n_clusters=2, seed=123)
+    clustered_station_ids = {
+        station_id for station_ids in clusters.values() for station_id in station_ids
+    }
 
-    assert set(clusters) == {"west-1", "west-2", "east-1", "east-2"}
+    assert clustered_station_ids == {"west-1", "west-2", "east-1", "east-2"}
 
 
 def test_duplicate_internal_station_ids_are_rejected():
@@ -73,3 +77,26 @@ def test_projects_sydney_coordinates_to_kilometres():
 
     assert latitude_distance == pytest.approx(111.2, rel=0.01)
     assert longitude_distance == pytest.approx(92.5, rel=0.01)
+
+
+def test_clustered_stations_are_spread_across_test_folds_exactly_once():
+    cluster_assignments = {
+        0: [f"west-{index}" for index in range(5)],
+        1: [f"east-{index}" for index in range(5)],
+    }
+
+    folds = create_test_folds(cluster_assignments, n_folds=5, seed=123)
+    repeated = create_test_folds(cluster_assignments, n_folds=5, seed=123)
+
+    assigned_station_ids = [station_id for fold in folds for station_id in fold]
+    expected_station_ids = {
+        station_id
+        for station_ids in cluster_assignments.values()
+        for station_id in station_ids
+    }
+    assert set(assigned_station_ids) == expected_station_ids
+    assert len(assigned_station_ids) == len(set(assigned_station_ids))
+    assert folds == repeated
+    for fold in folds:
+        assert sum(station_id.startswith("west-") for station_id in fold) == 1
+        assert sum(station_id.startswith("east-") for station_id in fold) == 1

@@ -1,7 +1,10 @@
 """Spatial grouping helpers for Component 03 study splits."""
 
-from collections.abc import Iterable
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping, Sequence
+from itertools import chain
 from math import cos, radians
+from random import Random
 from typing import cast
 
 import numpy as np
@@ -68,8 +71,8 @@ def project_station_coordinates_km(
 
 def assign_spatial_clusters(
     stations: Iterable[StationRecord], n_clusters: int, seed: int
-) -> dict[str, int]:
-    """Assign eligible stations to reproducible latitude/longitude clusters."""
+) -> dict[int, list[str]]:
+    """Group eligible station IDs into reproducible spatial clusters."""
     records = validate_station_records(stations)
     eligible = [station for station in records if station.use_in_study]
 
@@ -83,8 +86,38 @@ def assign_spatial_clusters(
         ).fit_predict(coordinates),
     )
 
-    assignments: dict[str, int] = {}
+    assignments: defaultdict[int, list[str]] = defaultdict(list)
     for index, station in enumerate(eligible):
         label = cast("np.int64", labels[index])
-        assignments[station.station_id] = int(label)
-    return assignments
+        assignments[int(label)].append(station.station_id)
+
+    return {
+        cluster: sorted(station_ids)
+        for cluster, station_ids in sorted(assignments.items())
+    }
+
+
+def create_test_folds(
+    cluster_assignments: Mapping[int, Sequence[str]], n_folds: int, seed: int
+) -> tuple[tuple[str, ...], ...]:
+    """Spread clustered stations across test folds exactly once."""
+    all_station_ids = list(chain.from_iterable(cluster_assignments.values()))
+    if len(all_station_ids) != len(set(all_station_ids)):
+        raise ValueError("a station_id cannot appear in more than one cluster")
+
+    rng = Random(seed)
+    test_folds: list[list[str]] = [[] for _ in range(n_folds)]
+    next_fold = 0
+    for cluster in sorted(cluster_assignments):
+        station_ids = sorted(cluster_assignments[cluster])
+        rng.shuffle(station_ids)
+        for station_id in station_ids:
+            test_folds[next_fold].append(station_id)
+            next_fold = (next_fold + 1) % n_folds
+
+    folds = tuple(tuple(sorted(fold)) for fold in test_folds)
+    assigned_counts = Counter(station_id for fold in folds for station_id in fold)
+    if assigned_counts != Counter(all_station_ids):
+        raise RuntimeError("each station must appear in exactly one test fold")
+
+    return folds
