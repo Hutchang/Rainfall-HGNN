@@ -22,25 +22,44 @@ found by re-reading these files.
 
 ### A config file you write yourself
 
-`config/ingestion/sydney.yaml`:
+`config/ingestion/sydney.yaml` — one file per region, one section per source:
 
 ```yaml
-bounds: {min_lon: 150.5, max_lon: 151.5, min_lat: -34.2, max_lat: -33.4}
+region: sydney
 start: 2021-01-01
 end: 2022-12-31
 output_dir: database/raw
-request_delay_seconds: 1
+
+gauge:
+  bounds: {min_lat: -34.3, max_lat: -33.4, min_lon: 150.4, max_lon: 151.4}
+  api:
+    base_url: https://www.bom.gov.au/waterdata/services
+    request_delay_seconds: 1
+    timeout_seconds: 120
+    user_agent: COMP3888-P23-ingestion/0.1 (university capstone)
+  series:
+    tips: DMQaQc.Merged.AsStored.1
+    daily: DMQaQc.Merged.DailyTotal.09HR
+
+radar: {}        # filled in when the radar/satellite owner starts
+satellite: {}
 ```
 
 Everything that decides *which data we get* lives here, so a reviewer can see it without
-reading Python. The bounds above are a starting point — set the real Greater Sydney box
-and record where it came from.
+reading Python. `src/ingestion/config.py` validates the file and fails with a concrete
+message on a missing key. The box above is the current Greater Sydney box; the comments
+in the real file record where it came from and the open question about whether the upper
+Blue Mountains belong in it.
 
 ### The BoM WaterData API
 
-Base URL: `http://www.bom.gov.au/waterdata/services?service=kisters&type=queryServices`
+Base URL: `https://www.bom.gov.au/waterdata/services` — every request also carries
+`service=kisters&type=queryServices&datasource=0&format=json`. Use **https**: the old
+`http://` address now redirects, and the client does not follow redirects, so a moved
+API fails loudly instead of silently.
 
-Three calls, in this order. All three were confirmed working on 2026-08-31:
+Three calls, in this order. All three were confirmed working on 2026-08-31 and
+re-verified against the live API on 2026-09-05:
 
 | Call | Gives you | Why you need it |
 |---|---|---|
@@ -48,8 +67,10 @@ Three calls, in this order. All three were confirmed working on 2026-08-31:
 | `getTimeseriesList` | the available series per station, each with a `ts_id` | Picks the right feed. Use `DMQaQc.Merged.AsStored.1` (individual tips) and `DMQaQc.Merged.DailyTotal.09HR` (BoM's own daily total) |
 | `getTimeseriesValues` | the actual records for one `ts_id` and date range | The data |
 
-Request one station and one calendar month at a time. Roughly 150 stations × 24 months
-is ~3,600 requests; at one per second that is about an hour.
+Request one station and one calendar month of tips at a time, plus one request per
+station-year for the daily totals and one per station to list its series. For Greater
+Sydney that is roughly 180 stations × (1 + 24 + 2) ≈ 4,800 requests; at one per second,
+about 90 minutes.
 
 Why two series and not one: the tip series is silent both when it is dry and when the
 gauge is broken. The daily total is an independent record of what BoM says fell that
@@ -98,7 +119,7 @@ database/raw/
 
 | Column | Example | Purpose |
 |---|---|---|
-| `source` | `gauge_tips` | which of the five kinds of file this is |
+| `source` | `gauge_tips` | the kind of file: `gauge_tips`, `gauge_daily`, or a radar/satellite row |
 | `station_id` | `7730155` | blank for radar/satellite rows |
 | `path` | `gauge/tips/7730155/2022-01.json.gz` | relative to `database/raw/` |
 | `start`, `end` | `2022-01-01`, `2022-01-31` | what the file is supposed to cover |
@@ -126,15 +147,15 @@ had no rain" and "this month failed to download".
 1. Store the API response as it came back. No aggregating, rounding, gap-filling, or
    unit conversion.
 2. `station_id` is the key. Never merge two stations because their `station_no` matches.
-3. A run that finishes with failures still writes `index.csv` and `report.md`, and exits
-   non-zero.
+3. A run that finishes with failures — or with a station that has neither required
+   series — still writes `index.csv` and `report.md`, and exits non-zero.
 4. Never edit a file already on disk. Delete and re-fetch instead.
 
 ## Done when
 
-- [ ] `python -m ingestion.fetch config/ingestion/sydney.yaml` runs end to end and, run
-      twice, skips files it already wrote (`if path.exists(): continue` is the whole
-      resume mechanism — no state file).
+- [ ] `uv run python -m src.ingestion.gauge.fetch config/ingestion/sydney.yaml` runs end
+      to end and, run twice, does not re-fetch files it already wrote (a file already on
+      disk is kept in the index but not downloaded again — there is no state file).
 - [ ] `index.csv` has a row per expected station-month, with failures marked.
 - [ ] **Storm check.** Fetching public station `568163` for 2023-01-04 to 2023-01-05
       returns 50 tips between 19:00 and 20:00 AEST on 4 January (25.0 mm), with adjacent
@@ -142,8 +163,9 @@ had no rain" and "this month failed to download".
       not go in the 2021–2022 dataset.
 - [ ] **Collision check.** Querying `station_no=563083` keeps BLACKHEATH G.C.
       (`7730155`) and NORTH RICHMOND WFP (`49645132`) as two separate rows.
-- [ ] One station-month of real output is committed under `tests/data/` (a few KB) so
-      Component 02's tests run on a fresh clone with no network.
+- [ ] One real station-month of tips and one real station-year of daily totals are
+      committed under `tests/data/` (a few KB, gzipped and unmodified) so Component 02's
+      tests run on a fresh clone with no network.
 - [ ] `docs/ingestion/README.md` gives the copy-pasteable commands and the meaning of
       every `index.csv` column.
 
