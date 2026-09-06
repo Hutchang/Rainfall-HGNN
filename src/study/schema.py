@@ -9,6 +9,8 @@ NonEmptyString = Annotated[str, Field(min_length=1)]
 Latitude = Annotated[float, Field(ge=-90.0, le=90.0)]
 Longitude = Annotated[float, Field(ge=-180.0, le=180.0)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
+PositiveInt = Annotated[int, Field(gt=0)]
+Fraction = Annotated[float, Field(ge=0.0, lt=1.0)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +28,39 @@ class StudyFold:
 
     fold_index: int
     ml: StationRoles
+
+
+@dataclass(frozen=True, slots=True)
+class StudySplitOutput:
+    """The complete Component 03 split artifact before JSON serialisation."""
+
+    name: str
+    created: str
+    stations_file: str
+    n_eligible: int
+    seed: int
+    folds: tuple[StudyFold, ...]
+
+
+class SplitConfig(BaseModel):
+    """Settings from ``config/splits/sydney_5fold.yaml``."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", strict=True)
+
+    stations_file: NonEmptyString
+    n_folds: PositiveInt
+    validation_fraction: Fraction
+    n_clusters: PositiveInt
+    output: NonEmptyString
+
+
+class SeedConfig(BaseModel):
+    """Shared reproducibility settings from ``config/seeds.yaml``."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", strict=True)
+
+    split_seed: int
+    model_seed: int
 
 
 class StationRecord(BaseModel):

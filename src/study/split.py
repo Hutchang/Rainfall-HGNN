@@ -4,14 +4,23 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import chain
 from math import cos, radians
+from pathlib import Path
 from random import Random
 from typing import cast
 
 import numpy as np
+import yaml
 from numpy.typing import NDArray
 from sklearn.cluster import KMeans
 
-from src.study.schema import StationRecord, StationRoles, StudyFold
+from src.study.schema import (
+    SeedConfig,
+    SplitConfig,
+    StationRecord,
+    StationRoles,
+    StudyFold,
+    StudySplitOutput,
+)
 
 EARTH_RADIUS_KM = 6371.0088
 
@@ -173,3 +182,41 @@ def assign_fold_roles(
 
     validate_fold_roles(folds, eligible_ids)
     return tuple(folds)
+
+
+def load_split_config(path: Path) -> SplitConfig:
+    """Load and validate Component 03's split configuration."""
+    payload = cast(object, yaml.safe_load(path.read_text(encoding="utf-8")))
+    return SplitConfig.model_validate(payload)
+
+
+def load_seed_config(path: Path) -> SeedConfig:
+    """Load and validate the project's shared seed configuration."""
+    payload = cast(object, yaml.safe_load(path.read_text(encoding="utf-8")))
+    return SeedConfig.model_validate(payload)
+
+
+def build_study_split(
+    stations: Iterable[StationRecord],
+    config: SplitConfig,
+    seeds: SeedConfig,
+    created: str,
+) -> StudySplitOutput:
+    """Run the configured Component 03 splitting pipeline in memory."""
+    records = validate_station_records(stations)
+    clusters = assign_spatial_clusters(records, config.n_clusters, seeds.split_seed)
+    test_folds = create_test_folds(clusters, config.n_folds, seeds.split_seed)
+    folds = assign_fold_roles(
+        test_folds,
+        config.validation_fraction,
+        seeds.split_seed,
+    )
+
+    return StudySplitOutput(
+        name=Path(config.output).stem,
+        created=created,
+        stations_file=config.stations_file,
+        n_eligible=sum(station.use_in_study for station in records),
+        seed=seeds.split_seed,
+        folds=folds,
+    )

@@ -1,6 +1,7 @@
 """Tests for Component 03's spatial grouping helper."""
 
 from itertools import chain
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -10,10 +11,15 @@ from src.study.schema import StationRecord
 from src.study.split import (
     assign_fold_roles,
     assign_spatial_clusters,
+    build_study_split,
     convert_coordinates_to_km,
     create_test_folds,
+    load_seed_config,
+    load_split_config,
     validate_station_records,
 )
+
+REPOSITORY_ROOT = Path(__file__).parent.parent
 
 
 def station(
@@ -130,3 +136,23 @@ def test_non_test_stations_are_partitioned_into_train_and_validation():
         assert train.isdisjoint(validation)
         assert train.isdisjoint(test)
         assert validation.isdisjoint(test)
+
+
+def test_config_wires_the_complete_in_memory_split_pipeline():
+    stations = [
+        station(f"station-{index}", -34.0 + index * 0.02, 150.7 + index * 0.03)
+        for index in range(20)
+    ]
+    stations.append(station("excluded", -33.8, 151.2, use_in_study=False))
+    config = load_split_config(
+        REPOSITORY_ROOT / "config" / "splits" / "sydney_5fold.yaml"
+    )
+    seeds = load_seed_config(REPOSITORY_ROOT / "config" / "seeds.yaml")
+
+    output = build_study_split(stations, config, seeds, created="2026-09-06")
+
+    assert output.name == "sydney_5fold"
+    assert output.stations_file == "database/standard/stations.csv"
+    assert output.n_eligible == 20
+    assert output.seed == 123
+    assert len(output.folds) == 5
