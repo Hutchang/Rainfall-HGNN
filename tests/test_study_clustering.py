@@ -1,5 +1,6 @@
 """Tests for Component 03's spatial grouping helper."""
 
+from itertools import chain
 from typing import cast
 
 import numpy as np
@@ -7,6 +8,7 @@ import pytest
 
 from src.study.schema import StationRecord
 from src.study.split import (
+    assign_fold_roles,
     assign_spatial_clusters,
     convert_coordinates_to_km,
     create_test_folds,
@@ -100,3 +102,31 @@ def test_clustered_stations_are_spread_across_test_folds_exactly_once():
     for fold in folds:
         assert sum(station_id.startswith("west-") for station_id in fold) == 1
         assert sum(station_id.startswith("east-") for station_id in fold) == 1
+
+
+def test_non_test_stations_are_partitioned_into_train_and_validation():
+    clusters = {
+        0: [f"west-{index}" for index in range(5)],
+        1: [f"east-{index}" for index in range(5)],
+    }
+    test_folds = create_test_folds(clusters, n_folds=5, seed=123)
+
+    folds = assign_fold_roles(test_folds, validation_fraction=0.25, seed=123)
+    repeated = assign_fold_roles(test_folds, validation_fraction=0.25, seed=123)
+    changed_seed = assign_fold_roles(test_folds, validation_fraction=0.25, seed=456)
+    eligible_ids = set(chain.from_iterable(clusters.values()))
+
+    assert folds == repeated
+    assert folds != changed_seed
+    for fold in folds:
+        train = set(fold.ml.train)
+        validation = set(fold.ml.validation)
+        test = set(fold.ml.test)
+
+        assert len(train) == 6
+        assert len(validation) == 2
+        assert len(test) == 2
+        assert train | validation | test == eligible_ids
+        assert train.isdisjoint(validation)
+        assert train.isdisjoint(test)
+        assert validation.isdisjoint(test)

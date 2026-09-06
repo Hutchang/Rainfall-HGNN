@@ -11,7 +11,7 @@ import numpy as np
 from numpy.typing import NDArray
 from sklearn.cluster import KMeans
 
-from src.study.schema import StationRecord
+from src.study.schema import StationRecord, StationRoles, StudyFold
 
 EARTH_RADIUS_KM = 6371.0088
 
@@ -43,13 +43,9 @@ def convert_coordinates_to_km(
     reference_latitude = np.mean(latitudes)
     reference_longitude = np.mean(longitudes)
 
-    north_south_km = EARTH_RADIUS_KM * np.deg2rad(
-        latitudes - reference_latitude
-    )
+    north_south_km = EARTH_RADIUS_KM * np.deg2rad(latitudes - reference_latitude)
     longitude_scale = EARTH_RADIUS_KM * cos(radians(reference_latitude))
-    east_west_km = longitude_scale * np.deg2rad(
-        longitudes - reference_longitude
-    )
+    east_west_km = longitude_scale * np.deg2rad(longitudes - reference_longitude)
 
     return np.column_stack((east_west_km, north_south_km))
 
@@ -121,3 +117,59 @@ def create_test_folds(
         raise RuntimeError("each station must appear in exactly one test fold")
 
     return folds
+
+
+def validate_fold_roles(folds: Sequence[StudyFold], eligible_ids: set[str]) -> None:
+    """Enforce Component 03's station-role invariants."""
+    all_test_ids: list[str] = []
+    for fold in folds:
+        train = set(fold.ml.train)
+        validation = set(fold.ml.validation)
+        test = set(fold.ml.test)
+
+        if train & validation or train & test or validation & test:
+            raise ValueError(f"station roles overlap in fold {fold.fold_index}")
+        if train | validation | test != eligible_ids:
+            raise ValueError(f"fold {fold.fold_index} does not cover every station")
+
+        all_test_ids.extend(fold.ml.test)
+
+    if Counter(all_test_ids) != Counter(eligible_ids):
+        raise ValueError("each station must appear in test exactly once")
+
+
+def assign_fold_roles(
+    test_folds: Sequence[Sequence[str]], validation_fraction: float, seed: int
+) -> tuple[StudyFold, ...]:
+    """Assign non-test stations to validation and train within each fold."""
+    if not 0 <= validation_fraction < 1:
+        raise ValueError("validation_fraction must be at least 0 and less than 1")
+
+    all_test_ids = list(chain.from_iterable(test_folds))
+    eligible_ids = set(all_test_ids)
+    if len(all_test_ids) != len(eligible_ids):
+        raise ValueError("each station must appear in test exactly once")
+
+    rng = Random(seed)
+    folds: list[StudyFold] = []
+    for fold_index, test_ids in enumerate(test_folds):
+        test = set(test_ids)
+        remaining = sorted(eligible_ids - test)
+        rng.shuffle(remaining)
+
+        validation_count = round(len(remaining) * validation_fraction)
+        validation = remaining[:validation_count]
+        train = remaining[validation_count:]
+        folds.append(
+            StudyFold(
+                fold_index=fold_index,
+                ml=StationRoles(
+                    train=tuple(sorted(train)),
+                    validation=tuple(sorted(validation)),
+                    test=tuple(sorted(test)),
+                ),
+            )
+        )
+
+    validate_fold_roles(folds, eligible_ids)
+    return tuple(folds)
