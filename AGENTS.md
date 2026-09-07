@@ -120,7 +120,7 @@ invented scientific decisions.
 
 - Work on the branch assigned by the project lead. Component branches normally use
   `feature/01-source-data`, `feature/02-canonical-data`, and the corresponding numbered
-  names from `integration/data-pipeline`.
+  names from `integration/sydney-gauge-baseline`.
 - A slash in a branch name is naming only; it does not establish branch ancestry.
 - Do not merge, push, rewrite history, stage unrelated files, or delete another person's
   work unless the project lead explicitly requests it.

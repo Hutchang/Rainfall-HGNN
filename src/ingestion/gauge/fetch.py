@@ -251,6 +251,7 @@ def run(
     for i, st in enumerate(stations, 1):
         sid = st["station_id"]
         if sid not in series:
+            # RICK: should something get logged here?
             continue
         before = len([r for r in index if r["retrieved_at"]])
         for label, start, end in months:

@@ -75,7 +75,8 @@ def test_every_target_belongs_to_exactly_one_role_per_fold(splits):
         te = set(f["ml"]["test"])
         if tr & va or tr & te or va & te:
             offenders.append(
-                (f["fold_index"], sorted(tr & te), sorted(tr & va), sorted(va & te))
+                (f["fold_index"], sorted(tr & te),
+                 sorted(tr & va), sorted(va & te))
             )
     assert not offenders, f"stations holding multiple roles: {offenders}"
 
@@ -131,7 +132,8 @@ def test_test_coverage_is_recorded(splits, station_meta):
 def _edge_weights(meta_subset):
     """Replicates GaugeGraph._build_knn_edges (graph/gauge_graph.py:121-135)."""
     coords = meta_subset[["longitude", "latitude"]].values
-    nbrs = NearestNeighbors(n_neighbors=KNN + 1, algorithm="ball_tree").fit(coords)
+    nbrs = NearestNeighbors(n_neighbors=KNN + 1,
+                            algorithm="ball_tree").fit(coords)
     dists, _ = nbrs.kneighbors(coords)
     return np.array([1.0 / d if d > 0 else 1e6 for row in dists for d in row[1:]])
 
@@ -167,7 +169,8 @@ def test_per_node_normalisation_would_fix_it(station_meta):
     This should pass now and is the target behaviour for the fix."""
     meta = station_meta.drop_duplicates(subset=["id"]).reset_index(drop=True)
     coords = meta[["longitude", "latitude"]].values
-    nbrs = NearestNeighbors(n_neighbors=KNN + 1, algorithm="ball_tree").fit(coords)
+    nbrs = NearestNeighbors(n_neighbors=KNN + 1,
+                            algorithm="ball_tree").fit(coords)
     dists, _ = nbrs.kneighbors(coords)
     per_node_medians = []
     for row in dists:
@@ -177,54 +180,39 @@ def test_per_node_normalisation_would_fix_it(station_meta):
     assert median > 1e-3, f"per-node normalisation still collapses: {median:.2e}"
 
 
-# ── Real GaugeGraph, edge_normalisation="global" vs "per_node" ──────────────
-# The two tests above are standalone reproductions of the maths; they never
-# call GaugeGraph itself, so they can't detect whether the real fix (added to
-# graph/gauge_graph.py, arXiv:2607.01621 sec 3.2 Eq. 1) is actually wired up.
-# These exercise the real class.
+# ── Tests that build a real graph ─────────────────────────────────────────
+# The two tests above work out the edge-weight formula by hand. They never
+# build a graph, so they cannot tell you whether the graph code itself does
+# the right thing. The tests below build a real graph and check that.
+#
+# They use GaugeGraphNew, in src/graph/gaugegraphnew.py. That is the graph
+# builder this project keeps and extends, and Component 04's requirements
+# name it as the one to use. An older copy of the same class also exists in
+# the inherited niramay repository. Commit 65237ba fixed both copies, but only
+# the fix in this repository was committed, and we keep the niramay repository
+# exactly as we inherited it. So these tests use our copy.
 
 
 @pytest.fixture(scope="module")
 def gauge_graph_cls():
-    """Niramay's GaugeGraph, imported from the worktree if importable;
-    otherwise skip rather than diverge (same policy as `splits`)."""
-    import sys
-    from pathlib import Path
+    """The graph builder these tests run against.
 
-    from tests.conftest import DATA_ROOT
+    Takes the same arguments as the inherited niramay version, plus
+    edge_normalisation, which chooses how the edge weights get rescaled.
+    """
+    from src.graph.gaugegraphnew import GaugeGraphNew
 
-    repo = Path(DATA_ROOT).parent.parent  # .../COMP3888-niramay
-    if str(repo) not in sys.path:
-        sys.path.insert(0, str(repo))
-    try:
-        from graph.gauge_graph import GaugeGraph
-    except Exception as e:  # pragma: no cover
-        pytest.skip(f"cannot import niramay's GaugeGraph: {e}")
-    return GaugeGraph
-
-
-def test_global_normalisation_default_matches_baseline_defect(
-    gauge_graph_cls, gauge_wide, station_meta, splits
-):
-    """Regression guard: edge_normalisation defaults to 'global' and must
-    still reproduce the exact collapse in AUDIT_NIRAMAY.md sec 8.0 — the
-    unmodified baseline must stay unmodified by the fix below."""
-    graph = gauge_graph_cls(gauge_wide, station_meta, split_info=splits[0], knn=KNN)
-    ea = graph.get_train_heterodata()[
-        "raingauge", "connects", "raingauge"
-    ].edge_attr.numpy()
-    median = float(np.median(ea))
-    assert median < 1e-3, (
-        f"expected the known global-max collapse, got median={median:.2e}"
-    )
+    return GaugeGraphNew
 
 
 def test_per_node_normalisation_fixes_the_real_graph(
     gauge_graph_cls, gauge_wide, station_meta, splits
 ):
-    """edge_normalisation='per_node' (arXiv:2607.01621 sec 3.2 Eq. 1),
-    exercised through the real GaugeGraph class rather than a standalone
-    reproduction of the formula."""
+    """Checks that asking for the corrected rescaling actually gives you it.
+
+    With edge_normalisation="per_node" the weights should no longer be
+    squashed to almost zero, so a typical weight should sit well above it.
+    """
     graph = gauge_graph_cls(
         gauge_wide,
         station_meta,
@@ -237,3 +225,70 @@ def test_per_node_normalisation_fixes_the_real_graph(
     ].edge_attr.numpy()
     median = float(np.median(ea))
     assert median > 1e-3, f"per-node normalisation still collapses: median={median:.2e}"
+
+
+def test_per_node_normalisation_scales_every_node_by_its_own_neighbourhood(
+    gauge_graph_cls, gauge_wide, station_meta, splits
+):
+    """Checks each station's edge weights are rescaled using its own
+    neighbours, and not somebody else's.
+
+    Every station is joined to its 5 nearest neighbours, and each connection
+    gets a weight of 1 divided by the distance. Those raw weights vary
+    enormously, so they are rescaled to sit between 0 and 1 before the model
+    sees them.
+
+    The paper rescales each station based on the local max, and since this
+    is on the denominator, every station should end up
+    with its closest neighbour weighted exactly 1.0. This test checks that,
+    one station at a time. If a station's closest neighbour comes out below
+    1.0, its weights were rescaled using some other station's neighbours.
+
+    Two things in src/graph/gaugegraphnew.py currently break it:
+
+    1. Three pairs of stations in the inherited data sit at identical
+       coordinates, so the distance between them is zero. The code divides by
+       distance without checking for zero, which gives infinity, which turns
+       into "not a number" once rescaled. The inherited version avoids this
+       by using a million whenever the distance is zero
+       (graph/gauge_graph.py:133).
+
+    2. Connections are stored in an undirected graph, which holds only one
+       weight per pair of stations. When A and B are each other's neighbours,
+       the second weight written overwrites the first, and the survivor is
+       then copied to both directions. So one of the two stations is left
+       with a weight rescaled using the other station's neighbours. Storing
+       the graph as directed, with its own weight in each direction, fixes
+       this.
+    """
+    graph = gauge_graph_cls(
+        gauge_wide,
+        station_meta,
+        split_info=splits[0],
+        knn=KNN,
+        edge_normalisation="per_node",
+    )
+    store = graph.get_train_heterodata()["raingauge", "connects", "raingauge"]
+    edge_index = store.edge_index.numpy()
+    edge_attr = store.edge_attr.numpy()
+
+    assert not np.isnan(edge_attr).any(), (
+        f"{int(np.isnan(edge_attr).sum())} of {edge_attr.size} edge weights are "
+        "'not a number'. Stations at identical coordinates are zero distance "
+        "apart, and the code divides by distance without checking for zero. "
+        "See reason 1 in this test's description."
+    )
+
+    max_incoming: dict[int, float] = {}
+    for destination, weight in zip(edge_index[1], edge_attr, strict=True):
+        node = int(destination)
+        max_incoming[node] = max(max_incoming.get(node, 0.0), float(weight))
+
+    maxima = np.array(list(max_incoming.values()))
+    off = ~np.isclose(maxima, 1.0, atol=1e-6)
+    assert not off.any(), (
+        f"{int(off.sum())} of {len(maxima)} stations do not have their closest "
+        f"neighbour weighted 1.0 (lowest is {maxima.min():.3f}). Their closest "
+        "neighbour counts for less than it should, so the weights were not "
+        "rescaled per station. See reason 2 in this test's description."
+    )

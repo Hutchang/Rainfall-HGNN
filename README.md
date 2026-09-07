@@ -46,12 +46,19 @@ therefore starts with reproducibly collecting source-faithful BoM data for 2021â
 then preparing the standard dataset, checking splits, creating graph samples, training
 through a common interface, and evaluating every method on identical targets.
 
+As of 2026-09-07 the first of those steps exists: Component 01's BoM gauge fetcher is
+merged and verified against the live API. Component 02 has not started, so no standard
+tables exist yet and no result may still be quoted in millimetres. See the
+[implementation handoff](docs/IMPLEMENTATION_HANDOFF.md) for the current integration
+state and open defects.
+
 ## Repository map
 
 | Path | Purpose |
 |---|---|
 | `docs/requirements/` | Current component contracts; primary implementation authority |
 | `docs/archive/` | Historical planning, audit evidence, and run records; not active requirements |
+| `src/ingestion/`, `config/ingestion/`, `docs/ingestion/` | Component 01 source data: BoM gauge fetcher, region config, and operator guide. Production path |
 | `src/`, `models/`, `training/`, `benchmarks/` | Transitional Sydney gauge core plus restored inherited reference modules awaiting file-by-file classification |
 | `adapters/legacy_sydney_gauge_export.py` | Transitional Sydney legacy-data export; not a canonical ingestion pipeline |
 | `train_fused.py` | Validated transitional 2022 smoke runner; not the target architecture |
@@ -76,24 +83,32 @@ reading:
 
 ## Environment
 
-Python 3.13 is the recorded working environment. Create a fresh virtual environment and
-install the focused dependencies:
+Python 3.14 or newer, managed with [uv](https://docs.astral.sh/uv/). `pyproject.toml`
+declares the direct dependencies and `uv.lock` pins the exact resolved environment.
+`requirements.txt` and `requirements-dev.txt` were deleted when the project moved to uv
+in `a25ac5f`; do not reintroduce them as dependency authority.
 
-```powershell
-py -3.13 -m venv .venv
-.venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+```console
+uv sync --locked
 ```
+
+Add and remove dependencies with `uv add` and `uv remove`, using `--dev` for development
+tools. Do not install project packages directly with pip.
 
 The default PyTorch package is suitable for CPU onboarding. Install the matching CUDA
 wheel from the official PyTorch index only when a component actually needs GPU work.
 Record the chosen build in run metadata.
 
-Run the current tests with:
+Run the current checks with:
 
-```powershell
-.venv\Scripts\python.exe -m pytest tests -q -rx
+```console
+uv run --locked python -m pytest tests -q -rx
+uv run --locked ruff check .
 ```
+
+`ruff check .` currently reports 120 findings, all in inherited modules awaiting
+file-by-file classification. A clean lint run is not yet the baseline; do not treat those
+findings as caused by your change, and do not mass-fix inherited files to silence them.
 
 Some existing tests skip when the untracked legacy gauge data is absent. Each component
 replaces that dependency by committing a small real sample under `tests/data/`, so the
