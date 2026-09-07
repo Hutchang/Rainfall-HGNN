@@ -31,10 +31,18 @@ def train_epoch(
     device,
     scheduler=None,
     weighted_loss_alpha: float = 0.0,
+    stats: dict = None,
 ):
     """
     Corrected training loop with gradient debugging.
     """
+
+    rain_zero = 0.0
+    if stats is not None and "raingauge" in stats:
+        mean, std = stats["raingauge"]
+        rain_zero = float(-mean[0] / std[0])
+
+
     model.train()
     epoch_losses = []
     charge_bar = tqdm.tqdm(dataloader, desc="training")
@@ -74,9 +82,8 @@ def train_epoch(
             indices_to_mask = (
                 torch.arange(num_graphs, device=device) * num_nodes + node_pos
             )
-            x_masked[indices_to_mask, :_DATA_FEATURE_DIM] = (
-                0  # zero data features only; preserve LPE
-            )
+            x_masked[indices_to_mask, 0] = rain_zero  # Normalised physical zero for rainfall
+            x_masked[indices_to_mask, 1] = 0.0        # 0.0 for the validity flag
 
             x_dict = {ntype: batch[ntype].x for ntype in batch.node_types}
             x_dict["raingauge"] = x_masked
@@ -113,6 +120,7 @@ def validate(
     dataloader,
     device,
     weighted_loss_alpha: float = 0.0,
+    stats: dict = None,
 ):
     """
     Validation loop for PyG batched graph data (inductive setting).
@@ -124,6 +132,12 @@ def validate(
     4. Computes metrics ONLY on validation nodes (where mask=True)
     5. No gradients computed - eval mode
     """
+
+    rain_zero = 0.0
+    if stats is not None and "raingauge" in stats:
+        mean, std = stats["raingauge"]
+        rain_zero = float(-mean[0] / std[0])
+
     model.eval()
     epoch_losses = []
 
@@ -146,9 +160,8 @@ def validate(
             }
 
             x_masked = x.clone()
-            x_masked[val_mask, :_DATA_FEATURE_DIM] = (
-                0.0  # zero data features only; preserve LPE
-            )
+            x_masked[val_mask, 0] = rain_zero  # Normalised physical zero for rainfall
+            x_masked[val_mask, 1] = 0.0        # 0.0 for the validity flag
 
             x_dict = {}
             for nodetype in batch.node_types:
@@ -181,6 +194,7 @@ def test_model(
     fold=0,
     experiment_name="test",
     rain_threshold=0.5,
+    stats: dict = None,
 ):
     """
     Test loop following the SAME structure as validate():
@@ -196,6 +210,11 @@ def test_model(
         Rainfall threshold (mm) used to binarise predictions and targets
         for computing Precision, Recall, and F1.
     """
+
+    rain_zero = 0.0
+    if stats is not None and "raingauge" in stats:
+        mean, std = stats["raingauge"]
+        rain_zero = float(-mean[0] / std[0])
 
     model.eval()
 
@@ -219,9 +238,8 @@ def test_model(
 
             assert mask.shape[0] == x.shape[0], "Mask and x size mismatch"
             x_masked = x.clone()
-            x_masked[mask, :_DATA_FEATURE_DIM] = (
-                0.0  # zero data features only; preserve LPE
-            )
+            x_masked[mask, 0] = rain_zero  # Normalised physical zero for rainfall
+            x_masked[mask, 1] = 0.0        # 0.0 for the validity flag
 
             edge_attr_dict = {
                 edge_type: batch[edge_type].edge_attr

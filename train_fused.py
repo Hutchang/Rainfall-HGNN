@@ -126,6 +126,10 @@ def train_fused(config):
             x = heterodata[node_type].x  # [N, T, F]
             mean = x.mean(dim=(0, 1))
             std = x.std(dim=(0, 1)).clamp(min=1e-8)
+
+            if node_type == "raingauge" and mean.shape[0]>1:
+                mean[1] = 0.0
+                std[1] = 1.0
             stats[node_type] = (mean, std)
         return stats
 
@@ -141,6 +145,7 @@ def train_fused(config):
     train_loader_arr = []
     val_loader_arr = []
     test_loader_arr = []
+    stats_arr = []
     for i in range(fold_count):
         train_data = gauge_graph_arr[i].get_train_heterodata()
         val_data = gauge_graph_arr[i].get_validation_heterodata()
@@ -148,6 +153,7 @@ def train_fused(config):
 
         # Compute stats from training split only, apply same stats to val and test
         stats = compute_norm_stats(train_data)
+        stats_arr.append(stats) # --- SAVE STATS ---
 
         train_loader = GeometricDataLoader(
             HeterogeneousWeatherGraphDatasetInductive(apply_norm(train_data, stats)),
@@ -205,11 +211,12 @@ def train_fused(config):
                 optimizer,
                 device,
                 weighted_loss_alpha=weighted_alpha,
+                stats=stats
             )
             print(train_loss)
 
             validation_loss = validate(
-                model, val_loader, device, weighted_loss_alpha=weighted_alpha
+                model, val_loader, device, weighted_loss_alpha=weighted_alpha, stats=stats
             )
             training_loss_arr.append(train_loss)
             validation_loss_arr.append(validation_loss)
@@ -261,6 +268,7 @@ def train_fused(config):
             train_loader=train_loader_arr[i],
             val_loader=val_loader_arr[i],
             fold=i,
+            stats=stats_arr[i],
             device=device,
         )
 
@@ -278,6 +286,7 @@ def train_fused(config):
             device,
             fold=i,
             experiment_name=experiment_name,
+            stats=stats_arr[i],
         )
         fold_metrics.append(metrics_dict)
 
