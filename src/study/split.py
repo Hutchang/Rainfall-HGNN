@@ -1,8 +1,12 @@
 """Spatial grouping helpers for Component 03 study splits."""
 
+import argparse
 import csv
+import json
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import asdict
+from datetime import UTC, datetime
 from itertools import chain
 from math import cos, radians
 from pathlib import Path
@@ -15,7 +19,7 @@ from numpy.typing import NDArray
 from pydantic import ValidationError
 from sklearn.cluster import KMeans
 
-from src.study.schema import (
+from .schema import (
     SeedConfig,
     SplitConfig,
     StationRecord,
@@ -258,3 +262,38 @@ def build_study_split(
         seed=seeds.split_seed,
         folds=folds,
     )
+
+
+def write_study_split(output: StudySplitOutput, path: Path) -> None:
+    """Write a split artifact with stable JSON formatting."""
+    payload = asdict(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _ = path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Build the configured study split from the command line."""
+    parser = argparse.ArgumentParser(prog="python -m src.study.split")
+    _ = parser.add_argument("config", type=Path)
+    _ = parser.add_argument("--seeds", type=Path, default=Path("config/seeds.yaml"))
+    _ = parser.add_argument("--created", default=datetime.now(UTC).date().isoformat())
+    arguments = parser.parse_args(argv)
+    config_path = cast(Path, arguments.config)
+    seeds_path = cast(Path, arguments.seeds)
+    created = cast(str, arguments.created)
+
+    config = load_split_config(config_path)
+    seeds = load_seed_config(seeds_path)
+    stations = read_station_records(Path(config.stations_file))
+    output = build_study_split(stations, config, seeds, created)
+    output_path = Path(config.output)
+    write_study_split(output, output_path)
+    print(output_path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

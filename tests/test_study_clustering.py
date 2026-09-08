@@ -1,5 +1,8 @@
 """Tests for Component 03's spatial grouping helper."""
 
+import json
+import subprocess
+import sys
 from itertools import chain
 from pathlib import Path
 from typing import cast
@@ -20,6 +23,7 @@ from src.study.split import (
 )
 
 REPOSITORY_ROOT = Path(__file__).parent.parent
+STUDY_DATA = REPOSITORY_ROOT / "tests" / "data" / "study"
 
 
 def station(
@@ -156,3 +160,39 @@ def test_config_wires_the_complete_in_memory_split_pipeline():
     assert output.n_eligible == 20
     assert output.seed == 123
     assert len(output.folds) == 5
+
+
+def test_module_command_writes_reproducible_split_json(tmp_path: Path):
+    output_path = tmp_path / "split.json"
+    config_path = tmp_path / "split.yaml"
+    _ = config_path.write_text(
+        "\n".join(
+            (
+                f"stations_file: {STUDY_DATA / 'stations.csv'}",
+                "n_folds: 2",
+                "validation_fraction: 0.15",
+                "n_clusters: 2",
+                f"output: {output_path}",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    command = (
+        sys.executable,
+        "-m",
+        "src.study.split",
+        str(config_path),
+        "--seeds",
+        str(REPOSITORY_ROOT / "config" / "seeds.yaml"),
+        "--created",
+        "2026-09-08",
+    )
+    first = subprocess.run(command, check=False, capture_output=True, text=True)
+    first_bytes = output_path.read_bytes()
+    second = subprocess.run(command, check=False, capture_output=True, text=True)
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    assert output_path.read_bytes() == first_bytes
+    assert json.loads(first_bytes)["n_eligible"] == 2
