@@ -15,12 +15,14 @@ import yaml
 
 from src.canonical.config import load_config
 from src.canonical.gauge import raw
+from src.canonical.gauge.verify import verify_days
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 # Reference palette (dataviz skill): categorical slots 1-3, text and surface tokens.
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
+CRITICAL = "#d03b3b"  # status colour, reserved for rejected data
 INK, INK2, MUTED, SURFACE, GRID = "#0b0b0b", "#52514e", "#b3b2ad", "#fcfcfb", "#e8e7e3"
 QUALITY_NAMES = {
     10: "10 A best",
@@ -201,6 +203,162 @@ def fig_random_day(
     }
 
 
+# ---------------------------------------------------------------------------
+# Diagnostics: the figures that justify the day-level rules
+# ---------------------------------------------------------------------------
+
+
+def fig_value_profile(
+    tips: pd.DataFrame, quality: dict, cap: float, names: pd.Series, out: Path
+) -> pd.DataFrame:
+    """Per station: how many distinct positive values its counted records take, against
+    the largest single record. A tipping bucket sits at (1 to 3 values, one increment).
+    Anything far from that corner is a logger storing totals, not tips."""
+    t = tips[tips["quality"].isin(quality["tips"]["count"]) & (tips["value"] > 0)]
+    prof = t.groupby("station_id")["value"].agg(
+        distinct="nunique", max_record="max", records="size"
+    )
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.scatter(
+        prof["distinct"],
+        prof["max_record"],
+        s=28,
+        c=BLUE,
+        edgecolors=SURFACE,
+        linewidths=0.6,
+        zorder=3,
+    )
+    ax.axhline(cap, color=CRITICAL, lw=1.2, ls="--", zorder=2)
+    ax.text(
+        ax.get_xlim()[1] * 0.98,
+        cap * 1.15,
+        f"max_record_mm = {cap}",
+        ha="right",
+        color=CRITICAL,
+        fontsize=9,
+    )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("distinct positive record values (log)")
+    ax.set_ylabel("largest single record, mm (log)")
+    ax.grid(alpha=0.6)
+    for sid, r in prof[prof["max_record"] > cap].iterrows():
+        ax.annotate(
+            names.get(sid, sid)[:22],
+            (r["distinct"], r["max_record"]),
+            xytext=(5, 3),
+            textcoords="offset points",
+            fontsize=7,
+            color=INK2,
+        )
+    ax.set_title(
+        "Is it a tipping bucket? Record values per station",
+        loc="left",
+        color=INK,
+        fontsize=12,
+    )
+    fig.tight_layout()
+    fig.savefig(out / "value_profile.png", dpi=140)
+    plt.close(fig)
+    return prof
+
+
+def fig_daily_totals(days: pd.DataFrame, plaus: dict, out: Path) -> None:
+    """Every station-day with rain: date against tip total, coloured by verdict. Outliers
+    sit alone above the caps; non-tipping stations scatter oddly; floods are columns."""
+    wet = days[days["tip_mm"] > 0]
+    fig, ax = plt.subplots(figsize=(12, 5))
+    layers = [
+        ("verified", BLUE, 6, 0.25),
+        ("mismatch", ORANGE, 14, 0.9),
+        ("implausible", CRITICAL, 18, 0.9),
+    ]
+    for verdict, colour, size, alpha in layers:
+        sub = wet[wet["verdict"] == verdict]
+        ax.scatter(
+            sub["day_end"],
+            sub["tip_mm"],
+            s=size,
+            c=colour,
+            alpha=alpha,
+            linewidths=0,
+            label=f"{verdict} ({len(sub):,})",
+            zorder=3,
+        )
+    ax.axhline(plaus["max_daily_mm"], color=CRITICAL, lw=1, ls="--", zorder=2)
+    ax.text(
+        wet["day_end"].min(),
+        plaus["max_daily_mm"] * 1.15,
+        f"max_daily_mm = {plaus['max_daily_mm']}",
+        color=CRITICAL,
+        fontsize=9,
+    )
+    ax.set_yscale("log")
+    ax.set_ylabel("rain-day total from tips, mm (log)")
+    ax.grid(alpha=0.6)
+    ax.legend(loc="upper left", frameon=False, markerscale=1.5)
+    ax.set_title(
+        "Every station rain-day, 2021-2022, by verdict",
+        loc="left",
+        color=INK,
+        fontsize=12,
+    )
+    fig.tight_layout()
+    fig.savefig(out / "daily_totals.png", dpi=140)
+    plt.close(fig)
+
+
+def fig_heatmap(days: pd.DataFrame, stations: pd.DataFrame, out: Path) -> None:
+    """Station by rain-day, colour is BoM's daily total (log), grey where BoM has no usable
+    total. Rows ordered north to south. Silent stations are grey rows, gaps grey stretches,
+    floods bright columns, a stuck gauge a hot cell in a cool row."""
+    order = stations.sort_values("latitude", ascending=False)["station_id"]
+    grid = days.pivot(index="station_id", columns="day_end", values="daily_mm").reindex(
+        order
+    )
+    fig, ax = plt.subplots(figsize=(13, 9))
+    cmap = matplotlib.colormaps["Blues"].copy()
+    cmap.set_bad(MUTED)
+    im = ax.imshow(
+        np.log10(grid.to_numpy(dtype=float) + 1),
+        aspect="auto",
+        cmap=cmap,
+        interpolation="nearest",
+        vmin=0,
+        vmax=np.log10(301),
+    )
+    cols = grid.columns
+    ticks = [
+        i
+        for i, d in enumerate(cols)
+        if d.day <= 7
+        and d.month in (1, 4, 7, 10)
+        and (i == 0 or cols[i - 1].month != d.month)
+    ]
+    ax.set_xticks(
+        ticks, [cols[i].strftime("%b %Y") for i in ticks], rotation=0, fontsize=8
+    )
+    ax.set_yticks([])
+    ax.set_ylabel(f"{len(grid)} stations, north to south")
+    cb = fig.colorbar(im, ax=ax, fraction=0.02, pad=0.01)
+    cb.set_ticks([0, 1, 2, np.log10(301)], labels=["0", "9", "99", "300 mm"])
+    cb.set_label("BoM daily total")
+    ax.set_title(
+        "Station by rain-day: BoM daily totals (grey = no usable total)",
+        loc="left",
+        color=INK,
+        fontsize=12,
+    )
+    fig.tight_layout()
+    fig.savefig(out / "heatmap.png", dpi=140)
+    plt.close(fig)
+
+
+def period_from_index(index: pd.DataFrame) -> tuple:
+    t = index[index["source"] == "gauge_tips"]
+    return pd.Timestamp(t["start"].min()).date(), pd.Timestamp(t["end"].max()).date()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("config")
@@ -234,6 +392,19 @@ def main() -> None:
         {"complete": (BLUE, "o"), "partial": (ORANGE, "o"), "silent": (MUTED, "s")},
     )
     day = fig_random_day(tips, daily, cfg, out)
+
+    start, end = period_from_index(index)
+    hourly, days, inc = verify_days(
+        tips, daily, cfg["quality"], cfg["plausibility"], start, end
+    )
+    names = stations.set_index("station_id")["station_name"]
+    prof = fig_value_profile(
+        tips, cfg["quality"], cfg["plausibility"]["max_record_mm"], names, out
+    )
+    fig_daily_totals(days, cfg["plausibility"], out)
+    fig_heatmap(days, stations, out)
+    verdicts = days["verdict"].value_counts()
+    non_tip = prof[prof["max_record"] > cfg["plausibility"]["max_record_mm"]]
 
     counts = status.value_counts()
     lines = [
@@ -281,8 +452,48 @@ def main() -> None:
         "![day](random_day.png)",
         "",
     ]
+    lines += [
+        "## Day verification (dry versus missing) and plausibility",
+        "",
+        f"Period {start} to {end}. {len(days):,} station rain-days judged.",
+        "",
+        "| Verdict | Days |",
+        "|---|---|",
+    ]
+    lines += [f"| {v} | {n:,} |" for v, n in verdicts.items()]
+    imp = days[days["verdict"] == "implausible"]["reason"].value_counts()
+    lines += [
+        "",
+        "Implausible by reason: " + ", ".join(f"{r} ({n})" for r, n in imp.items()),
+        "",
+        (
+            f"Hourly rows produced: {len(hourly):,} across {hourly['station_id'].nunique()} stations; "
+            f"max hourly value {hourly['rainfall_mm'].max():.1f} mm."
+        ),
+        "",
+        "Tip increment per station: "
+        + ", ".join(
+            f"{v} mm at {n}" for v, n in inc.value_counts().sort_index().items()
+        ),
+        "",
+        "![daily totals](daily_totals.png)",
+        "",
+        f"Stations with a single record above {cfg['plausibility']['max_record_mm']} mm (not tip-resolution on those days):",
+        "",
+    ]
+    lines += [
+        f"- {sid} {names.get(sid, '')}: {int(r['distinct'])} distinct values, largest record {r['max_record']:.1f} mm"
+        for sid, r in non_tip.sort_values("max_record", ascending=False).iterrows()
+    ]
+    lines += [
+        "",
+        "![value profile](value_profile.png)",
+        "",
+        "![heatmap](heatmap.png)",
+        "",
+    ]
     (out / "profile.md").write_text("\n".join(lines))
-    print(f"wrote {out}/profile.md and 3 figures")
+    print(f"wrote {out}/profile.md and 6 figures")
 
 
 if __name__ == "__main__":

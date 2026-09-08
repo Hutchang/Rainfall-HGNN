@@ -11,6 +11,14 @@ dead_gauge_days: 90       # consecutive verified-dry days that make a gauge susp
 dead_gauge_radius_km: 50  # ...while at least this many neighbours within this radius saw rain
 dead_gauge_neighbours: 3
 
+# Physical plausibility. BoM's daily total is computed from the same tips, so a
+# malfunctioning gauge can pass the daily check. Each cap rejects the whole day.
+# Sydney's 24 h record is about 330 mm; Australia's hourly record is about 200 mm.
+plausibility:
+  max_record_mm: 2.0    # a single record above this is not a tip: the series is not tip-resolution that day
+  max_hourly_mm: 150    # more than this in one hour is a tip burst, not rain
+  max_daily_mm: 400     # more than this in one rain day is a malfunction, whatever BoM's total says
+
 # BoM quality codes (from the KiWIS getQualityCodes request, 2026-09-05; see
 # docs/canonical/README.md). Codes are BoM's opinion of a record; the daily-total
 # check is the arbiter for a day. Codes only decide which records are counted at all.

@@ -4,7 +4,14 @@ from pathlib import Path
 
 import yaml
 
-REQUIRED = ("raw_dir", "output_dir", "min_coverage", "dead_gauge_days", "quality")
+REQUIRED = (
+    "raw_dir",
+    "output_dir",
+    "min_coverage",
+    "dead_gauge_days",
+    "quality",
+    "plausibility",
+)
 
 
 def load_config(path: str | Path) -> dict:
@@ -23,5 +30,8 @@ def load_config(path: str | Path) -> dict:
     ):
         if section not in q or any(k not in q[section] for k in keys):
             raise ValueError(f"{path}: quality.{section} needs keys {keys}")
+    for k in ("max_record_mm", "max_hourly_mm", "max_daily_mm"):
+        if k not in cfg["plausibility"]:
+            raise ValueError(f"{path}: plausibility is missing {k}")
     cfg["_path"] = str(path)
     return cfg
