@@ -13,7 +13,8 @@ from src.utils import (
     read_config,
 )
 
-config = read_config("config.yaml")
+# config = read_config("config.yaml")
+#removed the config file reading from this file as it is not needed here
 
 
 class GaugeGraphNew:
@@ -23,7 +24,16 @@ class GaugeGraphNew:
         mapping_df: pd.DataFrame,
         split_info: dict,
         knn: int,
-        edge_normalisation: str = "global",
+        # added in distance variable to allow for different distance metrics 
+        # to be used in the graph construction
+        distance: str,
+        # changed edge_normalisation to a string to allow for different normalisation methods
+        edge_normalisation: str, 
+
+        # below are new parameters, more can be added in the future to allow for more flexibility in the graph construction
+        include_lpe: bool,
+        lpe_dimensions: int,
+        layer_is_directed: bool,
     ):
         """
         node_feature_dict: contains information on heterogeneous node
@@ -49,6 +59,14 @@ class GaugeGraphNew:
         self.split_info = split_info
         self.knn = knn
         self.edge_normalisation = edge_normalisation
+        self.distance_metric = distance #added in distance variable to allow for different distance metrics 
+        # to be used in the graph construction
+        # added parameters
+        self.include_lpe = include_lpe
+        self.lpe_dimensions = lpe_dimensions
+        self.layer_is_directed = layer_is_directed
+
+
         self.train_gauges = split_info["ml"]["train"]
         self.validation_gauges = split_info["ml"]["validation"]
         self.test_gauges = split_info["ml"]["test"]
@@ -120,15 +138,24 @@ class GaugeGraphNew:
                 )
 
         # Build the graph
-        G = nx.Graph()
+        G = nx.DiGraph() #changes this to a directed graph as it is no longer normalised to the absoluted
+        # largest edge weight in the graph, so the direction of the edges matters for the message passing
+
         filtered_mapping_df = self.mapping_df[mask].reset_index()
-        coords = filtered_mapping_df[["longitude", "latitude"]].values
+        # added the cases for different metrics speicified in config file
+        if self.distance_metric == "haversine_km":
+            coords = np.radians(filtered_mapping_df[["latitude", "longitude"]].values)
+            model = NearestNeighbors(n_neighbors=self.knn + 1, algorithm = "ball_tree", metric="haversine")
+            model.fit(coords)
+            distances, indices = model.kneighbors(coords)
+            distances = distances * 6371.0  # Convert to kilometers
 
-        ball_tree = NearestNeighbors(
-            n_neighbors=self.knn + 1, algorithm="ball_tree"
-        ).fit(coords)
+        elif self.distance_metric == "euclidean_degrees":
+            coords = filtered_mapping_df[["longitude", "latitude"]].values
+            model = NearestNeighbors(n_neighbors=self.knn + 1, algorithm="ball_tree")
+            model.fit(coords)
+            distances, indices = model.kneighbors(coords)
 
-        distances, indices = ball_tree.kneighbors(coords)
 
         for idx, row in filtered_mapping_df.iterrows():
             G.add_node(idx, lat=row["latitude"], lon=row["longitude"])
@@ -179,14 +206,14 @@ class GaugeGraphNew:
     def fill_heterodata(self, graph: str) -> HeteroData:
         heterodata = HeteroData()
         rainfall_values = torch.tensor(
-            self.raingauge_df.fillna(0).values.T, dtype=torch.float32
+            self.raingauge_df.values.T, dtype=torch.float32
         )
         rainfall_validity = torch.tensor(
             self.raingauge_df.notna().astype(int).values.T, dtype=torch.int16
         )
         rainfall_features = torch.stack([rainfall_values, rainfall_validity], dim=2)
         heterodata["raingauge"].x = rainfall_features
-        heterodata["raingauge"].y = rainfall_values.unsqueeze(-1)
+        heterodata["raingauge"].y = rainfall_values.unsqueeze(-1).clone() # added clone() so that y is a copy of x and not a view
 
         match graph:
             case "train":
@@ -212,6 +239,14 @@ class GaugeGraphNew:
 
         heterodata["raingauge"].x = heterodata["raingauge"].x[mask]
         heterodata["raingauge"].y = heterodata["raingauge"].y[mask]
+
+        # Convert mask tensor back to numpy to safely filter the dataframe
+        mask_np = mask.numpy()
+        heterodata.station_ids = self.mapping_df[mask_np]["id"].tolist()
+        
+        # Extract the T timestamps from the index of the original data_df
+        heterodata.timestamps = self.raingauge_df.index.tolist()
+
         edge_index = []
         edge_attr = []
         for A, B, data in edges:
@@ -233,13 +268,13 @@ class GaugeGraphNew:
         )
 
         # Fill laplacian
-        if config["dataset_parameters"]["include_lpe"]:
+        if self.include_lpe:
             temp_graph = Data(
                 x=torch.zeros(heterodata["raingauge"].x.shape[0], 1),
                 edge_index=heterodata["raingauge", "connects", "raingauge"].edge_index,
                 num_nodes=heterodata["raingauge"].x.shape[0],
             )
-            lpe_transform = AddLaplacianEigenvectorPE(k=4, attr_name="laplacian_pe")
+            lpe_transform = AddLaplacianEigenvectorPE(k=self.lpe_dimensions, attr_name="laplacian_pe")
             temp_graph = lpe_transform(temp_graph)
             lpe = temp_graph.laplacian_pe
 
@@ -320,7 +355,7 @@ class GaugeGraphNew:
             test_raingauge_coords, coords, knn
         )
 
-        if not config["layer_connect"]["is_directed"]:
+        if not self.layer_is_directed:
             self.fused_train_heterodata[
                 "raingauge", "rev_connects", f"{layer_name}"
             ].edge_index = torch.tensor(train_connecting_edges, dtype=torch.long).T
@@ -486,7 +521,6 @@ class GaugeGraphNew:
 
         fig.show()
 
-
 class HeterogeneousWeatherGraphDatasetInductive(Dataset):
     def __init__(self, heterodata, device="cpu"):
 
@@ -512,6 +546,11 @@ class HeterogeneousWeatherGraphDatasetInductive(Dataset):
         data = HeteroData()
         data["raingauge"].x = x
         data["raingauge"].y = y
+
+        #added the station ids and timestamps to the data object
+        data.station_ids = self.heterodata.station_ids
+        data.timestamps = self.heterodata.timestamps[idx]
+
         for edge_type in self.heterodata.edge_types:
             data[edge_type].edge_index = self.heterodata[edge_type].edge_index
             data[edge_type].edge_attr = self.heterodata[edge_type].edge_attr
