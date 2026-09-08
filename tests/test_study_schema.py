@@ -1,9 +1,14 @@
 """Tests for Component 03's documented station input contract."""
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from src.study.schema import StationRecord
+from src.study.split import read_station_records
+
+STUDY_DATA = Path(__file__).parent / "data" / "study"
 
 
 def valid_station(**overrides: object) -> dict[str, object]:
@@ -60,3 +65,16 @@ def test_included_station_cannot_have_an_exclusion_reason():
         _ = StationRecord.model_validate(
             valid_station(exclusion_reason="unexpected reason")
         )
+
+
+def test_reads_the_documented_station_table_without_losing_identifiers():
+    stations = read_station_records(STUDY_DATA / "stations.csv")
+
+    assert [station.station_id for station in stations] == [
+        "001234",
+        "567890",
+        "009999",
+    ]
+    assert stations[0].station_no == "0563083"
+    assert stations[2].use_in_study is False
+    assert stations[2].exclusion_reason == "coverage below 0.90"

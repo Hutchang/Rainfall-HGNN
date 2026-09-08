@@ -1,5 +1,6 @@
 """Spatial grouping helpers for Component 03 study splits."""
 
+import csv
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import chain
@@ -11,6 +12,7 @@ from typing import cast
 import numpy as np
 import yaml
 from numpy.typing import NDArray
+from pydantic import ValidationError
 from sklearn.cluster import KMeans
 
 from src.study.schema import (
@@ -23,6 +25,42 @@ from src.study.schema import (
 )
 
 EARTH_RADIUS_KM = 6371.0088
+STATION_COLUMNS = {
+    "station_id",
+    "station_no",
+    "name",
+    "latitude",
+    "longitude",
+    "hours_observed",
+    "use_in_study",
+    "exclusion_reason",
+}
+
+
+def read_station_records(path: Path) -> list[StationRecord]:
+    """Read Component 02's canonical ``stations.csv`` into validated records."""
+    with path.open(encoding="utf-8", newline="") as station_file:
+        reader = csv.DictReader(station_file)
+        columns = set(reader.fieldnames or ())
+        if columns != STATION_COLUMNS:
+            missing = sorted(STATION_COLUMNS - columns)
+            unexpected = sorted(columns - STATION_COLUMNS)
+            raise ValueError(
+                f"invalid stations.csv columns; missing={missing}, unexpected={unexpected}"
+            )
+
+        records: list[StationRecord] = []
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                records.append(
+                    StationRecord.model_validate_strings(cast("dict[str, str]", row))
+                )
+            except ValidationError as error:
+                raise ValueError(
+                    f"invalid station record on CSV row {row_number}: {error}"
+                ) from error
+
+    return validate_station_records(records)
 
 
 def validate_station_records(

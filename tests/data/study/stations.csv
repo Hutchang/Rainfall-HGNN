@@ -1,0 +1,4 @@
+station_id,station_no,name,latitude,longitude,hours_observed,use_in_study,exclusion_reason
+001234,0563083,BLACKHEATH G.C.,-33.635,150.285,17000,True,
+567890,066037,SYDNEY AIRPORT AMO,-33.9465,151.1731,16950,True,
+009999,099999,REJECTED STATION,-33.8000,151.0000,1200,False,coverage below 0.90
