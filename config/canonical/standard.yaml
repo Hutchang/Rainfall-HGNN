@@ -1,0 +1,25 @@
+# Component 02 settings: build the standard tables from Component 01's raw files.
+# Everything that decides what enters the standard dataset lives here, not in Python.
+
+raw_dir: database/raw
+output_dir: database/standard
+ingestion_config: config/ingestion/sydney.yaml   # for the bounding box in figures
+
+# Station-level rules (requirements doc 02, "The three rules that carry the science")
+min_coverage: 0.90        # fraction of the period's hours a station needs to be usable
+dead_gauge_days: 90       # consecutive verified-dry days that make a gauge suspect
+dead_gauge_radius_km: 50  # ...while at least this many neighbours within this radius saw rain
+dead_gauge_neighbours: 3
+
+# BoM quality codes (from the KiWIS getQualityCodes request, 2026-09-05; see
+# docs/canonical/README.md). Codes are BoM's opinion of a record; the daily-total
+# check is the arbiter for a day. Codes only decide which records are counted at all.
+quality:
+  tips:
+    count: [10, 110, 140]   # A best, C estimate, E unknown: counted, then verified daily
+    ignore: [210]           # F missing or incorrect: never counted
+    gap: [-1]               # undocumented, always a null value: BoM marking a hole
+  daily:
+    trusted: [10, 110, 140] # a total we compare against
+    dry: [130]              # BoM "No rainfall": verified total of 0.0
+    unverifiable: [-1, 210, 254]  # null, missing/incorrect, undocumented: no hours written
