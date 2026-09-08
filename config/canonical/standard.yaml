@@ -10,6 +10,7 @@ min_coverage: 0.90        # fraction of the period's hours a station needs to be
 dead_gauge_days: 90       # consecutive verified-dry days that make a gauge suspect
 dead_gauge_radius_km: 50  # ...while at least this many neighbours within this radius saw rain
 dead_gauge_neighbours: 3
+colocated_m: 100          # stations closer than this are flagged colocated_with (kept; Component 03 decides)
 
 # Physical plausibility. BoM's daily total is computed from the same tips, so a
 # malfunctioning gauge can pass the daily check. Each cap rejects the whole day.

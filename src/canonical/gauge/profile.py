@@ -211,48 +211,38 @@ def fig_random_day(
 def fig_value_profile(
     tips: pd.DataFrame, quality: dict, cap: float, names: pd.Series, out: Path
 ) -> pd.DataFrame:
-    """Per station: how many distinct positive values its counted records take, against
-    the largest single record. A tipping bucket sits at (1 to 3 values, one increment).
-    Anything far from that corner is a logger storing totals, not tips."""
+    """One bar per station: its largest single counted record, sorted. A tipping bucket
+    never records more than its increment, so bars sit at 0.5 (or 0.2, 0.1, 1.0).
+    Anything above the cap is a logger storing totals as if they were tips."""
     t = tips[tips["quality"].isin(quality["tips"]["count"]) & (tips["value"] > 0)]
     prof = t.groupby("station_id")["value"].agg(
         distinct="nunique", max_record="max", records="size"
     )
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.scatter(
-        prof["distinct"],
-        prof["max_record"],
-        s=28,
-        c=BLUE,
-        edgecolors=SURFACE,
-        linewidths=0.6,
-        zorder=3,
-    )
-    ax.axhline(cap, color=CRITICAL, lw=1.2, ls="--", zorder=2)
-    ax.text(
-        ax.get_xlim()[1] * 0.98,
-        cap * 1.15,
-        f"max_record_mm = {cap}",
-        ha="right",
-        color=CRITICAL,
-        fontsize=9,
-    )
-    ax.set_xscale("log")
+    prof = prof.sort_values(["max_record", "distinct"])
+    fig, ax = plt.subplots(figsize=(13, 5))
+    x = np.arange(len(prof))
+    over = prof["max_record"] > cap
+    ax.bar(x[~over], prof["max_record"][~over], color=BLUE, width=0.8)
+    ax.bar(x[over], prof["max_record"][over], color=CRITICAL, width=0.8)
+    ax.axhline(cap, color=CRITICAL, lw=1, ls="--")
+    ax.text(0, cap * 1.25, f"max_record_mm = {cap}", color=CRITICAL, fontsize=9)
     ax.set_yscale("log")
-    ax.set_xlabel("distinct positive record values (log)")
     ax.set_ylabel("largest single record, mm (log)")
-    ax.grid(alpha=0.6)
-    for sid, r in prof[prof["max_record"] > cap].iterrows():
-        ax.annotate(
-            names.get(sid, sid)[:22],
-            (r["distinct"], r["max_record"]),
-            xytext=(5, 3),
-            textcoords="offset points",
-            fontsize=7,
-            color=INK2,
-        )
+    ax.set_xlabel(f"{len(prof)} stations with counted records, sorted")
+    ax.set_xticks([])
+    ax.grid(axis="y", alpha=0.6)
+    ax.text(
+        x[over][0] - 1,
+        prof["max_record"].max(),
+        f"{int(over.sum())} stations above the cap, listed in profile.md",
+        ha="right",
+        va="top",
+        fontsize=9,
+        color=INK2,
+    )
+    ax.set_ylim(top=prof["max_record"].max() * 3)
     ax.set_title(
-        "Is it a tipping bucket? Record values per station",
+        "Is it a tipping bucket? Largest single record per station",
         loc="left",
         color=INK,
         fontsize=12,
@@ -309,49 +299,127 @@ def fig_daily_totals(days: pd.DataFrame, plaus: dict, out: Path) -> None:
 
 
 def fig_heatmap(days: pd.DataFrame, stations: pd.DataFrame, out: Path) -> None:
-    """Station by rain-day, colour is BoM's daily total (log), grey where BoM has no usable
-    total. Rows ordered north to south. Silent stations are grey rows, gaps grey stretches,
-    floods bright columns, a stuck gauge a hot cell in a cool row."""
-    order = stations.sort_values("latitude", ascending=False)["station_id"]
-    grid = days.pivot(index="station_id", columns="day_end", values="daily_mm").reindex(
-        order
+    """Station by rain-day, one panel per year. Cell colour is the verdict: blues scaled
+    by rainfall for verified days, orange mismatch, red implausible, grey unverifiable.
+    Silent stations are omitted; rows sorted by share of verified days."""
+    from matplotlib.colors import ListedColormap
+    from matplotlib.patches import Patch
+
+    d = days.copy()
+    # code: 0 unverifiable, 1 mismatch, 2 implausible, 3.. verified with rainfall bins
+    bins = [
+        0,
+        0.01,
+        1,
+        5,
+        20,
+        50,
+        np.inf,
+    ]  # dry, trace, light, moderate, heavy, extreme
+    rain_bin = np.digitize(d["daily_mm"].fillna(0), bins[1:], right=False)
+    d["code"] = np.select(
+        [
+            d["verdict"] == "unverifiable",
+            d["verdict"] == "mismatch",
+            d["verdict"] == "implausible",
+        ],
+        [0, 1, 2],
+        default=3 + rain_bin,
     )
-    fig, ax = plt.subplots(figsize=(13, 9))
-    cmap = matplotlib.colormaps["Blues"].copy()
-    cmap.set_bad(MUTED)
-    im = ax.imshow(
-        np.log10(grid.to_numpy(dtype=float) + 1),
-        aspect="auto",
-        cmap=cmap,
-        interpolation="nearest",
-        vmin=0,
-        vmax=np.log10(301),
-    )
-    cols = grid.columns
-    ticks = [
-        i
-        for i, d in enumerate(cols)
-        if d.day <= 7
-        and d.month in (1, 4, 7, 10)
-        and (i == 0 or cols[i - 1].month != d.month)
+    keep = d.groupby("station_id")["verdict"].apply(lambda v: (v == "verified").any())
+    d = d[d["station_id"].isin(keep[keep].index)]
+    share = d.groupby("station_id")["verdict"].apply(lambda v: (v == "verified").mean())
+    order = share.sort_values(ascending=False).index
+    grid = d.pivot(index="station_id", columns="day_end", values="code").reindex(order)
+    blues = [
+        matplotlib.colormaps["Blues"](v) for v in (0.08, 0.25, 0.42, 0.6, 0.78, 0.98)
     ]
-    ax.set_xticks(
-        ticks, [cols[i].strftime("%b %Y") for i in ticks], rotation=0, fontsize=8
+    cmap = ListedColormap([MUTED, ORANGE, CRITICAL, *blues])
+    years = sorted({c.year for c in grid.columns})
+    fig, axes = plt.subplots(len(years), 1, figsize=(14, 5.2 * len(years)))
+    for ax, year in zip(np.atleast_1d(axes), years):
+        cols = [c for c in grid.columns if c.year == year]
+        sub = grid[cols]
+        ax.imshow(
+            sub.to_numpy(dtype=float),
+            aspect="auto",
+            cmap=cmap,
+            vmin=-0.5,
+            vmax=8.5,
+            interpolation="nearest",
+        )
+        ticks = [i for i, c in enumerate(cols) if c.day == 1 or (i == 0)]
+        ax.set_xticks(ticks, [cols[i].strftime("%b") for i in ticks], fontsize=8)
+        ax.set_yticks([])
+        ax.set_ylabel(f"{len(sub)} stations, most complete at top")
+        ax.set_title(str(year), loc="left", color=INK, fontsize=11)
+    legend = [
+        Patch(color=MUTED, label="unverifiable (no BoM total)"),
+        Patch(color=ORANGE, label="mismatch"),
+        Patch(color=CRITICAL, label="implausible"),
+    ]
+    legend += [
+        Patch(
+            color=c,
+            label=f"verified, {lo}" + (f"-{hi} mm" if np.isfinite(hi) else "+ mm"),
+        )
+        for c, lo, hi in zip(blues, bins[:-1], bins[1:])
+    ]
+    legend[3] = Patch(color=blues[0], label="verified, dry")
+    fig.legend(
+        handles=legend,
+        loc="lower center",
+        ncol=5,
+        frameon=False,
+        fontsize=8,
+        bbox_to_anchor=(0.5, -0.01),
     )
-    ax.set_yticks([])
-    ax.set_ylabel(f"{len(grid)} stations, north to south")
-    cb = fig.colorbar(im, ax=ax, fraction=0.02, pad=0.01)
-    cb.set_ticks([0, 1, 2, np.log10(301)], labels=["0", "9", "99", "300 mm"])
-    cb.set_label("BoM daily total")
-    ax.set_title(
-        "Station by rain-day: BoM daily totals (grey = no usable total)",
-        loc="left",
+    fig.suptitle(
+        "Station by rain-day: verdict and rainfall (silent stations omitted)",
+        x=0.01,
+        ha="left",
         color=INK,
         fontsize=12,
     )
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.04, 1, 0.97))
     fig.savefig(out / "heatmap.png", dpi=140)
     plt.close(fig)
+
+
+def fig_stations_after(
+    standard_dir: Path, bounds: dict, out: Path
+) -> pd.DataFrame | None:
+    """The 'after' map: stations.csv from the build, coloured by use_in_study and reason."""
+    path = standard_dir / "stations.csv"
+    if not path.exists():
+        return None
+    st = pd.read_csv(path, dtype={"station_id": str}, keep_default_na=False)
+    reason = (
+        st["exclusion_reason"]
+        .str.split(":")
+        .str[0]
+        .str.replace(r"coverage .*", "coverage below threshold", regex=True)
+    )
+    status = pd.Series(
+        np.where(st["use_in_study"].astype(str) == "True", "use_in_study", reason),
+        index=st["station_id"],
+    )
+    classes = {
+        "use_in_study": (BLUE, "o"),
+        "coverage below threshold": (ORANGE, "o"),
+        "dead gauge": (CRITICAL, "D"),
+        "no records in period": (MUTED, "s"),
+    }
+    fig_map(
+        st.rename(columns={"name": "station_name"}),
+        status,
+        bounds,
+        out,
+        "stations_after",
+        "Stations after Component 02 rules",
+        classes,
+    )
+    return st
 
 
 def period_from_index(index: pd.DataFrame) -> tuple:
@@ -492,6 +560,17 @@ def main() -> None:
         "![heatmap](heatmap.png)",
         "",
     ]
+    after = fig_stations_after(Path(cfg["output_dir"]), bounds, out)
+    if after is not None:
+        n_use = int((after["use_in_study"].astype(str) == "True").sum())
+        lines += [
+            "## After the station rules",
+            "",
+            f"{n_use} of {len(after)} stations have use_in_study = true (from `stations.csv`).",
+            "",
+            "![after](stations_after.png)",
+            "",
+        ]
     (out / "profile.md").write_text("\n".join(lines))
     print(f"wrote {out}/profile.md and 6 figures")
 
