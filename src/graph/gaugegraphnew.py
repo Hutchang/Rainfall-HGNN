@@ -123,7 +123,7 @@ class GaugeGraphNew:
     def build_graph(self, split: str):
         """
         BUILDS A GRAPH FOR TRAIN/VALIDATION/TEST
-        returns an nx graph
+        returns an nx digraph
         """
         match split:
             case "train":
