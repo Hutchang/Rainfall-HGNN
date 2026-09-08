@@ -169,6 +169,14 @@ daily loggers, not tipping buckets; Gladesville at 89.85% coverage, just under t
 
 ## Open questions
 
+- **Short blockages produce confident false zeros.** A blocked gauge reports no tips
+  and BoM's daily total, computed from the same tips, reports 0.0, so the day verifies
+  and 24 hours of `0.0` are written as observed-dry. The dead-gauge rule only catches
+  runs of 90+ days. A day-level check (verified-dry while most near neighbours recorded
+  rain) would close this; the threshold is a scientific choice for the client. This is
+  the top risk in the current tables.
+- **Timestamp fidelity within a day** is assumed. If any logger batch-reports, the day
+  total is still right but the hourly distribution is wrong; only BoM can confirm.
 - Whether the client wants the plausibility caps, tolerance, or coverage threshold set
   differently. All are config values.
 - The cause of the April-May 2021 gap (per-owner outage?).
