@@ -48,11 +48,6 @@ def load_stations(path: Path) -> pd.DataFrame:
     )
 
 
-def period_from_index(index: pd.DataFrame) -> tuple:
-    t = index[index["source"] == "gauge_tips"]
-    return pd.Timestamp(t["start"].min()).date(), pd.Timestamp(t["end"].max()).date()
-
-
 def git_revision() -> str:
     try:
         return subprocess.check_output(
@@ -76,7 +71,7 @@ def run(cfg: dict) -> dict:
     stations = raw.read_stations(raw_dir)
     tips = raw.read_tips(raw_dir, index)
     daily = raw.read_daily(raw_dir, index)
-    start, end = period_from_index(index)
+    start, end = raw.period_from_index(index)
     print(
         f"read {len(tips):,} tips, {len(daily):,} daily records, {len(stations)} stations; period {start} to {end}",
         flush=True,

@@ -422,11 +422,6 @@ def fig_stations_after(
     return st
 
 
-def period_from_index(index: pd.DataFrame) -> tuple:
-    t = index[index["source"] == "gauge_tips"]
-    return pd.Timestamp(t["start"].min()).date(), pd.Timestamp(t["end"].max()).date()
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("config")
@@ -461,7 +456,7 @@ def main() -> None:
     )
     day = fig_random_day(tips, daily, cfg, out)
 
-    start, end = period_from_index(index)
+    start, end = raw.period_from_index(index)
     hourly, days, inc = verify_days(
         tips, daily, cfg["quality"], cfg["plausibility"], start, end
     )

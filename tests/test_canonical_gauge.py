@@ -414,3 +414,12 @@ def test_written_tables_round_trip_with_string_ids_and_utc_offsets(tmp_path):
     st.to_csv(tmp_path / "stations.csv", index=False)
     back = load_stations(tmp_path / "stations.csv")
     assert back["station_id"].iloc[0] == "0012" and back["colocated_with"].iloc[0] == ""
+
+
+def test_period_from_index_fails_loudly_when_there_are_no_tip_rows():
+    index = pd.DataFrame(
+        [("gauge_daily", "1", "d", "ok", "")],
+        columns=["source", "station_id", "path", "status", "error"],
+    )
+    with pytest.raises(ValueError, match="no gauge_tips rows"):
+        raw.period_from_index(index)

@@ -6,6 +6,7 @@ never be mistaken for a dry month.
 
 import gzip
 import json
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -14,8 +15,20 @@ TIP_COLUMNS = ["station_id", "timestamp", "value", "quality"]
 
 
 def read_index(raw_dir: Path) -> pd.DataFrame:
-    df = pd.read_csv(raw_dir / "index.csv", dtype={"station_id": str})
-    return df
+    """Component 01's manifest: one row per raw file, with its download status."""
+    return pd.read_csv(raw_dir / "index.csv", dtype={"station_id": str})
+
+
+def period_from_index(index: pd.DataFrame) -> tuple[date, date]:
+    """The tip period Component 01 actually covered, taken from the index rather than
+    from a config, so the two cannot silently disagree."""
+    t = index[index["source"] == "gauge_tips"]
+    if t.empty:
+        raise ValueError(
+            "index.csv has no gauge_tips rows: Component 01 has not fetched any tip "
+            "series for this period, so there is nothing for Component 02 to build"
+        )
+    return pd.Timestamp(t["start"].min()).date(), pd.Timestamp(t["end"].max()).date()
 
 
 def read_stations(raw_dir: Path) -> pd.DataFrame:
