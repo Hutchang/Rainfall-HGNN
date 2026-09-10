@@ -13,7 +13,8 @@ uv run python -m src.canonical.gauge.profile config/canonical/standard.yaml   # 
 ```
 
 Both read `database/raw/` and write to `database/standard/` (gitignored). Rerunning the
-build produces byte-identical CSVs. Tests run offline against the Component 01 sample:
+build produces byte-identical CSVs; `report.md` records its own build time and elapsed
+seconds, so it is not itself byte-identical. Tests run offline against the sample:
 
 ```
 uv run python -m pytest tests/test_canonical_gauge.py -v
@@ -174,6 +175,10 @@ Rejected stations keep their row with `use_in_study = false` and the reason.
 - **`gauge_hourly.csv` includes non-study stations.** Filter on `stations.csv`.
 
 ## What the Sydney run produced (2026-09-08)
+
+***(stale) These figures come from a run that predates the rain-day boundary fix, so
+day verdicts and hourly counts may shift slightly. Rerun the build and replace the
+table before quoting any of it.
 
 | | |
 |---|---|
