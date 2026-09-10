@@ -41,10 +41,25 @@ DAY_COLUMNS = [
 
 def rain_day_end(ts_utc: pd.Series) -> pd.Series:
     """The UTC timestamp of the 09:00-local rain-day boundary at or after each time.
+    
+    BoM records rain-days from 09:00 -> 09:00, not midnight --> midnight. Every tip needs 
+    a label saying which rain day it falls in and we've chosen the rain day's end.
+
+    Pandas can only round to natural boundaries, so .ceil("D") 'round up to the next
+    day' will round to midnight, not 09:00.
+
+    This function shifts back 9 hours so pandas can round correctly and 09:00 will
+    correctly map to a midnight, or a new day. 
+    
     A tip at exactly 09:00:00 belongs to the day ending then: the day is (start, end]."""
     local = ts_utc + LOCAL_OFFSET
     shifted = local - pd.Timedelta(hours=RAIN_DAY_END_HOUR)
-    end_local = shifted.dt.ceil("D") + pd.Timedelta(hours=RAIN_DAY_END_HOUR)
+
+    # days = 1 offset to advance to the next day boundary. We take the floor of the 
+    # current day (shifted 9 hours back) and THEN advance by a day, putting us in TODAY's
+    # bucket, not tomorrow's
+
+    end_local = shifted.dt.floor("D") + pd.Timedelta(days=1, hours=RAIN_DAY_END_HOUR)
     return end_local - LOCAL_OFFSET
 
 

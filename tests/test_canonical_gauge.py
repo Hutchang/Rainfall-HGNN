@@ -41,7 +41,13 @@ def daily_df(rows):
 
 
 # ---------------------------------------------------------------- rain day and hours
-def test_rain_day_boundary_is_0900_local_inclusive_at_end():
+def test_rain_day_boundary_is_0900_local_exclusive_at_end():
+    """The day is [start, end), so a tip at exactly 09:00:00 opens the day ending 24 hours
+    later. It has to, because the hourly grid is
+    24 buckets labelled by their start and covering [t, t+1h), whereas a (start, end] day spans
+    25 of those, so its boundary tip verifies one day and lands in the next one's grid
+    
+    See `rain_day_end` in canonical/gauge/verify.py docstring. ."""
     ts = pd.Series(
         pd.to_datetime(
             ["2022-01-05 08:59:59", "2022-01-05 09:00:00", "2022-01-05 09:00:01"]
@@ -49,7 +55,7 @@ def test_rain_day_boundary_is_0900_local_inclusive_at_end():
     )
     ts = ts.dt.tz_localize("Etc/GMT-10").dt.tz_convert("UTC")
     ends = (rain_day_end(ts) + pd.Timedelta(hours=10)).dt.strftime("%Y-%m-%d %H:%M")
-    assert ends.tolist() == ["2022-01-05 09:00", "2022-01-05 09:00", "2022-01-06 09:00"]
+    assert ends.tolist() == ["2022-01-05 09:00", "2022-01-06 09:00", "2022-01-06 09:00"]
 
 
 def test_tip_at_1059_lands_in_10_hour_and_1100_in_11_hour(cfg):
