@@ -30,11 +30,21 @@ network = pytest.mark.skipif(
 
 # ---------------------------------------------------------------- fake client
 class FakeClient:
-    """Stands in for KiwisClient. Records every call; fails on demand."""
+    """Stands in for KiwisClient. Records every call; fails on demand for use in
+    negative/edge cases.
 
-    def __init__(self, fail_paths=()):
+    fail_paths:  (ts_id, start) pairs whose values() call raises, as a download would.
+    fail_series: station_ids whose series_list() raises RuntimeError, as KiwisClient
+                 does when it exhausts its retries — a transient lookup failure.
+    no_series:   station_ids that return no matching series at all, which is
+                 permanent and makes find_series raise LookupError.
+    """
+
+    def __init__(self, fail_paths=(), fail_series=(), no_series=()):
         self.calls = []
         self.fail = set(fail_paths)
+        self.fail_series = set(fail_series)
+        self.no_series = set(no_series)
 
     def station_list(self, bounds=None, station_no=None):
         self.calls.append("station_list")
@@ -45,6 +55,9 @@ class FakeClient:
             "station_latitude",
             "station_longitude",
         ]
+        # In the BoM real data, these two rain gauges are in distinct location
+        # but are keyed by the same id. Negative test is designed to flag this.
+
         rows = [
             ["1", "563083", "A", "-33.9", "151.0"],
             ["2", "563083", "B", "-33.6", "150.3"],
@@ -55,6 +68,11 @@ class FakeClient:
 
     def series_list(self, station_id=None, ts_name=None):
         self.calls.append(f"series_list:{station_id}")
+        if station_id in self.fail_series:
+            raise RuntimeError(
+                "getTimeseriesList failed after 3 attempts: HTTP 504")
+        if station_id in self.no_series:
+            return b"", []
         rows = [
             {
                 "station_id": station_id,
@@ -90,7 +108,8 @@ class FakeClient:
 
 def small_cfg(tmp_path):
     cfg = load_config(CONFIG)
-    cfg["start"], cfg["end"] = date(2022, 1, 1), date(2022, 2, 28)  # 2 months, 1 year
+    cfg["start"], cfg["end"] = date(2022, 1, 1), date(
+        2022, 2, 28)  # 2 months, 1 year
     cfg["output_dir"] = str(tmp_path / "raw")
     return cfg
 
@@ -147,7 +166,8 @@ def test_run_writes_layout_index_and_report(tmp_path):
     assert list(rows[0].keys()) == fetch.INDEX_COLUMNS
     assert len(rows) == 2 * (2 + 1)
     assert all(
-        r["status"] == "ok" and r["n_records"] == "2" and len(r["sha256"]) == 64
+        r["status"] == "ok" and r["n_records"] == "2" and len(
+            r["sha256"]) == 64
         for r in rows
     )
     assert (raw / "report.md").read_text().startswith("# Gauge ingestion report")
@@ -179,7 +199,8 @@ def test_failed_download_is_indexed_and_run_exits_nonzero(tmp_path):
         rows = {r["path"]: r for r in csv.DictReader(fh)}
     bad = rows["gauge/tips/1/2022-02.json.gz"]
     assert bad["status"] == "failed" and "504" in bad["error"] and bad["sha256"] == ""
-    assert not (Path(cfg["output_dir"]) / "gauge/tips/1/2022-02.json.gz").exists()
+    assert not (Path(cfg["output_dir"]) /
+                "gauge/tips/1/2022-02.json.gz").exists()
     assert (
         "gauge/tips/1/2022-02.json.gz"
         in (Path(cfg["output_dir"]) / "report.md").read_text()
@@ -192,12 +213,160 @@ def test_failed_download_is_indexed_and_run_exits_nonzero(tmp_path):
     ]
 
 
+def _index(cfg):
+    with (Path(cfg["output_dir"]) / "index.csv").open() as fh:
+        return list(csv.DictReader(fh))
+
+
+def test_transient_series_failure_is_retried_on_the_next_run(tmp_path):
+    """Station 2's series lookup hits a 504 on the first run; the API is healthy on
+    the second. FakeClient returns two stations and small_cfg asks for 2 tip months
+    plus 1 daily year, so a complete run is 2 stations x 3 files = 6 index rows.
+
+    Run 1 must exit non-zero and still leave station 2 visible in index.csv.
+    Run 2 must re-ask ONLY station 2: re-asking station 1 would mean the cache was
+    abandoned, and not re-asking station 2 is the original bug, where one transient
+    error was cached as "already looked up" and the station silently disappeared
+    from every later run.
+    """
+    cfg = small_cfg(tmp_path)
+
+    first = FakeClient(fail_series={"2"})
+    assert fetch.run(
+        cfg, client=first) == 1, "an unresolved station must exit non-zero"
+    assert {r["station_id"] for r in _index(cfg)} == {"1", "2"}, (
+        "station 2 stays in the index even though nothing was downloaded for it"
+    )
+
+    second = FakeClient()
+    assert fetch.run(cfg, client=second) == 0
+    assert "series_list:2" in second.calls, "the failed lookup must be retried"
+    assert "series_list:1" not in second.calls, "a cached station must not be re-asked"
+
+    rows = _index(cfg)
+    assert all(r["status"] == "ok" for r in rows), (
+        "run 1's skipped rows are replaced by real downloads, not left behind"
+    )
+    assert len(rows) == 2 * \
+        (2 + 1), "2 stations x (2 tip months + 1 daily year)"
+    assert len({(r["station_id"], r["path"]) for r in rows}) == len(rows), (
+        "one row per file, so the retry did not append a second row for station 2"
+    )
+
+
+def test_station_with_no_series_is_indexed_reported_and_kept_non_zero(tmp_path):
+    """A permanent exclusion must stay visible on every run, not just the first."""
+    cfg = small_cfg(tmp_path)
+
+    for run_number in (1, 2):
+        assert fetch.run(cfg, client=FakeClient(no_series={"2"})) == 1, (
+            f"run {run_number}: a station with no required series exits non-zero"
+        )
+        rows = [r for r in _index(cfg) if r["station_id"] == "2"]
+        assert len(rows) == 3, f"run {run_number}: a row per expected file"
+        assert {r["status"] for r in rows} == {"skipped"}
+        assert all("no required series" in r["error"] for r in rows)
+        assert all(r["sha256"] == "" and r["n_records"] == "" for r in rows), (
+            "nothing was downloaded, so there is no hash and no record count"
+        )
+        report = (Path(cfg["output_dir"]) / "report.md").read_text()
+        assert "- stations with no usable series: 1" in report
+        assert "never requested: 3" in report
+        assert "2 B: no required series" in report
+
+
+def test_skipped_rows_are_invisible_to_component_02(tmp_path):
+    """Component 02 selects status == "ok", so a skipped row must never reach it."""
+    cfg = small_cfg(tmp_path)
+    fetch.run(cfg, client=FakeClient(no_series={"2"}))
+    rows = _index(cfg)
+    assert [r["station_id"]
+            for r in rows if r["status"] == "ok"] == ["1", "1", "1"]
+    assert {r["station_id"] for r in rows} == {"1", "2"}, (
+        "the skipped station is still on the record for a human and for 01's report"
+    )
+
+
+def test_partially_written_series_csv_is_not_trusted(tmp_path):
+    """A crash mid-write can leave a station with one of its two series. That is
+    not a completed lookup, so the station is looked up again rather than fetched
+    with a missing ts_id."""
+    cfg = small_cfg(tmp_path)
+    fetch.run(cfg, client=FakeClient())
+    path = Path(cfg["output_dir"]) / "gauge" / "series.csv"
+
+    rows = [r for r in csv.DictReader(path.open(newline=""))]
+    keep = [
+        r
+        for r in rows
+        if not (r["station_id"] == "1" and "DailyTotal" in r["series_name"])
+    ]
+    with path.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fetch.SERIES_COLUMNS)
+        w.writeheader()
+        w.writerows(keep)
+
+    assert fetch.read_series_csv(path, cfg["gauge"]["series"]) == {
+        "2": {"tips": "201", "daily": "202"}
+    }, "station 1 is incomplete and must not count as cached"
+
+    third = FakeClient()
+    assert fetch.run(cfg, client=third) == 0
+    assert "series_list:1" in third.calls and "series_list:2" not in third.calls
+
+
+def test_series_csv_keeps_its_documented_columns(tmp_path):
+    """Series.csv designed to exactly these four columns, so
+    the header is a contract with any future reader. Adding a column here 
+    must fail this test and force the doc to change with it."""
+    cfg = small_cfg(tmp_path)
+    fetch.run(cfg, client=FakeClient())
+    path = Path(cfg["output_dir"]) / "gauge" / "series.csv"
+    with path.open(newline="") as fh:
+        assert next(csv.reader(fh)) == fetch.SERIES_COLUMNS
+    assert fetch.SERIES_COLUMNS == [
+        "station_id",
+        "ts_id",
+        "series_name",
+        "parameter",
+    ], "these four names are published in 01's requirements doc"
+
+
+def test_series_csv_is_written_once_per_newly_resolved_station(tmp_path):
+    """series.csv is rewritten whole, so it must change when a station resolves and
+    be left alone when nothing does.
+
+    Run 1 leaves station 2 unresolved. Run 2 resolves it, so the file must change.
+    Run 3 resolves nothing, so the file must not be touched at all — checked by
+    modification time, because write_series_csv sorts by station_id and a pointless
+    rewrite would therefore produce byte-identical content that a content
+    comparison could not detect.
+    """
+    cfg = small_cfg(tmp_path)
+    fetch.run(cfg, client=FakeClient(fail_series={"2"}))
+    path = Path(cfg["output_dir"]) / "gauge" / "series.csv"
+    after_first = path.read_bytes()
+    assert [r["station_id"] for r in csv.DictReader(path.open(newline=""))] == [
+        "1",
+        "1",
+    ], "only the station whose lookup succeeded is cached"
+
+    fetch.run(cfg, client=FakeClient())
+    assert path.read_bytes() != after_first, "station 2 resolved and must be added"
+    after_second, mtime = path.read_bytes(), path.stat().st_mtime_ns
+
+    fetch.run(cfg, client=FakeClient())
+    assert path.stat().st_mtime_ns == mtime, "nothing resolved, so nothing was written"
+    assert path.read_bytes() == after_second
+
+
 def test_stations_sharing_a_public_number_are_kept_separate(tmp_path):
     cfg = small_cfg(tmp_path)
     fetch.run(cfg, client=FakeClient())
     with (Path(cfg["output_dir"]) / "gauge" / "series.csv").open() as fh:
         ids = {r["station_id"] for r in csv.DictReader(fh)}
-    assert ids == {"1", "2"}, "two station_ids with the same station_no both fetched"
+    assert ids == {
+        "1", "2"}, "two station_ids with the same station_no both fetched"
 
 
 # ---------------------------------------------------------------- committed sample
@@ -208,7 +377,8 @@ def test_committed_sample_is_an_unmodified_api_response():
     assert tips[0]["columns"] == "Timestamp,Value,Quality Code"
     assert int(tips[0]["rows"]) == len(tips[0]["data"]) == 390
     assert tips[0]["data"][0] == ["2022-01-01T03:00:00.000+10:00", 0.0, 10]
-    assert all(t[0].endswith("+10:00") for t in tips[0]["data"]), "fixed UTC+10 offset"
+    assert all(t[0].endswith("+10:00")
+               for t in tips[0]["data"]), "fixed UTC+10 offset"
 
     with gzip.open(SAMPLE / "gauge/daily/31531755/2022.json.gz") as fh:
         daily = json.load(fh)
@@ -239,9 +409,11 @@ def test_storm_check_station_568163_january_2023():
     client = KiwisClient(**cfg["gauge"]["api"])
     _, st = client.station_list(station_no="568163")
     assert len(st) == 1
-    ids = fetch.find_series(client, st[0]["station_id"], cfg["gauge"]["series"])
+    ids = fetch.find_series(
+        client, st[0]["station_id"], cfg["gauge"]["series"])
     raw, _ = client.values(ids["tips"], "2023-01-04", "2023-01-05")
-    tips = [d for d in json.loads(raw)[0]["data"] if d[0].startswith("2023-01-04T19")]
+    tips = [d for d in json.loads(raw)[0]["data"]
+            if d[0].startswith("2023-01-04T19")]
     assert len(tips) == 50 and sum(d[1] for d in tips) == 25.0
     raw, _ = client.values(ids["daily"], "2023-01-04", "2023-01-05")
     assert [d[1] for d in json.loads(raw)[0]["data"]] == [4.0, 30.0]
@@ -253,4 +425,5 @@ def test_collision_check_station_no_563083_is_two_stations():
     client = KiwisClient(**cfg["gauge"]["api"])
     _, rows = client.station_list(station_no="563083")
     got = {r["station_id"]: r["station_name"] for r in rows}
-    assert got == {"7730155": "BLACKHEATH G.C.", "49645132": "NORTH RICHMOND WFP"}
+    assert got == {"7730155": "BLACKHEATH G.C.",
+                   "49645132": "NORTH RICHMOND WFP"}

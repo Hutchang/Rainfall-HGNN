@@ -140,49 +140,108 @@ def load_or_fetch_stations(
     return rows
 
 
+SERIES_COLUMNS = ["station_id", "ts_id", "series_name", "parameter"]
+
+
+def read_series_csv(path: Path, names: dict) -> dict:
+    """Series ids cached by an earlier run, as {station_id: {"tips": ts_id, ...}}.
+
+    Only stations with every series this config asks for are returned. A station
+    with some series present is treated as not yet looked up, so a run that stopped
+    part-way through writing the file cannot be mistaken for a completed lookup.
+    Series names the config no longer asks for are ignored rather than raising.
+    """
+    if not path.exists():
+        return {}
+    by_name = {v: k for k, v in names.items()}
+    cached: dict[str, dict] = {}
+    with path.open(newline="") as fh:
+        for row in csv.DictReader(fh):
+            key = by_name.get(row["series_name"])
+            if key is not None:
+                cached.setdefault(row["station_id"], {})[key] = row["ts_id"]
+    return {sid: ids for sid, ids in cached.items() if set(ids) == set(names)}
+
+
+def write_series_csv(path: Path, found: dict, names: dict) -> None:
+    """Rewrite series.csv from the stations whose lookup succeeded, sorted so the
+    file is identical between runs regardless of the order stations were added."""
+    with path.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=SERIES_COLUMNS)
+        w.writeheader()
+        w.writerows(
+            {
+                "station_id": sid,
+                "ts_id": found[sid][key],
+                "series_name": names[key],
+                "parameter": "Rainfall",
+            }
+            for sid in sorted(found)
+            for key in names
+        )
+
+
 def load_or_fetch_series(
     client: KiwisClient, stations: list[dict], names: dict, gauge_dir: Path
 ) -> tuple[dict, dict]:
-    """series.csv maps station_id -> the two ts_ids. Reused on rerun like stations.json.
-    Returns ({station_id: {"tips": ts_id, "daily": ts_id}}, {station_id: error})."""
-    path = gauge_dir / "series.csv"
-    found, missing = {}, {}
-    if path.exists():
-        with path.open(newline="") as fh:
-            for row in csv.DictReader(fh):
-                key = next(k for k, v in names.items() if v == row["series_name"])
-                found.setdefault(row["station_id"], {})[key] = row["ts_id"]
-        return found, missing
+    """series.csv maps station_id -> the two ts_ids.
+    Returns ({station_id: {"tips": ts_id, "daily": ts_id}}, {station_id: reason}).
 
-    rows = []
-    for i, st in enumerate(stations, 1):
+    series.csv caches the lookup, but only for the stations where it succeeded, and
+    every station missing from it is looked up again. That matters because the
+    lookup is one request per station with no per-station file to mark it done: if a
+    single transient error were cached as "already looked up", the station would be
+    absent from every later run with nothing on disk recording why. Re-deriving
+    costs one request per unresolved station and keeps the exclusion list, the
+    report and the exit code true on every run.
+    """
+    path = gauge_dir / "series.csv"
+    found = read_series_csv(path, names)
+    missing: dict[str, str] = {}
+    todo = [st for st in stations if st["station_id"] not in found]
+    _log(f"  {len(found)} cached in series.csv, {len(todo)} to look up")
+
+    for i, st in enumerate(todo, 1):
         sid = st["station_id"]
+        prefix = f"  [{i}/{len(todo)}] {sid} {st['station_name']}"
         try:
-            ids = find_series(client, sid, names)
-        except (LookupError, RuntimeError) as e:
-            missing[sid] = str(e)
-            _log(f"  [{i}/{len(stations)}] {sid} {st['station_name']}: NO SERIES ({e})")
-            continue
-        found[sid] = ids
-        for key, ts_id in ids.items():
-            rows.append(
-                {
-                    "station_id": sid,
-                    "ts_id": ts_id,
-                    "series_name": names[key],
-                    "parameter": "Rainfall",
-                }
-            )
-        _log(
-            f"  [{i}/{len(stations)}] {sid} {st['station_name']}: tips={ids['tips']} daily={ids['daily']}"
-        )
-    with path.open("w", newline="") as fh:
-        w = csv.DictWriter(
-            fh, fieldnames=["station_id", "ts_id", "series_name", "parameter"]
-        )
-        w.writeheader()
-        w.writerows(rows)
+            found[sid] = find_series(client, sid, names)
+        except LookupError as e:
+            # The station genuinely lacks a series we need. A rerun will not change
+            # this; it needs a decision about the station, so say so rather than
+            # implying a retry will fix it.
+            missing[sid] = f"no required series: {e}"
+            _log(f"{prefix}: NO SERIES ({e})")
+        except RuntimeError as e:
+            # The API call itself failed after KiwisClient exhausted its retries.
+            # Transient, so the next run retries it automatically.
+            missing[sid] = f"lookup failed, will retry on rerun: {e}"
+            _log(f"{prefix}: LOOKUP FAILED, will retry on rerun ({e})")
+        else:
+            _log(f"{prefix}: tips={found[sid]['tips']} daily={found[sid]['daily']}")
+
+    if todo:
+        write_series_csv(path, found, names)
     return found, missing
+
+
+def skipped_row(source, sid, path, start, end, reason, raw_dir) -> dict:
+    """An expected file that was never requested, because the station has no series
+    ids. `status` is neither ok nor failed: nothing was downloaded, and retrying this
+    one file cannot help. Component 02 reads only `status == "ok"` rows, so these are
+    inert downstream while keeping the station and its cause visible in index.csv."""
+    return {
+        "source": source,
+        "station_id": sid,
+        "path": str(path.relative_to(raw_dir)),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "n_records": "",
+        "status": "skipped",
+        "error": reason[:200],
+        "retrieved_at": "",
+        "sha256": "",
+    }
 
 
 def fetch_window(client, source, sid, ts_id, label, start, end, path, raw_dir) -> dict:
@@ -251,7 +310,31 @@ def run(
     for i, st in enumerate(stations, 1):
         sid = st["station_id"]
         if sid not in series:
-            # RICK: should something get logged here?
+            # No ts_ids, so nothing for this station can be requested. Write a row
+            # per expected file anyway, with the cause, so the station cannot drop
+            # out of index.csv between runs and Component 02 can see the whole
+            # expected set rather than inferring it from a directory listing.
+            reason = no_series[sid]
+            for source, subdir, windows in (
+                ("gauge_tips", "tips", months),
+                ("gauge_daily", "daily", years),
+            ):
+                for label, start, end in windows:
+                    index.append(
+                        skipped_row(
+                            source,
+                            sid,
+                            gauge_dir / subdir / sid / f"{label}.json.gz",
+                            start,
+                            end,
+                            reason,
+                            raw_dir,
+                        )
+                    )
+            _log(
+                f"  [{i}/{len(stations)}] {sid} {st['station_name']}: "
+                f"{len(months) + len(years)} files not requested, {reason}"
+            )
             continue
         before = len([r for r in index if r["retrieved_at"]])
         for label, start, end in months:
@@ -327,6 +410,8 @@ def write_report(
     path, cfg, stations, no_series, index, failures, skipped, fetched, seconds
 ) -> None:
     ok = [r for r in index if r["status"] == "ok"]
+    never_requested = [r for r in index if r["status"] == "skipped"]
+    names_by_id = {st["station_id"]: st["station_name"] for st in stations}
     lines = [
         f"# Gauge ingestion report: {cfg['region']}",
         "",
@@ -341,7 +426,10 @@ def write_report(
         f"- stations in box: {len(stations)}",
         f"- stations with both series: {len(stations) - len(no_series)}",
         f"- stations with no usable series: {len(no_series)}",
-        f"- files expected: {len(index)}, ok: {len(ok)}, failed: {len(failures)}",
+        (
+            f"- files expected: {len(index)}, ok: {len(ok)},"
+            f" failed: {len(failures)}, never requested: {len(never_requested)}"
+        ),
         f"- fetched this run: {fetched}, already on disk: {skipped}",
         f"- tip records on disk: {sum(int(r['n_records']) for r in ok if r['source'] == 'gauge_tips'):,}",
         f"- daily records on disk: {sum(int(r['n_records']) for r in ok if r['source'] == 'gauge_daily'):,}",
@@ -349,7 +437,23 @@ def write_report(
         "## Stations with no usable series (excluded, with cause)",
         "",
     ]
-    lines += [f"- {sid}: {why}" for sid, why in no_series.items()] or ["- none"]
+    if no_series:
+        lines += [
+            (
+                f"{len(no_series)} stations have no series ids, so none of their "
+                f"{len(never_requested)} expected files were requested. They are in "
+                "index.csv with status `skipped`, not readable by Component 02."
+            ),
+            "",
+            "Rerun to retry the ones marked *will retry*; those are transient API",
+            "failures. A station with *no required series* will not change on a rerun",
+            "and needs a decision about the station itself.",
+            "",
+        ]
+    lines += [
+        f"- {sid} {names_by_id.get(sid, '')}: {why}"
+        for sid, why in sorted(no_series.items())
+    ] or ["- none"]
     # Stations whose every file came back empty: real API answers (status ok), stored
     # and indexed, but a reader of this report should not have to compute it.
     by_station = {}
@@ -357,7 +461,6 @@ def write_report(
         by_station.setdefault(r["station_id"], []).append(int(r["n_records"]))
     silent = sorted(sid for sid, c in by_station.items() if sum(c) == 0)
     partial = sorted(sid for sid, c in by_station.items() if 0 in c and sum(c) > 0)
-    names = {st["station_id"]: st["station_name"] for st in stations}
     lines += [
         "",
         "## Stations with no records in the period",
@@ -367,7 +470,7 @@ def write_report(
         "dead or absent is Component 02's job.",
         "",
     ]
-    lines += [f"- {sid} {names.get(sid, '')}" for sid in silent] or ["- none"]
+    lines += [f"- {sid} {names_by_id.get(sid, '')}" for sid in silent] or ["- none"]
     lines += [
         "",
         f"{len(partial)} further stations have some empty months but records elsewhere.",
