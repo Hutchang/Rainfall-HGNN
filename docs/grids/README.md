@@ -1,16 +1,35 @@
 # Satellite and radar adapter
 
-This implements the satellite/radar adapter Oliver accepted in the 10 September Teams
-discussion. The repository still calls training and predictions Component 06; that is
-a separate implementation. This adapter covers the grid reshaping portion of
+This implements the grid-input portion of the satellite/radar work Oliver accepted in
+the 10 September Teams discussion. This adapter covers the grid reshaping portion of
 [02](../requirements/02_CANONICAL_DATA_REQUIREMENTS.md) and supplies the node-layer
 interface described in [04](../requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md).
 
 It reads the trusted, team-produced Australian pickle exports, validates their
 coordinates and times, and writes the existing standard grid tables. It does not fetch
 source data, infer satellite coordinates, change rainfall units, build graph edges,
-select evaluation splits or train the model. The Notion task text was not accessible
-during implementation; reconcile any additional acceptance criteria with the live board.
+select evaluation splits or train the model.
+
+## Scope checked in Teams and Notion — 10 September 2026
+
+The native Notion app in **Kiran McLernon's Space / Rainflow** was checked directly.
+[Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) assigns **Oliver**
+to **06 — Model Training, Prediction and Baselines**. Its checklist includes adapting
+the model for radar and satellite, the prediction schema and checker, training, IDW,
+network mean, and comparison. Its direct dependencies are 03 (Kiran) and 04 (Angus).
+
+The [D06 card](https://www.notion.so/3cede437d58a80d3a1b5e6574b31fdf2) is titled
+“Deliverable D06 - Open”, remains To do, has Rick Honda in its Person property, and
+links to the repository's training/prediction requirements. That Person property
+conflicts with the explicit Oliver ownership in Sprint One; it is not evidence that
+Rick has taken over implementation.
+
+In Teams on 10 September, Rick's 20:06 list called 06 “Satellite & Radar adapter
+(backlog)”; Oliver accepted that work at 20:48. Treat this as the immediate requested
+slice, while keeping the broader written 06 deliverable visible. This grid adapter
+alone does **not** complete the Notion checklist. The local `feature/06-model-training`
+implementation handles training/predictions/baselines and the corresponding model
+input adapter; the two branches are separate local handoffs pending integration.
 
 ## Run
 
@@ -110,8 +129,9 @@ an existing destination.
   file has not been verified. Do not manufacture it from node count or an assumed grid.
 - **Angus/graph owner:** approved fusion timeline, missing-modality treatment, topology
   and successful attachment to the actual fold graphs.
-- **Rick/integration:** reconcile the task numbering and integrate the adapter into the
-  experiment workflow. A full training run is separate acceptance evidence.
+- **Rick/integration:** integrate the adapter and model runner into the experiment
+  workflow, and reconcile the D06 Person field and Teams shorthand with Sprint One.
+  A full training run is separate acceptance evidence.
 - **Scientific review:** the earlier source investigation identified gauge merging in
   the inherited Rainfields `prcp-m15` stream. Holding a gauge out of the graph does not
   remove information already blended into that input. Confirm the supplied file's
