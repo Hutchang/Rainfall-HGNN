@@ -32,6 +32,23 @@ from src.canonical.gauge.verify import verify_days
 
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S%z"
 
+STATION_STRING_COLUMNS = (
+    "station_id",
+    "station_no",
+    "name",
+    "colocated_with",
+    "exclusion_reason",
+)
+STATION_NUMERIC_COLUMNS = (
+    "latitude",
+    "longitude",
+    "hours_observed",
+    "coverage",
+    "days_verified",
+    "days_rejected",
+    "tip_increment_mm",
+)
+
 
 def load_gauge_hourly(path: Path) -> pd.DataFrame:
     """The loader every downstream component should use."""
@@ -41,11 +58,24 @@ def load_gauge_hourly(path: Path) -> pd.DataFrame:
 
 
 def load_stations(path: Path) -> pd.DataFrame:
-    return pd.read_csv(
+    """The loader every downstream component should use for the station table.
+
+    `keep_default_na=False` is what keeps an empty `exclusion_reason` as "" instead of
+    NaN, but it also stops pandas inferring a number for any column holding a blank
+    cell, so the numeric columns are coerced back explicitly using errors="coerce". Without that,
+    `tip_increment_mm` arrives as strings the moment one station has no tips, which is
+    the normal case: a silent station has no increment to record.
+    """
+    df = pd.read_csv(
         path,
-        dtype={"station_id": str, "station_no": str, "colocated_with": str},
+        dtype=dict.fromkeys(STATION_STRING_COLUMNS, str),
         keep_default_na=False,
     )
+    for col in STATION_NUMERIC_COLUMNS:
+        if col in df.columns:
+            # convert values that cant be parsed as numbers into NaN
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
 
 def git_revision() -> str:

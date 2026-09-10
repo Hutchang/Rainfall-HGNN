@@ -416,6 +416,34 @@ def test_written_tables_round_trip_with_string_ids_and_utc_offsets(tmp_path):
     assert back["station_id"].iloc[0] == "0012" and back["colocated_with"].iloc[0] == ""
 
 
+def test_load_stations_keeps_numbers_numeric_and_blanks_empty(tmp_path):
+    """`keep_default_na=False` is what makes an empty exclusion_reason "" (empty string)
+    instead of NaN, but it also suppresses numeric inference on any column holding a blank cell.
+
+    For example, if a station (gauge) doesn't have a tip increment to record in one
+    period, the blank cell becomes "" instead of NaN, but the whole numeric column
+    (thanks to keep_default_na = False) gets converted to a string
+    """
+    p = tmp_path / "stations.csv"
+    p.write_text(
+        "station_id,station_no,name,latitude,longitude,hours_observed,coverage,"
+        "days_verified,days_rejected,tip_increment_mm,colocated_with,use_in_study,"
+        "exclusion_reason\n"
+        "0012,563083,Alpha,-33.8,151.1,17000,0.9705,700,10,0.5,,True,\n"
+        "0013,563083,Beta,-33.6,150.2,0,0.0,0,0,,,False,no records in period\n"
+    )
+    st = load_stations(p)
+    assert st["station_id"].tolist() == ["0012", "0013"]  # leading zero survives
+    assert st["use_in_study"].dtype == bool
+    assert st[st["use_in_study"]]["station_id"].tolist() == ["0012"]
+    for col in ("latitude", "longitude", "coverage", "hours_observed"):
+        assert pd.api.types.is_numeric_dtype(st[col]), col
+    assert pd.api.types.is_numeric_dtype(st["tip_increment_mm"])
+    assert st["tip_increment_mm"].iloc[0] == 0.5
+    assert pd.isna(st["tip_increment_mm"].iloc[1])  # no tips, so no increment
+    assert st["exclusion_reason"].tolist() == ["", "no records in period"]
+
+
 def test_period_from_index_fails_loudly_when_there_are_no_tip_rows():
     index = pd.DataFrame(
         [("gauge_daily", "1", "d", "ok", "")],

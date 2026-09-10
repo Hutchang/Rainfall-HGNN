@@ -46,7 +46,12 @@ Rows exist for every station that had at least one verified day (152 stations), 
 the `use_in_study` ones. Filter by `stations.csv` for the study set.
 
 Use `src.canonical.gauge.build.load_gauge_hourly(path)` and `load_stations(path)` rather
-than `read_csv` directly; they apply the string-id and UTC conventions.
+than `read_csv` directly. They apply the string-id and UTC conventions, and
+`load_stations` also undoes a trap: `keep_default_na=False` is what keeps an empty
+`exclusion_reason` as `""` instead of `NaN`, but it suppresses numeric inference on any
+column with a blank cell, so a plain `read_csv` hands back `tip_increment_mm` as strings
+as soon as one station has no tips. The loader coerces the numeric columns back and
+leaves `use_in_study` a real bool for Component 03 to filter on.
 
 ### `stations.csv`
 
@@ -57,7 +62,7 @@ than `read_csv` directly; they apply the string-id and UTC conventions.
 | `hours_observed` | rows in `gauge_hourly.csv` for this station |
 | `coverage` | `hours_observed` divided by the judgeable window (17,496 hours for 2021-2022) |
 | `days_verified`, `days_rejected` | rain days that passed, and that failed as mismatch or implausible |
-| `tip_increment_mm` | millimetres per tip, inferred as the smallest positive counted record (BoM's metadata does not state it). 0.5 at 144 stations, 0.2 at 4, 0.1 at 3, 1.0 at 1 |
+| `tip_increment_mm` | millimetres per tip, inferred as the smallest positive counted record (BoM's metadata does not state it). 0.5 at 144 stations, 0.2 at 4, 0.1 at 3, 1.0 at 1; blank where the station recorded no positive tip |
 | `colocated_with` | ids of other active stations within `colocated_m` (100 m). Not an exclusion: Component 03 keeps such pairs in the same fold |
 | `use_in_study` | passed every station rule |
 | `exclusion_reason` | why not, else empty |

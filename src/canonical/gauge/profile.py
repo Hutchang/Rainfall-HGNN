@@ -15,6 +15,7 @@ import yaml
 
 from src.canonical.config import load_config
 from src.canonical.gauge import raw
+from src.canonical.gauge.build import load_stations
 from src.canonical.gauge.verify import verify_days
 
 matplotlib.use("Agg")
@@ -393,7 +394,7 @@ def fig_stations_after(
     path = standard_dir / "stations.csv"
     if not path.exists():
         return None
-    st = pd.read_csv(path, dtype={"station_id": str}, keep_default_na=False)
+    st = load_stations(path)
     reason = (
         st["exclusion_reason"]
         .str.split(":")
@@ -557,7 +558,7 @@ def main() -> None:
     ]
     after = fig_stations_after(Path(cfg["output_dir"]), bounds, out)
     if after is not None:
-        n_use = int((after["use_in_study"].astype(str) == "True").sum())
+        n_use = int(after["use_in_study"].sum())
         lines += [
             "## After the station rules",
             "",
