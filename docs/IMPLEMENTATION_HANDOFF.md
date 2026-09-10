@@ -49,9 +49,9 @@ second; satellite is blocked.
 
 ## Integration state (2026-09-07)
 
-Reviewed on `integration/sydney-gauge-baseline` at `13ac827`. Suite: **29 passed,
-3 failed, 2 skipped, 7 xfailed** — the three failures are deliberate and are described
-in defect 1.
+Reviewed on `integration/sydney-gauge-baseline`, now at `3c2a450`. Suite: **29 passed,
+2 failed, 2 skipped, 7 xfailed** — both failures are deliberate and are described in
+defect 1.
 
 Work finished but not merged:
 
@@ -86,24 +86,50 @@ Work finished but not merged:
      strongest incoming edge of 1.0, the weakest at 0.629. Eq. 1 requires 188 of 188.
 
    `test_per_node_normalisation_scales_every_node_by_its_own_neighbourhood` asserts the
-   property directly, because the existing median check cannot detect either defect — a
-   weight normalised by the wrong endpoint is still O(1). It fails on `nan` today, will
+   property directly, because a median check cannot detect either defect — a weight
+   normalised by the wrong endpoint is still O(1). It fails on `nan` today, will
    fail at 86% once the guard is restored, and passes when the graph is built directed.
 
    **The zero guard is deliberately not applied here.** Component 04's owner is
    rebuilding this edge construction as a directed graph as of 2026-09-07, which fixes
-   both defects, and a one-line change to the same function would only conflict. The
-   three failures stand as the specification for that work.
+   both defects, and a one-line change to the same function would only conflict. The two
+   failures stand as the specification for that work.
 
-2. **A partial `series.csv` silently drops stations from every later run.** Confirmed by
-   experiment on 2026-09-07: `stations.json` held 184 stations, `series.csv` held 2 (left
-   by an earlier `--limit` run), and station `49570554` APPIN (INGHAMS) TBRG was skipped
-   with no index row, no report line, `report.md` claiming "stations with both series: 3"
-   and "no usable series: 0", and exit code 0. `load_or_fetch_series` returns early
-   whenever `series.csv` exists, with an empty `missing` map, and `run()` then skips
-   unknown stations with a bare `continue`. This breaks the rule that no station may
-   disappear silently, and it defeats the non-zero exit that `740c6ba`'s revised rule 3
-   promises for a station lacking a required series. Owner: Component 01.
+   **Still owed: the inherited-baseline fingerprint.**
+   `04_GRAPH_SAMPLE_REQUIREMENTS.md:146-149` requires a regression test pinning node
+   counts, edge counts and weights against a known `train_fused.py` run, so that a change
+   to shared graph code cannot move the inherited baseline unnoticed. The test that used
+   to sit here only asserted `median(weights) < 1e-3`, which the directed rebuild would
+   still satisfy while changing the edge count from 598 to 940 — so it gave no real
+   protection and was removed on 2026-09-07. The fingerprint doc 04 asks for has not been
+   written. Owner: Component 04.
+
+2. **A partial `series.csv` silently dropped stations — fixed 2026-09-10.** The series
+   lookup is one request per station with no per-station file to mark it done, so
+   `series.csv` was used as a single completion flag for every station. Any station
+   missing from it — one transient `HTTP 504` during the lookup was enough — was skipped
+   by `run()` with a bare `continue` on every later run: no index row, no log line, no
+   report entry, and `exit 0`, because the in-memory failure map was rebuilt empty from
+   the cache. `report.md` then recomputed "stations with both series" as
+   `len(stations) - len(no_series)` and claimed the full count. Confirmed by experiment
+   on 2026-09-07: station `49570554` APPIN (INGHAMS) TBRG was present in `stations.json`
+   and absent from everything else, with the run reporting success.
+
+   `series.csv` now caches only stations where every required series was found, and any
+   station missing from it is looked up again, so a transient failure self-heals on the
+   next run at a cost of one request per unresolved station. A station that still has no
+   series ids gets an index row per expected file with `status = "skipped"` and the cause
+   in `error`, so it cannot leave `index.csv` between runs; Component 02 selects
+   `status == "ok"` and is unaffected. `report.md` separates transient failures ("will
+   retry on rerun") from permanent ones ("no required series") so the reader knows
+   whether a rerun or a decision is needed, and the run still exits non-zero while any
+   station is unresolved. `series.csv` keeps its four documented columns and is only
+   rewritten when a lookup resolved something.
+
+   Verified: the five new tests in `tests/test_ingestion_gauge.py` fail against the
+   previous implementation and pass against this one, the nine existing tests pass
+   unchanged, and a live three-station run now fetches APPIN's 26 files instead of
+   skipping it, with a rerun making no requests and leaving `series.csv` byte-identical.
 
 3. **The 02→03 seam will reject every eligible station.** `src/study/schema.py`'s
    `StationRecord` uses pydantic `strict=True`. An empty `exclusion_reason` read from
