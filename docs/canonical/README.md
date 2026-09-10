@@ -102,13 +102,21 @@ and are not evidence the gauge observed that hour.
 For each station and BoM rain day, 09:00 to 09:00 local standard time (BoM serves a
 fixed `+10:00` offset year-round, so this is always 23:00 UTC to 23:00 UTC):
 
-- sum the counted tips in `(start, end]`;
+- sum the counted tips in `[start, end)`;
 - compare with BoM's daily total for that day;
 - if they agree within **one tip increment** (per station) the day is **verified**: all
   24 hours are written, tips summed by UTC hour, `0.0` where none fell;
 - otherwise the day is **mismatch** and nothing is written;
 - if BoM has no usable total (codes -1, 210, 254, or no record) the day is
   **unverifiable** and nothing is written.
+
+The rain day is half-open, so a tip at exactly 09:00:00 local opens the day that ends 24
+hours later. It has to: the hourly grid is 24 buckets labelled by their start and
+covering `[t, t+1h)`, and a `(start, end]` day spans 25 of them, so a boundary tip would
+verify against one day and land in the next day's rows — or be dropped, if that day did
+not verify. The invariant this buys is that **the 24 hours written for a verified day sum
+to the total that was checked against BoM**, which
+`test_every_verified_days_hours_sum_to_its_verified_total` pins.
 
 Only rain days fully inside the period are judged, so the period's first 9 and last 15
 local hours are never written.

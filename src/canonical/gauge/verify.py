@@ -16,7 +16,8 @@ When in doubt, reject: a wrongly verified day puts confident zeros into the mode
 a wrongly rejected day only makes it slightly blinder.
 
 Timestamps in and out are timezone-aware UTC. BoM's fixed +10:00 offset means the
-rain-day boundary is always 23:00 UTC of the previous calendar day.
+rain-day boundary is always 23:00 UTC of the previous calendar day. The rain day is
+half-open, [start, end); see `rain_day_end` for why it has to be.
 """
 
 from datetime import date
@@ -40,25 +41,21 @@ DAY_COLUMNS = [
 
 
 def rain_day_end(ts_utc: pd.Series) -> pd.Series:
-    """The UTC timestamp of the 09:00-local rain-day boundary at or after each time.
-    
-    BoM records rain-days from 09:00 -> 09:00, not midnight --> midnight. Every tip needs 
-    a label saying which rain day it falls in and we've chosen the rain day's end.
+    """The UTC timestamp of the 09:00-local boundary that closes each time's rain day.
 
-    Pandas can only round to natural boundaries, so .ceil("D") 'round up to the next
-    day' will round to midnight, not 09:00.
+    BoM records rain days 09:00 -> 09:00, not midnight -> midnight. Every tip needs a
+    label saying which rain day it falls in, and we label by the day's end.
 
-    This function shifts back 9 hours so pandas can round correctly and 09:00 will
-    correctly map to a midnight, or a new day. 
-    
-    A tip at exactly 09:00:00 belongs to the day ending then: the day is (start, end]."""
+    Pandas only rounds to natural boundaries, so shift back 9 hours, floor to the day,
+    then advance a whole day and add the 9 hours back.
+
+    The rain day is half-open, [start, end): a tip at exactly 09:00:00 OPENS the day
+    that ends 24 hours later. It has to. The hourly grid below is 24 buckets labelled
+    by their start and covering [t, t+1h), and a (start, end] day spans 25 of them, so
+    a boundary tip would verify against one day and then land in the next day's grid.
+    """
     local = ts_utc + LOCAL_OFFSET
     shifted = local - pd.Timedelta(hours=RAIN_DAY_END_HOUR)
-
-    # days = 1 offset to advance to the next day boundary. We take the floor of the 
-    # current day (shifted 9 hours back) and THEN advance by a day, putting us in TODAY's
-    # bucket, not tomorrow's
-
     end_local = shifted.dt.floor("D") + pd.Timedelta(days=1, hours=RAIN_DAY_END_HOUR)
     return end_local - LOCAL_OFFSET
 

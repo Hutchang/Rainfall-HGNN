@@ -42,12 +42,12 @@ def daily_df(rows):
 
 # ---------------------------------------------------------------- rain day and hours
 def test_rain_day_boundary_is_0900_local_exclusive_at_end():
-    """The day is [start, end), so a tip at exactly 09:00:00 opens the day ending 24 hours
-    later. It has to, because the hourly grid is
-    24 buckets labelled by their start and covering [t, t+1h), whereas a (start, end] day spans
-    25 of those, so its boundary tip verifies one day and lands in the next one's grid
-    
-    See `rain_day_end` in canonical/gauge/verify.py docstring. ."""
+    """The day is [start, end), so a tip at exactly 09:00:00 opens the day ending 24
+    hours later. It has to, because the hourly grid is 24 buckets labelled by their
+    start and covering [t, t+1h), whereas a (start, end] day spans 25 of those, so its
+    boundary tip verifies one day and lands in the next one's grid.
+
+    See the `rain_day_end` docstring in src/canonical/gauge/verify.py."""
     ts = pd.Series(
         pd.to_datetime(
             ["2022-01-05 08:59:59", "2022-01-05 09:00:00", "2022-01-05 09:00:01"]
@@ -450,6 +450,54 @@ def test_load_stations_keeps_numbers_numeric_and_blanks_empty(tmp_path):
     assert st["tip_increment_mm"].iloc[0] == 0.5
     assert pd.isna(st["tip_increment_mm"].iloc[1])  # no tips, so no increment
     assert st["exclusion_reason"].tolist() == ["", "no records in period"]
+
+
+# ---------------------------------------------------------------- the core invariant
+def test_every_verified_days_hours_sum_to_its_verified_total(cfg):
+    """The invariant the component exists to provide: an hour is written only when an
+    independent BoM total backs it, so a verified day's 24 rows must add up to the tip
+    total that was checked against BoM.
+
+    Tips at exactly 09:00:00 local are the case that breaks this if the rain day and
+    the hourly grid disagree by an hour: the day is [start, end) and the grid is 24
+    buckets covering [t, t+1h), so a boundary tip must open the day whose grid it
+    lands in. Before that was true, such a tip verified one day and was written into
+    the next, or was dropped outright if the next day did not verify.
+    """
+    tips = tips_df(
+        [
+            ("s", "2022-01-05 09:00:00", 0.5, 10),  # opens the day ending 01-06 09:00
+            ("s", "2022-01-05 23:30:00", 0.5, 10),  # mid-day
+            ("s", "2022-01-06 08:59:59", 0.5, 10),  # closes that same day
+            ("s", "2022-01-06 09:00:00", 0.5, 10),  # opens the following day
+        ]
+    )
+    daily = daily_df(
+        [
+            ("s", "2022-01-06 09:00:00", 1.5, 10),
+            ("s", "2022-01-07 09:00:00", 0.5, 10),
+        ]
+    )
+    hourly, days, _ = verify_days(
+        tips,
+        daily,
+        cfg["quality"],
+        cfg["plausibility"],
+        date(2022, 1, 1),
+        date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
+    )
+    verified = days[days["verdict"] == "verified"]
+    assert len(verified) == 2, days[["day_end", "tip_mm", "daily_mm", "verdict"]]
+    for row in verified.itertuples():
+        window = hourly[
+            (hourly["timestamp"] >= row.day_end - pd.Timedelta(hours=24))
+            & (hourly["timestamp"] < row.day_end)
+        ]
+        assert len(window) == 24, row.day_end
+        assert window["rainfall_mm"].sum() == pytest.approx(row.tip_mm), row.day_end
+    # and nothing leaked out of the two days altogether
+    assert hourly["rainfall_mm"].sum() == pytest.approx(2.0)
 
 
 def test_default_increment_is_configured_not_hard_coded(cfg):
