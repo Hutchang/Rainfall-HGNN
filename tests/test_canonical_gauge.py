@@ -13,7 +13,7 @@ from src.canonical.config import load_config
 from src.canonical.gauge import raw
 from src.canonical.gauge.build import load_gauge_hourly, load_stations
 from src.canonical.gauge.stations import build_station_table
-from src.canonical.gauge.verify import rain_day_end, verify_days
+from src.canonical.gauge.verify import judgeable_hours, rain_day_end, verify_days
 
 CONFIG = Path(__file__).parent.parent / "config" / "canonical" / "standard.yaml"
 SAMPLE = Path(__file__).parent / "data" / "ingestion"
@@ -498,6 +498,16 @@ def test_every_verified_days_hours_sum_to_its_verified_total(cfg):
         assert window["rainfall_mm"].sum() == pytest.approx(row.tip_mm), row.day_end
     # and nothing leaked out of the two days altogether
     assert hourly["rainfall_mm"].sum() == pytest.approx(2.0)
+
+
+def test_judgeable_hours_comes_from_the_period_not_the_data():
+    """The coverage denominator. Deriving it from the rows that happened to verify
+    lets one station's outage inflate every other station's coverage, and makes two
+    runs over the same period incomparable."""
+    assert judgeable_hours(date(2021, 1, 1), date(2022, 12, 31)) == 17_496
+    assert judgeable_hours(date(2022, 1, 1), date(2022, 1, 31)) == 24 * 30
+    # a period too short to hold one complete rain day judges nothing
+    assert judgeable_hours(date(2022, 1, 1), date(2022, 1, 1)) == 0
 
 
 def test_default_increment_is_configured_not_hard_coded(cfg):

@@ -28,7 +28,7 @@ import pandas as pd
 from src.canonical.config import load_config
 from src.canonical.gauge import raw
 from src.canonical.gauge.stations import build_station_table
-from src.canonical.gauge.verify import verify_days
+from src.canonical.gauge.verify import judgeable_hours, verify_days
 
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S%z"
 
@@ -116,7 +116,14 @@ def run(cfg: dict) -> dict:
         end,
         default_increment=cfg["default_tip_increment_mm"],
     )
-    period_hours = int(hourly["timestamp"].nunique())
+    # The coverage denominator comes from the period, not from the hours that happened
+    # to verify, so one station's outage cannot shift another station's coverage.
+    period_hours = judgeable_hours(start, end)
+    if period_hours == 0:
+        raise ValueError(
+            f"period {start} to {end} holds no complete BoM rain day, so no hour can "
+            "be verified; check the start and end range in index.csv"
+        )
     st = build_station_table(stations, hourly, days, increments, period_hours, cfg)
 
     # ---- write, with the two conventions
@@ -168,8 +175,9 @@ def write_report(
         f"- config: `{cfg['_path']}`; code revision `{git_revision()}`; built {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')} in {seconds:.0f} s",
         f"- source: `{cfg['raw_dir']}` (Component 01 output)",
         (
-            f"- period: {start} to {end}; judgeable window {period_hours:,} hours per station "
-            "(rain days fully inside the period; the first 9 and last 15 local hours are never written)"
+            f"- period: {start} to {end}; judgeable window {period_hours:,} hours per "
+            "station, derived from the period (rain days fully inside it; the first 9 "
+            "and last 15 local hours are never written)"
         ),
         f"- quality codes counted as tips: {cfg['quality']['tips']['count']}; ignored: {cfg['quality']['tips']['ignore']}; gap markers: {cfg['quality']['tips']['gap']}",
         f"- daily totals trusted: {cfg['quality']['daily']['trusted']}; dry: {cfg['quality']['daily']['dry']}; unverifiable: {cfg['quality']['daily']['unverifiable']}",

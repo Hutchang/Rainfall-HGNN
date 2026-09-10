@@ -119,7 +119,9 @@ to the total that was checked against BoM**, which
 `test_every_verified_days_hours_sum_to_its_verified_total` pins.
 
 Only rain days fully inside the period are judged, so the period's first 9 and last 15
-local hours are never written.
+local hours are never written. That leaves 17,496 judgeable hours for 2021-2022, and
+that figure — not 17,520, and not the number of hours that happened to verify — is the
+`coverage` denominator.
 
 ### 3. Plausibility caps
 

@@ -60,6 +60,37 @@ def rain_day_end(ts_utc: pd.Series) -> pd.Series:
     return end_local - LOCAL_OFFSET
 
 
+def judgeable_window(start: date, end: date) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """First and last rain-day end whose full 24 hours lie inside [start, end], where
+    the period is read as LOCAL dates.
+
+    The period's first 9 and last 15 local hours belong to rain days that straddle a
+    period boundary, so they are never judged and never written.
+
+    Local framing has one visible consequence: the earliest written hour is 09:00 local
+    on `start`, which is 23:00 UTC on the day before, so a report grouped by UTC year
+    shows a single stray hour per station in the year before the period.
+    """
+    shift = (
+        pd.Timedelta(hours=24) - LOCAL_OFFSET + pd.Timedelta(hours=RAIN_DAY_END_HOUR)
+    )
+    first = pd.Timestamp(start, tz="UTC") + shift
+    last = pd.Timestamp(end, tz="UTC") + shift - pd.Timedelta(days=1)
+    return first, last
+
+
+def judgeable_hours(start: date, end: date) -> int:
+    """Hours a station could hold in `gauge_hourly` for this period: the denominator
+    behind `coverage`.
+
+    Derived from the period, never from the rows that happened to verify, so one
+    station's outage cannot shift another station's coverage and two runs over the
+    same period stay comparable.
+    """
+    first, last = judgeable_window(start, end)
+    return 24 * max(0, (last - first).days + 1)
+
+
 def tip_increments(tips: pd.DataFrame) -> pd.Series:
     """Millimetres per tip, per station: the smallest positive counted value seen.
     BoM's series metadata does not state it (see docs/ingestion/README.md)."""
@@ -120,19 +151,7 @@ def verify_days(
     ]
 
     # ---- judge every day that has a daily record or tips, inside the period
-    first_end = (
-        pd.Timestamp(start, tz="UTC")
-        + pd.Timedelta(hours=24)
-        - LOCAL_OFFSET
-        + pd.Timedelta(hours=RAIN_DAY_END_HOUR)
-    )
-    last_end = (
-        pd.Timestamp(end, tz="UTC")
-        + pd.Timedelta(hours=24)
-        - LOCAL_OFFSET
-        + pd.Timedelta(hours=RAIN_DAY_END_HOUR)
-        - pd.Timedelta(days=1)
-    )
+    first_end, last_end = judgeable_window(start, end)
     days = d.join(by_day, how="outer").reset_index()
     days = days[(days["day_end"] >= first_end) & (days["day_end"] <= last_end)].copy()
     days["n_tips"] = days["n_tips"].fillna(0).astype(int)
