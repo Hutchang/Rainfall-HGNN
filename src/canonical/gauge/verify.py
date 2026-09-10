@@ -35,6 +35,8 @@ DAY_COLUMNS = [
     "tip_mm",
     "daily_mm",
     "daily_quality",
+    "max_record_mm",  # largest single record: the evidence behind the record cap
+    "max_hourly_mm",  # largest hour: the evidence behind the hourly cap
     "verdict",  # verified | mismatch | unverifiable | no_daily_record | implausible
     "reason",  # for implausible: record>max | hour>max | day>max
 ]
@@ -196,7 +198,7 @@ def verify_days(
         default="",
     )
     days = (
-        days[DAY_COLUMNS + ["tip_increment_mm"]]
+        days[[*DAY_COLUMNS, "tip_increment_mm"]]
         .sort_values(["station_id", "day_end"])
         .reset_index(drop=True)
     )

@@ -69,9 +69,14 @@ leaves `use_in_study` a real bool for Component 03 to filter on.
 
 ### `days.csv`
 
-One row per station rain-day inside the period: tips counted, their sum, BoM's total and
-its quality code, the largest single record and largest hour, the verdict, and for
-implausible days which cap fired. This is the evidence behind every hour written or not.
+One row per station rain-day inside the period: `station_id`, `day_end` (UTC timestamp
+of the 09:00-local boundary), `n_tips`, `tip_mm`, `daily_mm`, `daily_quality`,
+`max_record_mm`, `max_hourly_mm`, `verdict`, `reason` (which cap fired, for implausible
+days) and `tip_increment_mm`.
+
+This is the evidence behind every hour written or withheld. The two maxima are the values
+the plausibility caps actually fired on, so an `implausible` verdict can be checked
+without rerunning the build.
 
 ## The rules, in the order they apply
 

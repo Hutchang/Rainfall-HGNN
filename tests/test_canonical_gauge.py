@@ -525,6 +525,26 @@ def test_default_increment_is_configured_not_hard_coded(cfg):
     assert cfg["default_tip_increment_mm"] == 0.5
 
 
+def test_days_table_carries_the_evidence_for_each_cap(cfg):
+    """days.csv is the evidence behind every hour written or withheld, so the values
+    the plausibility caps fired on have to be in it."""
+    tips = tips_df([("s", "2022-01-05 12:00:00", 5.0, 10)])
+    daily = daily_df([("s", "2022-01-06 09:00:00", 5.0, 10)])
+    _, days, _ = verify_days(
+        tips,
+        daily,
+        cfg["quality"],
+        cfg["plausibility"],
+        date(2022, 1, 1),
+        date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
+    )
+    assert {"max_record_mm", "max_hourly_mm"} <= set(days.columns)
+    row = days.iloc[0]
+    assert row["verdict"] == "implausible"  # BoM agrees, but 5 mm is not one tip
+    assert row["max_record_mm"] == 5.0 and row["max_hourly_mm"] == 5.0
+
+
 def test_period_from_index_fails_loudly_when_there_are_no_tip_rows():
     index = pd.DataFrame(
         [("gauge_daily", "1", "d", "ok", "")],

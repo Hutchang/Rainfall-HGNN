@@ -212,9 +212,17 @@ def write_report(
         "",
         "## Hours",
         "",
-        f"- rows in gauge_hourly.csv: {len(hourly):,} across {hourly['station_id'].nunique()} stations (all stations with verified days, usable or not)",
-        f"- rows at use_in_study stations: {int(hourly['station_id'].isin(usable['station_id']).sum()):,}",
-        f"- wet hours: {int((hourly['rainfall_mm'] > 0).sum()):,}; max hourly value {hourly['rainfall_mm'].max():.1f} mm",
+        f"- rows in gauge_hourly.csv: {len(hourly):,} across "
+        f"{hourly['station_id'].nunique()} stations (all stations with verified days, "
+        "usable or not)",
+    ]
+    per_year = hourly.groupby(hourly["timestamp"].dt.year).size()
+    lines += [f"  - {y}: {n:,}" for y, n in per_year.items()]
+    lines += [
+        f"- rows at use_in_study stations: "
+        f"{int(hourly['station_id'].isin(usable['station_id']).sum()):,}",
+        f"- wet hours: {int((hourly['rainfall_mm'] > 0).sum()):,}; "
+        f"max hourly value {hourly['rainfall_mm'].max():.1f} mm",
         "",
         "## Excluded stations, with cause",
         "",
