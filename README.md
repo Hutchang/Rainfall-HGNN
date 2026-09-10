@@ -76,23 +76,22 @@ reading:
 
 ## Environment
 
-Python 3.13 is the recorded working environment. Create a fresh virtual environment and
-install the focused dependencies:
+Use the repository's locked uv environment. `pyproject.toml` currently requires Python
+3.14 or later and `uv.lock` records the resolved dependencies:
 
-```powershell
-py -3.13 -m venv .venv
-.venv\Scripts\python.exe -m pip install --upgrade pip
-.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-dev.txt
+```console
+uv sync --locked
 ```
 
-The default PyTorch package is suitable for CPU onboarding. Install the matching CUDA
-wheel from the official PyTorch index only when a component actually needs GPU work.
-Record the chosen build in run metadata.
+The macOS environment supports CPU onboarding. Prepare a separate Linux environment
+for Gadi; do not copy the macOS `.venv` or replace locked dependencies with ad-hoc pip
+installs. See the [training guide](docs/models/README.md) and
+[Gadi setup](docs/nci/README.md) for the Component 06 runner and CUDA compatibility checks.
 
 Run the current tests with:
 
-```powershell
-.venv\Scripts\python.exe -m pytest tests -q -rx
+```console
+uv run --locked python -m pytest tests -q -rx
 ```
 
 Some existing tests skip when the untracked legacy gauge data is absent. Each component

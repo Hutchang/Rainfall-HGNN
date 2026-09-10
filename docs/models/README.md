@@ -1,0 +1,263 @@
+# Model training and prediction
+
+Component 06 consumes the standard tables from Component 02, the released split and
+seed file from Component 03, and the graph samples from Component 04. It produces a
+single prediction table for the HGNN, IDW and network-mean methods. It does not fetch
+raw data, produce canonical data, choose station splits or rebuild graphs.
+
+The default path is the Sydney gauge-only baseline. The adapter also consumes the
+documented radar and satellite layers when the supplied Component 04 graphs contain
+them. No result from the
+legacy hand export is used. The small synthetic test fixture checks software behaviour;
+its metrics are not rainfall research results.
+
+## Task 06 scope checked in the native Notion app
+
+On 10 September 2026, Rainflow's
+[Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) still assigned
+**Oliver** to **06 — Model Training, Prediction and Baselines**. The checklist includes
+radar/satellite model support, the prediction schema and checker, GNN training, IDW,
+network mean, and comparison. The direct dependencies are Kiran's 03 splits and Angus's
+04 graphs. Rick's 20:06 Teams message on the same day called the immediate 06 item
+“Satellite & Radar adapter”; Oliver accepted that slice at 20:48.
+
+The [D06 card](https://www.notion.so/3cede437d58a80d3a1b5e6574b31fdf2) remains To do
+and links to the training requirements, but lists Rick in its Person field. This is a
+coordination inconsistency with Sprint One, not verified reassignment. No shared card
+was edited or marked done from local test evidence.
+
+Current handoff needs:
+
+| Owner | Needed to validate the full deliverable |
+|---|---|
+| Myles / 02 | Published canonical gauge tables and report; he reported the data ready in Teams, but the shared artifact path/revision still needs to be supplied to this checkout |
+| Kiran / 03 | Released five-fold split and shared seed file that match those stations |
+| Angus / 04 | Validated train/validation/test graphs for all five folds, with identities, exact hours, physical gauge units, fixed graph bugs and approved sensor attachment |
+| Amos / 01 | Accessible radar/satellite source files, matching coordinates, units, time convention and gauge-correction evidence; satellite coordinates remain unverified |
+| Rick / integration | Integrate the component branches and configure the experiment workflow; reconcile the board's Person field |
+
+The independent software work can be tested with the documented synthetic sample.
+Real-data acceptance depends on those actual artifacts, not merely an upstream branch
+or a message that implementation is ready.
+
+## Install and run
+
+Run commands from the repository root. Use the locked environment, which currently
+requires Python 3.14 or later, following the repository's dependency instructions in
+[AGENTS.md](../../AGENTS.md).
+
+```console
+uv sync --locked
+uv run --locked python -m src.models.run config/models/hgnn.yaml --check-inputs
+uv run --locked python -m src.models.run config/models/hgnn.yaml
+```
+
+The component boundary assigns implementation to `src/models/`, and the repository
+does not install `src` as an import root. The executable command is
+`python -m src.models.run`; the requirements entrypoint was corrected in this change.
+The existing top-level `models/gnn.py` remains the inherited model implementation.
+
+The YAML supplies paths to the published inputs:
+
+| Key | Input |
+|---|---|
+| `gauge_file` | `database/standard/gauge_hourly.csv` |
+| `stations_file` | `database/standard/stations.csv` |
+| `split_file` | `config/splits/sydney_5fold.json` |
+| `seeds_file` | `config/seeds.yaml`, containing `model_seed` |
+| `graphs_dir` | `database/graphs/gauge_baseline/fold-<i>/{train,validation,test}.pt` |
+
+Paths resolve from the working directory, normally the repository root. Graphs are
+trusted team-produced PyG `HeteroData` objects saved by Component 04; use only the
+documented types and do not load arbitrary downloaded pickle files. Each graph must
+retain `station_ids`, UTC `timestamps`, node features/labels, masks and weighted edges.
+Its observed rainfall and validity must agree with the canonical table. Missing
+observations cannot be silently represented as observed zeros.
+
+`--check-inputs` reads and validates all required inputs without training or writing a
+run. A missing upstream file produces a concrete `BLOCKED` error. It does not create
+placeholder production files. Configuration errors and CUDA availability are also
+checked before training.
+
+For the first run on real upstream outputs, use a bounded smoke check:
+
+```console
+uv run --locked python -m src.models.run config/models/hgnn.yaml --epochs 2 --device cpu
+```
+
+This still uses all five supplied folds and all supplied hours. Two epochs over a full
+production dataset are not guaranteed to finish quickly. Use the committed synthetic
+fixture test for the sub-minute CPU acceptance check; do not edit a released split to
+make a private scientific subset. The [Gadi guide](../nci/README.md) provides a prepared
+environment and a bounded A100 PBS job.
+
+## What a run writes
+
+Every run gets its own directory under `experiments/`, or an explicit `--output-dir`.
+Existing directories are never overwritten.
+
+- `config.yaml`: effective settings, seed, package/CUDA versions, code revision,
+  source hashes and input hashes. Uncommitted local code is identified explicitly.
+- `history.csv`: fold, epoch, training loss and validation loss.
+- `best.pt`: each fold's lowest-validation-loss weights and model construction
+  settings. Intermediate checkpoints preserve the completed folds.
+- `predictions.csv`: all requested methods, on exactly the same observed test rows.
+- `report.md`: overall/per-fold RMSE, MAE and Pearson correlation; explicit assumptions
+  and missing-observation counts. Undefined correlations are reported as undefined.
+
+A caught failure leaves the run directory and error report in place. A scheduler kill
+may interrupt before the failure report can be written; check PBS exit status and logs
+as well as files. A partial checkpoint is not a completed five-fold run.
+
+To reproduce predictions from completed best weights without further training:
+
+```console
+uv run --locked python -m src.models.run config/models/hgnn.yaml \
+  --predict-from experiments/<completed-run>/best.pt
+```
+
+This is checkpoint-based inference, not resumption of the optimizer mid-epoch. Input
+content and model settings must match the saved run. GPU-to-CPU or different hardware
+can introduce numerical differences; the exact repeatability check is on CPU.
+
+## Prediction contract
+
+| Column | Meaning |
+|---|---|
+| `method` | `hgnn`, `idw`, or `network_mean` |
+| `fold` | integer 0–4 |
+| `station_id` | BoM internal station ID, preserved as a string |
+| `timestamp` | observed hour start, timezone-aware UTC |
+| `predicted_mm` | finite nonnegative rainfall prediction |
+| `actual_mm` | unchanged rainfall from Component 02 |
+
+Rows are sorted by method, fold, station ID and timestamp. For each method, the target
+set is every `gauge_hourly.csv` row belonging to that fold's `ml.test` stations. The
+checker rejects missing/extra rows, duplicate identities, wrong canonical labels,
+naive timestamps, non-finite values and negative predictions. Dry zeros remain valid
+targets; absent observations do not become targets.
+
+Scores can be recomputed without importing the training model:
+
+```console
+uv run --locked python -m src.models.evaluate experiments/<run>/predictions.csv
+```
+
+The scoring function checks that the included methods share identical targets and
+truth values. Full validation against the released target set happens in the runner;
+the scorer alone cannot reconstruct a missing split file.
+
+## Radar and satellite model inputs
+
+`input_layers` selects the required graph schema. It defaults to `[raingauge]` for
+existing gauge-only configs. Explicit options are `[raingauge, radar]`,
+`[raingauge, satellite]`, or `[raingauge, radar, satellite]`. Set `graphs_dir` to the
+corresponding graphs supplied by 04. Every fold and role must have exactly those layers
+and the same relation types/feature widths. This runner does not remove nodes, generate
+missing layers, rebuild edges or change the released target rows for an ablation.
+
+| Node type | Features for each hour |
+|---|---|
+| raingauge | rainfall in mm, observed 0/1, four fixed positional features |
+| radar | one finite nonnegative rainfall value, `[N,T,1]` |
+| satellite | rainfall and original availability 0/1, `[N,T,2]` |
+
+The adapter passes all selected layers through the inherited HGNN, including batching
+and checkpoint restoration. Sensor tensors must share the graph's exact time axis and
+the gauge tensor's floating dtype. Source hours and coordinate order must already have
+been aligned by 04; equal dimensions cannot prove correct physical alignment.
+
+Unavailable satellite payloads are zeroed only on a cloned computational tensor, with
+availability kept at 0. Source graphs and labels remain unchanged. Radar has no validity
+feature in the current contract, so missing radar values fail explicitly. No automatic
+intersection with the radar's shorter 2022 coverage or replacement of missing values
+with observed dry zeros occurs. Each sensor type must connect to gauges and have an
+incoming relation so the stacked HGNN can keep updating that type; 04 supplies these
+edges. The adapter does not import the inherited graph attachment's known coordinate
+ordering defect.
+
+No feature rescaling is performed. Component 01/02 must establish product, units,
+timestamp meaning and gauge correction before physical interpretation. All fusion run
+reports flag that tensor compatibility alone does not establish independent held-out
+gauge evaluation.
+
+To exercise the model adapter without production data:
+
+```console
+uv run --locked python tests/data/models/make_fixture.py experiments/models-fusion-fixture --modalities radar satellite
+uv run --locked python -m src.models.run experiments/models-fusion-fixture/config.yaml --check-inputs
+uv run --locked python -m src.models.run experiments/models-fusion-fixture/config.yaml
+uv run --locked python -m pytest tests/test_model_modalities.py -q
+```
+
+These sensor values and edges are explicitly invented software fixtures. The separate
+local `feature/06-grid-adapter` branch supplies trusted raw grid-to-table/tensor
+conversion for 02/04. It must be integrated with the real 04 graph builder before it
+becomes an end-to-end fusion pipeline.
+
+## Baselines and model behaviour
+
+`network_mean` averages only observed **training** gauges at the target hour. `idw`
+uses those same donors, WGS84 haversine distances, and the explicitly configured
+`idw_power` (the example is 2.0). An observed collocated donor takes precedence over
+non-collocated donors; multiple collocated donors are averaged. No donor hour is
+gap-filled. If there is no observed training donor, the run fails with the fold/hour
+instead of dropping targets or inventing rainfall.
+
+The model adapter keeps the inherited `GNNInductiveHetero` and leave-one-gauge-out
+training objective. It masks rainfall and validity while preserving positional
+features. Missing labels are excluded from loss and prediction, and labels are kept
+separate from masked features. The selected checkpoint is evaluated after training.
+
+To add a method, return the exact prediction columns and invoke
+`validate_predictions(table, gauge, split, method=...)` before writing output. Use the
+shared split and seed; do not create private target lists. The standalone scorer can
+evaluate any method name that meets the same contract.
+
+## Decisions needing downstream review
+
+1. **Donor mismatch between current requirements.** Component 04 permits train and
+   validation gauges as visible HGNN context at test time; Component 06 specifies
+   training gauges only for IDW and network mean. The implementation preserves both
+   written contracts and flags this in every report. Shared targets alone do not make
+   these a controlled comparison of methods. Kiran, Angus and Rick must agree a common
+   donor policy before the scores support comparative scientific claims.
+2. **Normalization interface.** The published graph shape contains physical rainfall
+   in mm and binary validity but no reversible normalization metadata. This adapter
+   accepts `input_rainfall_scale: physical_mm` and performs no private normalization.
+   Pre-normalized graphs fail validation. Agree any transform with Component 04 before
+   enabling it; do not infer scales from data or change labels to fit a model.
+3. **IDW exponent.** Component 06 does not prescribe a power. The example's explicit
+   2.0 is a proposed setting requiring the Component 03 reviewer's agreement, not a
+   claim to reproduce the inherited paper's exact IDW experiment.
+4. **Radar/satellite readiness.** The current source handoff does not establish their
+   product, units and gauge-correction provenance; satellite coordinates are also
+   outstanding in the written contract. Do not claim accepted fusion results before
+   Components 01/02/04 supply validated inputs. The supervisor's broader national-run
+   objective does not make the first Sydney fixture an Australia-wide result.
+
+## Verification
+
+Verified locally on 10 September 2026: full `tests/` suite **53 passed, 29 legacy-data
+skips**; NCI guard tests **8 passed**. New component code passes Ruff, compilation and
+whitespace checks. Full-repository Ruff still reports **120 findings in inherited
+files**. PyTorch/PyG emit Python 3.14 deprecation warnings. The three sensor combinations
+were each trained twice over five synthetic folds and restored from checkpoints with
+exact CPU prediction equality. These checks do not establish a completed real-data run.
+
+```console
+uv run --locked python -m pytest tests -q -rx
+uv run --locked ruff check src/models tests/test_model_contracts.py tests/test_model_training.py tests/test_model_modalities.py tests/data/models
+uv run --locked python -m pytest scripts/nci/test_guards.py -q
+git diff --check
+```
+
+The tests cover exact target rows and labels, deliberate target-data deletion, missing
+donors, collocated IDW, metric recomputation, CPU determinism, checkpoint inference,
+and a two-epoch synthetic run. Multimodal tests cover each sensor combination through
+five folds, deterministic predictions and checkpoint replay; they also prove that
+sensor values affect the output and receive gradients while hidden gauge readings do
+not affect it. Invalid widths, availability, missing values/hours and disconnected
+sensor layers fail before training. The historical regression tests may skip without the
+untracked legacy dataset. Existing lint failures in inherited reference files are
+reported separately from the new component's checks.

@@ -113,7 +113,7 @@ Both write the same `predictions.csv` schema through the same interface.
 
 ## Done when
 
-- [ ] `python -m models.run config/models/hgnn.yaml` trains all five folds and writes the
+- [ ] `python -m src.models.run config/models/hgnn.yaml` trains all five folds and writes the
       run directory.
 - [ ] The target checker passes: predicted rows equal the split's target rows exactly.
 - [ ] Test: two runs with the same seed on CPU give identical predictions.
@@ -125,7 +125,13 @@ Both write the same `predictions.csv` schema through the same interface.
 - [ ] A two-epoch CPU run over the committed test sample finishes in under a minute in CI.
 - [ ] `docs/models/README.md` explains the prediction schema and how to add a method.
 
-## Open question
+## Open questions
+
+- **Module path correction:** implementation belongs to `src/models/`; this repository
+  does not install `src` as an import root. The executable entrypoint is
+  `python -m src.models.run`. See [the training guide](../models/README.md) for validated
+  commands, current input dependencies and the donor/normalization decisions requiring
+  downstream review. The scientific input/output schema is unchanged.
 
 - **The inherited RMSE numbers are in unknown units.** The legacy hand export was
   distorted, so any millimetre claim from a run on that data is not real. The first run
