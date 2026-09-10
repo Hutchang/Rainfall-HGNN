@@ -77,6 +77,8 @@ def verify_days(
     plausibility: dict,
     start: date,
     end: date,
+    *,
+    default_increment: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
     """Returns (hourly, days, increments).
 
@@ -84,13 +86,17 @@ def verify_days(
     days:   one row per station-day that could be judged, with its verdict.
     increments: mm per tip per station.
 
+    `default_increment` is the comparison tolerance for a station that recorded no
+    positive tip in the whole period, so there is nothing to infer an increment from.
+    It comes from `default_tip_increment_mm` in the config; the requirements doc
+    forbids hard-coding it here.
+
     A day that passes the daily check but breaks a plausibility cap (a single record,
     an hour, or the day above the configured maximum) is "implausible" and rejected:
     BoM's total is computed from the same tips, so a stuck gauge fools both sides.
 
-    Only rain days whose full 24 hours lie inside [start, end] are judged. The
-    period's first 9 and last 15 local hours belong to rain days that straddle the
-    boundary and are never written.
+    Only rain days whose full 24 hours lie inside [start, end] are judged; see
+    `judgeable_window`.
     """
     q_tips, q_daily = quality["tips"], quality["daily"]
 
@@ -136,9 +142,7 @@ def verify_days(
     days["tip_mm"] = days["tip_mm"].fillna(0.0)
     days["daily_ok"] = days["daily_ok"].fillna(False).astype(bool)
     days = days.merge(increments, on="station_id", how="left")
-    tol = days["tip_increment_mm"].fillna(
-        0.5
-    )  # a station with no tips at all: assume 0.5
+    tol = days["tip_increment_mm"].fillna(default_increment)
 
     # per-day maxima for the plausibility caps
     pos = t[t["value"] > 0].copy()

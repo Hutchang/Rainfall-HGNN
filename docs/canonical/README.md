@@ -141,9 +141,14 @@ Rejected stations keep their row with `use_in_study = false` and the reason.
 
 ## Decisions made here, for review
 
-- **Tip increment is inferred, not read.** The requirements doc says to read millimetres
-  per tip from series metadata. That field does not exist in the API; the increment is
-  the smallest positive counted record at each station and is recorded in `stations.csv`.
+- **Tip increment is inferred, not read.** The requirements doc used to say to read
+  millimetres per tip from series metadata; that field does not exist in the API, and the
+  doc now records the inference instead. The increment is the smallest positive counted
+  record at each station and is written to `stations.csv` so the assumption is visible.
+  A station with no positive tip has nothing to infer from and falls back to
+  `default_tip_increment_mm` (0.5 mm), which is config, not a literal in `verify.py`.
+  One aberrant small record would tighten a station's tolerance for the whole period; a
+  median or mode of positive values would be sturdier if that ever shows up.
 - **Tolerance is one increment.** Tight by design: 282 days fail on a single tip's
   difference. Loosening it is one line in `verify.py`.
 - **Co-located stations are kept, not merged.** Fourteen public numbers in the box map

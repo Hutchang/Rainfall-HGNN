@@ -70,6 +70,7 @@ def test_tip_at_1059_lands_in_10_hour_and_1100_in_11_hour(cfg):
         cfg["plausibility"],
         date(2022, 1, 1),
         date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
     )
     assert days["verdict"].tolist() == ["verified"]
     local = hourly.set_index(
@@ -92,6 +93,7 @@ def test_verified_day_gives_24_rows_and_unverified_gives_none(cfg):
         cfg["plausibility"],
         date(2022, 1, 1),
         date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
     )
     assert dict(zip(days["day_end"].dt.strftime("%m-%d"), days["verdict"])) == {
         "01-05": "verified",
@@ -118,6 +120,7 @@ def test_daylight_saving_changeovers_give_distinct_ordered_utc_hours(cfg, change
         cfg["plausibility"],
         date(2021, 1, 1),
         date(2022, 12, 31),
+        default_increment=cfg["default_tip_increment_mm"],
     )
     assert days["verdict"].tolist() == ["verified"]
     assert len(hourly) == 24 and hourly["timestamp"].is_unique
@@ -143,6 +146,7 @@ def test_markers_and_ignored_codes_do_not_count_and_gaps_are_unverifiable(cfg):
         cfg["plausibility"],
         date(2022, 1, 1),
         date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
     )
     v = dict(zip(days["day_end"].dt.strftime("%m-%d"), days["verdict"]))
     assert v == {"01-05": "verified", "01-06": "unverifiable"}
@@ -164,6 +168,7 @@ def test_tolerance_is_one_increment_per_station(cfg):
         cfg["plausibility"],
         date(2022, 1, 1),
         date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
     )
     assert inc.to_dict() == {"a": 0.2, "b": 0.5}
     assert dict(zip(days["station_id"], days["verdict"])) == {
@@ -180,6 +185,7 @@ def test_tolerance_is_one_increment_per_station(cfg):
         cfg["plausibility"],
         date(2022, 1, 1),
         date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
     )
     assert days2["verdict"].tolist() == ["mismatch"]
 
@@ -214,6 +220,7 @@ def test_each_plausibility_cap_rejects_the_whole_day(cfg):
             cfg["plausibility"],
             date(2022, 1, 1),
             date(2022, 1, 31),
+            default_increment=cfg["default_tip_increment_mm"],
         )
         assert days["verdict"].tolist() == ["implausible"], reason
         assert days["reason"].iloc[0].startswith(reason)
@@ -262,6 +269,7 @@ def test_sample_month_verifies_against_bom_daily_totals(cfg):
         cfg["plausibility"],
         date(2022, 1, 1),
         date(2022, 1, 31),
+        default_increment=cfg["default_tip_increment_mm"],
     )
     assert inc.to_dict() == {"31531755": 0.5}
     assert days["verdict"].value_counts().get("verified", 0) >= 25, days[
@@ -442,6 +450,21 @@ def test_load_stations_keeps_numbers_numeric_and_blanks_empty(tmp_path):
     assert st["tip_increment_mm"].iloc[0] == 0.5
     assert pd.isna(st["tip_increment_mm"].iloc[1])  # no tips, so no increment
     assert st["exclusion_reason"].tolist() == ["", "no records in period"]
+
+
+def test_default_increment_is_configured_not_hard_coded(cfg):
+    """A station with no positive tip has no increment to infer, so the comparison
+    tolerance falls back to `default_tip_increment_mm`. The requirements doc forbids
+    hard-coding 0.5 mm in the module, so the value has to change the verdict."""
+    tips = tips_df([("s", "2022-01-05 12:00:00", 0.0, 10)])  # marker only
+    daily = daily_df([("s", "2022-01-06 09:00:00", 0.4, 10)])
+    args = (tips, daily, cfg["quality"], cfg["plausibility"])
+    period = (date(2022, 1, 1), date(2022, 1, 31))
+    _, loose, _ = verify_days(*args, *period, default_increment=0.5)
+    _, tight, _ = verify_days(*args, *period, default_increment=0.1)
+    assert loose["verdict"].tolist() == ["verified"]  # |0 - 0.4| <= 0.5
+    assert tight["verdict"].tolist() == ["mismatch"]  # |0 - 0.4| >  0.1
+    assert cfg["default_tip_increment_mm"] == 0.5
 
 
 def test_period_from_index_fails_loudly_when_there_are_no_tip_rows():

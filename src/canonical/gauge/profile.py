@@ -459,7 +459,13 @@ def main() -> None:
 
     start, end = raw.period_from_index(index)
     hourly, days, inc = verify_days(
-        tips, daily, cfg["quality"], cfg["plausibility"], start, end
+        tips,
+        daily,
+        cfg["quality"],
+        cfg["plausibility"],
+        start,
+        end,
+        default_increment=cfg["default_tip_increment_mm"],
     )
     names = stations.set_index("station_id")["station_name"]
     prof = fig_value_profile(

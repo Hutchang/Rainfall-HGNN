@@ -108,7 +108,13 @@ def run(cfg: dict) -> dict:
     )
 
     hourly, days, increments = verify_days(
-        tips, daily, cfg["quality"], cfg["plausibility"], start, end
+        tips,
+        daily,
+        cfg["quality"],
+        cfg["plausibility"],
+        start,
+        end,
+        default_increment=cfg["default_tip_increment_mm"],
     )
     period_hours = int(hourly["timestamp"].nunique())
     st = build_station_table(stations, hourly, days, increments, period_hours, cfg)
@@ -169,6 +175,8 @@ def write_report(
         f"- daily totals trusted: {cfg['quality']['daily']['trusted']}; dry: {cfg['quality']['daily']['dry']}; unverifiable: {cfg['quality']['daily']['unverifiable']}",
         f"- plausibility caps: record {cfg['plausibility']['max_record_mm']} mm, hour {cfg['plausibility']['max_hourly_mm']} mm, day {cfg['plausibility']['max_daily_mm']} mm",
         f"- station rules: min_coverage {cfg['min_coverage']}, dead gauge {cfg['dead_gauge_days']} days with {cfg['dead_gauge_neighbours']} wet neighbours within {cfg['dead_gauge_radius_km']} km",
+        f"- fallback tip increment for a station with no positive tip: "
+        f"{cfg['default_tip_increment_mm']} mm",
         "",
         "## Stations",
         "",
