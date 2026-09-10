@@ -1,0 +1,20 @@
+# Paths resolve from the repository root. Each input needs an ok index.csv row.
+raw_dir: database/raw
+output_dir: database/standard
+layers:
+  radar:
+    data_file: radar/radar_2022_preprocessed.pkl
+    coordinates_file: radar/radar_node_coords.csv
+    product: UNKNOWN
+    units: UNKNOWN
+    timestamp_convention: UNKNOWN
+    gauge_correction: UNKNOWN
+    evidence: TO CONFIRM against the supplied file and its producer
+  satellite:
+    data_file: satellite/satellite_2022_preprocessed.pkl
+    coordinates_file: satellite/satellite_node_coords.csv
+    product: UNKNOWN
+    units: UNKNOWN
+    timestamp_convention: UNKNOWN
+    gauge_correction: UNKNOWN
+    evidence: TO CONFIRM; satellite coordinates must be supplied in source array order
