@@ -203,6 +203,9 @@ def test_radar_fusion_addition(sample_graph_builder):
         knn=2,
         distance_metric="haversine_km"
     )
+    radar_builder.heterodata.timestamps = (
+        sample_graph_builder.train_heterodata.timestamps
+    )
     
     # Fuse them
     train_fused, _, _ = sample_graph_builder.add_heterodata(

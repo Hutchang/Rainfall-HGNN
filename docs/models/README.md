@@ -11,34 +11,13 @@ them. No result from the
 legacy hand export is used. The small synthetic test fixture checks software behaviour;
 its metrics are not rainfall research results.
 
-## Task 06 scope checked in the native Notion app
+## Component 06 scope and integration
 
-On 10 September 2026, Rainflow's
-[Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) still assigned
-**Oliver** to **06 — Model Training, Prediction and Baselines**. The checklist includes
-radar/satellite model support, the prediction schema and checker, GNN training, IDW,
-network mean, and comparison. The direct dependencies are Kiran's 03 splits and Angus's
-04 graphs. Rick's 20:06 Teams message on the same day called the immediate 06 item
-“Satellite & Radar adapter”; Oliver accepted that slice at 20:48.
-
-The [D06 card](https://www.notion.so/3cede437d58a80d3a1b5e6574b31fdf2) remains To do
-and links to the training requirements, but lists Rick in its Person field. This is a
-coordination inconsistency with Sprint One, not verified reassignment. No shared card
-was edited or marked done from local test evidence.
-
-Current handoff needs:
-
-| Owner | Needed to validate the full deliverable |
-|---|---|
-| Myles / 02 | Published canonical gauge tables and report; he reported the data ready in Teams, but the shared artifact path/revision still needs to be supplied to this checkout |
-| Kiran / 03 | Released five-fold split and shared seed file that match those stations |
-| Angus / 04 | Validated train/validation/test graphs for all five folds, with identities, exact hours, physical gauge units, fixed graph bugs and approved sensor attachment |
-| Amos / 01 | Accessible radar/satellite source files, matching coordinates, units, time convention and gauge-correction evidence; satellite coordinates remain unverified |
-| Rick / integration | Integrate the component branches and configure the experiment workflow; reconcile the board's Person field |
-
-The independent software work can be tested with the documented synthetic sample.
-Real-data acceptance depends on those actual artifacts, not merely an upstream branch
-or a message that implementation is ready.
+[Rainflow Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) assigns
+Oliver training, predictions, baselines and radar/satellite model support. The combined
+branch includes 02/03/04 and connects their published outputs through the
+[pipeline guide](../graphs/README.md). The [handoff](../IMPLEMENTATION_HANDOFF.md)
+records component-owner review points and remaining real-data dependencies.
 
 ## Install and run
 
@@ -190,10 +169,9 @@ uv run --locked python -m src.models.run experiments/models-fusion-fixture/confi
 uv run --locked python -m pytest tests/test_model_modalities.py -q
 ```
 
-These sensor values and edges are explicitly invented software fixtures. The separate
-local `feature/06-grid-adapter` branch supplies trusted raw grid-to-table/tensor
-conversion for 02/04. It must be integrated with the real 04 graph builder before it
-becomes an end-to-end fusion pipeline.
+These sensor values and edges are explicitly invented software fixtures. The [grid adapter](../grids/README.md) supplies trusted raw grid conversion; the
+[integrated 04 builder](../graphs/README.md) consumes its tables and writes the graphs
+used here. Their end-to-end path is tested with synthetic inputs.
 
 ## Baselines and model behaviour
 
@@ -238,12 +216,14 @@ evaluate any method name that meets the same contract.
 
 ## Verification
 
-Verified locally on 10 September 2026: full `tests/` suite **53 passed, 29 legacy-data
-skips**; NCI guard tests **8 passed**. New component code passes Ruff, compilation and
-whitespace checks. Full-repository Ruff still reports **120 findings in inherited
-files**. PyTorch/PyG emit Python 3.14 deprecation warnings. The three sensor combinations
-were each trained twice over five synthetic folds and restored from checkpoints with
-exact CPU prediction equality. These checks do not establish a completed real-data run.
+The integration candidate passed **133 tests with 29 skips**, and all **8 NCI guards**,
+on 15 September 2026. The reconciled integration modules pass focused Ruff and
+compilation checks; repository-wide Ruff reports 703 findings in inherited,
+transitional and other pre-existing files. Dependency deprecation warnings remain.
+Each sensor combination passed deterministic CPU prediction and checkpoint replay
+tests. The [pipeline guide](../graphs/README.md) also exercises the real 02/03/04
+implementations with invented raw inputs. None of these tests establishes a completed
+real-data or GPU run.
 
 ```console
 uv run --locked python -m pytest tests -q -rx

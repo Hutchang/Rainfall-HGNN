@@ -1,11 +1,30 @@
 # Implementation handoff
 
-**Branch:** `integration/sydney-gauge-baseline` · **Updated:** 2026-09-07
+**Candidate branch:** `feature/06-integration` · **Updated:** 2026-09-15
 
 Sequencing and blockers. The contracts themselves are in
 [requirements/README.md](requirements/README.md) — read that first.
 
-## Where the project actually is
+## Current integration candidate
+
+- Component 06 model training (`dbdb611`) and grid adapters (`48636ff`, `488a986`)
+  are merged into this candidate branch.
+- The 02→03→04→06 seam from `1aff5e2` has been reconciled against the newer integration
+  implementations rather than replacing them with the stale pipeline snapshots.
+- Component 04 retains `config/graphs/`, directed receiving-node-normalized gauge
+  edges, finite coincident-coordinate weights, stable identities and UTC timestamps.
+- Component 03 retains deterministic station ordering, exclusion reporting and strict
+  non-empty roles, while released split files are now protected from replacement.
+- The complete synthetic pipeline writes all five graph folds, trains HGNN, IDW and
+  network mean on identical targets, and exactly replays checkpoint predictions.
+- Verification on 2026-09-15: **133 passed, 29 skipped** in `tests/`; **8 passed** in
+  `scripts/nci/test_guards.py`; focused Ruff and compilation checks pass for the
+  reconciled integration modules. Repository-wide Ruff reports 703 pre-existing
+  findings. PyTorch/PyG emit Python 3.14 deprecation warnings.
+- This is software-integration evidence only. Radar/satellite provenance, units,
+  coverage and held-out-gauge independence remain scientific blockers.
+
+## Historical state before this candidate (2026-09-07)
 
 - Both inherited codebases have been audited. The graph and model core runs a real
   Sydney gauge-only graph.
@@ -47,7 +66,7 @@ Radar and satellite work sits with whoever has capacity — realistically the pe
 by cutting the golden-fixture component. Gauge-only is the first milestone; radar is the
 second; satellite is blocked.
 
-## Integration state (2026-09-07)
+## Historical integration state (2026-09-07)
 
 Reviewed on `integration/sydney-gauge-baseline`, now at `3c2a450`. Suite: **29 passed,
 2 failed, 2 skipped, 7 xfailed** — both failures are deliberate and are described in

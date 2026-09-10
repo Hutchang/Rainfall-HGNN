@@ -10,26 +10,14 @@ coordinates and times, and writes the existing standard grid tables. It does not
 source data, infer satellite coordinates, change rainfall units, build graph edges,
 select evaluation splits or train the model.
 
-## Scope checked in Teams and Notion — 10 September 2026
+## Component 06 scope
 
-The native Notion app in **Kiran McLernon's Space / Rainflow** was checked directly.
-[Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) assigns **Oliver**
-to **06 — Model Training, Prediction and Baselines**. Its checklist includes adapting
-the model for radar and satellite, the prediction schema and checker, training, IDW,
-network mean, and comparison. Its direct dependencies are 03 (Kiran) and 04 (Angus).
-
-The [D06 card](https://www.notion.so/3cede437d58a80d3a1b5e6574b31fdf2) is titled
-“Deliverable D06 - Open”, remains To do, has Rick Honda in its Person property, and
-links to the repository's training/prediction requirements. That Person property
-conflicts with the explicit Oliver ownership in Sprint One; it is not evidence that
-Rick has taken over implementation.
-
-In Teams on 10 September, Rick's 20:06 list called 06 “Satellite & Radar adapter
-(backlog)”; Oliver accepted that work at 20:48. Treat this as the immediate requested
-slice, while keeping the broader written 06 deliverable visible. This grid adapter
-alone does **not** complete the Notion checklist. The local `feature/06-model-training`
-implementation handles training/predictions/baselines and the corresponding model
-input adapter; the two branches are separate local handoffs pending integration.
+[Rainflow Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) assigns
+Oliver model training, predictions and baselines, including radar/satellite model
+support. The grid reshaping here is one part of that work. The combined branch also
+contains the [model runner](../models/README.md) and the
+[graph integration](../graphs/README.md). Full real-data acceptance remains separate
+from successful synthetic tests.
 
 ## Run
 
@@ -104,8 +92,8 @@ satellite, invalid rain payloads are zeroed only in the model tensor while the s
 float32 and checked for overflow.
 
 This creates node features only; it does not choose the disputed satellite topology.
-The inherited graph attachment code must still be tested by 04 with the approved
-coordinates, timestamps and its corrected distance convention.
+The integrated graph builder validates attachment and fixes the inherited coordinate
+ordering. Its numerical choices and actual source alignment still need 04 review.
 
 ## Reproducible example
 
@@ -141,12 +129,14 @@ The production inputs were not available in this checkout, and the NCI SSH attem
 could not verify the host key. The adapter is testable offline; real-data validation
 and downstream graph acceptance must be recorded separately when those inputs arrive.
 
-## Verification — 10 September 2026
+## Verification — 15 September 2026
 
-- Full test suite: 30 passed, 29 existing legacy-data skips. Dependency deprecation
-  warnings remain. The new tests include a forward/backward pass through the inherited
+- Combined test suite: 133 passed, 29 legacy-data/live-API skips; the 8 NCI guards also
+  passed. Dependency deprecation warnings remain. The new tests include a
+  forward/backward pass through the inherited
   HGNN using both modality feature widths and explicitly synthetic edges.
 - New Python files pass Ruff; compilation and whitespace checks pass.
-- Repository-wide Ruff still reports 120 findings in unchanged inherited files.
+- Repository-wide Ruff reports 703 findings in inherited, transitional and other
+  pre-existing files.
 - The example creator, input check and CSV build run successfully. The production
   input check fails explicitly because `database/raw/index.csv` is absent locally.

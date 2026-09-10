@@ -19,9 +19,10 @@ and the out-of-scope remainder is removed file by file.
 
 ## Start here
 
-1. [Component requirements](docs/requirements/README.md) — the shared component map,
+1. [Integrated pipeline guide](docs/graphs/README.md) — run tables, splits, graphs and training, with an offline example.
+2. [Component requirements](docs/requirements/README.md) — the shared component map,
    work packages, contracts, and team rules.
-2. [Implementation handoff](docs/IMPLEMENTATION_HANDOFF.md) — current sequencing,
+3. [Implementation handoff](docs/IMPLEMENTATION_HANDOFF.md) — current sequencing,
    repository boundaries, blockers, and completion criteria.
 
 Everyone should be able to see the complete requirements set. Each owner reads their
@@ -117,9 +118,10 @@ uv run --locked python -m pytest tests -q -rx
 uv run --locked ruff check .
 ```
 
-`ruff check .` currently reports 120 findings, all in inherited modules awaiting
-file-by-file classification. A clean lint run is not yet the baseline; do not treat those
-findings as caused by your change, and do not mass-fix inherited files to silence them.
+`ruff check .` currently reports 703 findings across inherited, transitional and other
+pre-existing files awaiting classification. The Component 06 integration modules pass
+focused Ruff checks. A clean repository-wide lint run is not yet the baseline; do not
+mass-fix inherited files merely to silence it.
 
 Some existing tests skip when the untracked legacy gauge data is absent. Each component
 replaces that dependency by committing a small real sample under `tests/data/`, so the

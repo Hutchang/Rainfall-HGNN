@@ -308,12 +308,16 @@ def build_study_split(
 
 def write_study_split(output: StudySplitOutput, path: Path) -> None:
     """Write a split artifact with stable JSON formatting."""
-    payload = asdict(output)
+    payload = json.dumps(asdict(output), indent=2, ensure_ascii=False) + "\n"
+    if path.exists():
+        if path.read_text(encoding="utf-8") == payload:
+            return
+        raise FileExistsError(
+            f"released split already exists: {path}; choose a new output name"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    _ = path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    with path.open("x", encoding="utf-8") as stream:
+        stream.write(payload)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
