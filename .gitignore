@@ -6,6 +6,8 @@ local/
 *.jsonl
 *.png
 *.pth
+!tests/data/study/stations.csv
+!tests/data/study/stations_sydney.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
