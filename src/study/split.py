@@ -22,6 +22,7 @@ from sklearn.cluster import KMeans
 from .schema import (
     SeedConfig,
     SplitConfig,
+    StationExclusion,
     StationRecord,
     StationRoles,
     StudyFold,
@@ -29,36 +30,42 @@ from .schema import (
 )
 
 EARTH_RADIUS_KM = 6371.0088
-STATION_COLUMNS = {
-    "station_id",
-    "station_no",
-    "name",
-    "latitude",
-    "longitude",
-    "hours_observed",
-    "use_in_study",
-    "exclusion_reason",
-}
+REQUIRED_STATION_COLUMNS = frozenset(
+    {
+        "station_id",
+        "station_no",
+        "name",
+        "latitude",
+        "longitude",
+        "hours_observed",
+        "use_in_study",
+        "exclusion_reason",
+    }
+)
 
 
 def read_station_records(path: Path) -> list[StationRecord]:
-    """Read Component 02's canonical ``stations.csv`` into validated records."""
+    """Read Component 02's canonical ``stations.csv`` into validated records.
+
+    Raises:
+        ValueError: if the input `stations.csv` has fewer columns than is required
+
+    """
     with path.open(encoding="utf-8", newline="") as station_file:
         reader = csv.DictReader(station_file)
         columns = set(reader.fieldnames or ())
-        if columns != STATION_COLUMNS:
-            missing = sorted(STATION_COLUMNS - columns)
-            unexpected = sorted(columns - STATION_COLUMNS)
+        missing = sorted(REQUIRED_STATION_COLUMNS - columns)
+        if missing:
             raise ValueError(
-                f"invalid stations.csv columns; missing={missing}, unexpected={unexpected}"
+                f"{path} is missing required stations.csv columns: {missing}"
             )
 
         records: list[StationRecord] = []
         for row_number, row in enumerate(reader, start=2):
+            values = cast("dict[str, str]", row)
+            consumed = {column: values[column] for column in REQUIRED_STATION_COLUMNS}
             try:
-                records.append(
-                    StationRecord.model_validate_strings(cast("dict[str, str]", row))
-                )
+                records.append(StationRecord.model_validate_strings(consumed))
             except ValidationError as error:
                 raise ValueError(
                     f"invalid station record on CSV row {row_number}: {error}"
@@ -119,9 +126,17 @@ def project_station_coordinates_km(
 def assign_spatial_clusters(
     stations: Iterable[StationRecord], n_clusters: int, seed: int
 ) -> dict[int, list[str]]:
-    """Group eligible station IDs into reproducible spatial clusters."""
+    """Group eligible station IDs into reproducible spatial clusters.
+
+    Sorts the incoming stations to ensure proper seeded reproducibility as
+    k-means++ samples by index so a different ordering of the same input
+    data / golden fixture could produce wildly different results without it.
+    """
     records = validate_station_records(stations)
-    eligible = [station for station in records if station.use_in_study]
+    eligible = sorted(
+        (station for station in records if station.use_in_study),
+        key=lambda station: station.station_id,
+    )
 
     coordinates = project_station_coordinates_km(eligible)
     labels = cast(
@@ -171,7 +186,16 @@ def create_test_folds(
 
 
 def validate_fold_roles(folds: Sequence[StudyFold], eligible_ids: set[str]) -> None:
-    """Enforce Component 03's station-role invariants."""
+    """Enforce Component 03's station-role invariants.
+
+    An empty role is rejected rather than tolerated: a fold with no test stations
+    contributes no targets to Component 06, one with no validation stations gives
+    it nothing to select on, and train_fused.py refuses both anyway. Failing here
+    names the configuration that caused it.
+    """
+    if not folds:
+        raise ValueError("at least one fold is required")
+
     all_test_ids: list[str] = []
     for fold in folds:
         train = set(fold.ml.train)
@@ -182,6 +206,17 @@ def validate_fold_roles(folds: Sequence[StudyFold], eligible_ids: set[str]) -> N
             raise ValueError(f"station roles overlap in fold {fold.fold_index}")
         if train | validation | test != eligible_ids:
             raise ValueError(f"fold {fold.fold_index} does not cover every station")
+        for role, station_ids in (
+            ("train", train),
+            ("validation", validation),
+            ("test", test),
+        ):
+            if not station_ids:
+                raise ValueError(
+                    f"fold {fold.fold_index} has an empty {role} set; "
+                    f"{len(eligible_ids)} eligible stations cannot fill "
+                    f"{len(folds)} folds at this validation_fraction"
+                )
 
         all_test_ids.extend(fold.ml.test)
 
@@ -193,8 +228,8 @@ def assign_fold_roles(
     test_folds: Sequence[Sequence[str]], validation_fraction: float, seed: int
 ) -> tuple[StudyFold, ...]:
     """Assign non-test stations to validation and train within each fold."""
-    if not 0 <= validation_fraction < 1:
-        raise ValueError("validation_fraction must be at least 0 and less than 1")
+    if not 0 < validation_fraction < 1:
+        raise ValueError("validation_fraction must be greater than 0 and less than 1")
 
     all_test_ids = list(chain.from_iterable(test_folds))
     eligible_ids = set(all_test_ids)
@@ -261,6 +296,13 @@ def build_study_split(
         n_eligible=sum(station.use_in_study for station in records),
         seed=seeds.split_seed,
         folds=folds,
+        excluded=tuple(
+            StationExclusion(
+                station_id=station.station_id, reason=station.exclusion_reason
+            )
+            for station in sorted(records, key=lambda record: record.station_id)
+            if not station.use_in_study
+        ),
     )
 
 

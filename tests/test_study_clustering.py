@@ -5,12 +5,14 @@ import subprocess
 import sys
 from itertools import chain
 from pathlib import Path
+from random import Random
 from typing import cast
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
-from src.study.schema import StationRecord
+from src.study.schema import SplitConfig, StationRecord
 from src.study.split import (
     assign_fold_roles,
     assign_spatial_clusters,
@@ -19,6 +21,7 @@ from src.study.split import (
     create_test_folds,
     load_seed_config,
     load_split_config,
+    read_station_records,
     validate_station_records,
 )
 
@@ -168,10 +171,10 @@ def test_module_command_writes_reproducible_split_json(tmp_path: Path):
     _ = config_path.write_text(
         "\n".join(
             (
-                f"stations_file: {STUDY_DATA / 'stations.csv'}",
-                "n_folds: 2",
+                f"stations_file: {STUDY_DATA / 'stations_sydney.csv'}",
+                "n_folds: 5",
                 "validation_fraction: 0.15",
-                "n_clusters: 2",
+                "n_clusters: 10",
                 f"output: {output_path}",
             )
         ),
@@ -195,4 +198,85 @@ def test_module_command_writes_reproducible_split_json(tmp_path: Path):
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
     assert output_path.read_bytes() == first_bytes
-    assert json.loads(first_bytes)["n_eligible"] == 2
+    assert json.loads(first_bytes)["n_eligible"] == 148
+
+
+def test_extra_component_02_columns_are_accepted():
+    """Component 02 writes 13 columns; the 5 this component does not use are ignored."""
+    stations = read_station_records(STUDY_DATA / "stations_sydney.csv")
+
+    assert len(stations) == 162
+    assert sum(station.use_in_study for station in stations) == 148
+    assert stations[0].station_id == "560001"
+
+
+def test_missing_required_column_is_named(tmp_path: Path):
+    """A stations.csv missing a required column fails by name, not on the first row."""
+    source = (STUDY_DATA / "stations_sydney.csv").read_text(encoding="utf-8")
+    broken = tmp_path / "stations.csv"
+    _ = broken.write_text(
+        source.replace("use_in_study", "eligible", 1), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=r"missing required stations.csv columns"):
+        _ = read_station_records(broken)
+
+
+def test_split_does_not_depend_on_station_row_order():
+    """The same stations and seed give the same folds whatever order the rows arrive in."""
+    stations = read_station_records(STUDY_DATA / "stations_sydney.csv")
+    shuffled = list(stations)
+    Random(99).shuffle(shuffled)
+    config = load_split_config(
+        REPOSITORY_ROOT / "config" / "splits" / "sydney_5fold.yaml"
+    )
+    seeds = load_seed_config(REPOSITORY_ROOT / "config" / "seeds.yaml")
+
+    in_file_order = build_study_split(stations, config, seeds, created="2026-09-11")
+    in_shuffled_order = build_study_split(shuffled, config, seeds, created="2026-09-11")
+
+    assert in_file_order.folds == in_shuffled_order.folds
+
+
+def test_excluded_stations_are_recorded_with_their_reason():
+    """Every ineligible station is named with its cause, not just subtracted from a count."""
+    stations = read_station_records(STUDY_DATA / "stations_sydney.csv")
+    config = load_split_config(
+        REPOSITORY_ROOT / "config" / "splits" / "sydney_5fold.yaml"
+    )
+    seeds = load_seed_config(REPOSITORY_ROOT / "config" / "seeds.yaml")
+
+    output = build_study_split(stations, config, seeds, created="2026-09-11")
+
+    dropped = {station.station_id for station in stations if not station.use_in_study}
+    assert {exclusion.station_id for exclusion in output.excluded} == dropped
+    assert all(exclusion.reason for exclusion in output.excluded)
+    assert [exclusion.station_id for exclusion in output.excluded] == sorted(dropped)
+    assert output.n_eligible + len(output.excluded) == len(stations)
+
+
+def test_a_fold_with_no_test_or_validation_stations_is_rejected():
+    """Too few stations for the configured folds fails here, not later during training."""
+    stations = [
+        station(f"station-{index}", -34.0 + index * 0.05, 150.7 + index * 0.05)
+        for index in range(3)
+    ]
+    config = load_split_config(
+        REPOSITORY_ROOT / "config" / "splits" / "sydney_5fold.yaml"
+    ).model_copy(update={"n_clusters": 2})
+    seeds = load_seed_config(REPOSITORY_ROOT / "config" / "seeds.yaml")
+
+    with pytest.raises(ValueError, match=r"fold \d has an empty (test|validation) set"):
+        _ = build_study_split(stations, config, seeds, created="2026-09-11")
+
+
+def test_validation_fraction_of_zero_is_rejected_by_config():
+    """A validation_fraction of 0.0 would leave every fold without a validation set."""
+    with pytest.raises(ValidationError):
+        _ = SplitConfig(
+            stations_file="database/standard/stations.csv",
+            n_folds=5,
+            validation_fraction=0.0,
+            n_clusters=10,
+            output="config/splits/sydney_5fold.json",
+        )

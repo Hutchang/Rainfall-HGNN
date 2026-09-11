@@ -10,7 +10,9 @@ Latitude = Annotated[float, Field(ge=-90.0, le=90.0)]
 Longitude = Annotated[float, Field(ge=-180.0, le=180.0)]
 NonNegativeInt = Annotated[int, Field(ge=0)]
 PositiveInt = Annotated[int, Field(gt=0)]
-Fraction = Annotated[float, Field(ge=0.0, lt=1.0)]
+# Strictly positive: a fold with no validation stations leaves Component 06 with
+# nothing to select on, and train_fused.py refuses it.
+PositiveFraction = Annotated[float, Field(gt=0.0, lt=1.0)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,8 +33,21 @@ class StudyFold:
 
 
 @dataclass(frozen=True, slots=True)
+class StationExclusion:
+    """One station Component 02 ruled out of the study, with its recorded cause."""
+
+    station_id: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class StudySplitOutput:
-    """The complete Component 03 split artifact before JSON serialisation."""
+    """The complete Component 03 split artifact before JSON serialisation.
+
+    ``excluded`` names every ineligible station and its reason, so the artifact
+    explains its own station count without the caller needing the ``stations.csv``
+    that produced it.
+    """
 
     name: str
     created: str
@@ -40,6 +55,7 @@ class StudySplitOutput:
     n_eligible: int
     seed: int
     folds: tuple[StudyFold, ...]
+    excluded: tuple[StationExclusion, ...]
 
 
 class SplitConfig(BaseModel):
@@ -49,7 +65,7 @@ class SplitConfig(BaseModel):
 
     stations_file: NonEmptyString
     n_folds: PositiveInt
-    validation_fraction: Fraction
+    validation_fraction: PositiveFraction
     n_clusters: PositiveInt
     output: NonEmptyString
 
