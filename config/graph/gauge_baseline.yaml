@@ -1,6 +1,0 @@
-k_neighbours: 5
-distance: haversine_km        # or euclidean_degrees for the inherited comparison
-edge_normalisation: per_node  # or global for the inherited comparison
-include_lpe: true
-lpe_dimensions: 4
-Layer_is_directed: false

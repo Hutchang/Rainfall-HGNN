@@ -3,7 +3,7 @@ import json
 import torch
 import pandas as pd
 from src.utils import read_config
-from src.graphs.gaugegraphnew import GaugeGraphNew 
+from src.graph.gaugegraphnew import GaugeGraphNew 
 
 def build_baseline_graphs(
     gauge_config="config/graphs/gauge_baseline.yaml", 
