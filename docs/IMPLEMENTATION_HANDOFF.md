@@ -62,7 +62,7 @@ Work finished but not merged:
 
 `feature/02-canonical-data` points at the integration head with no commits of its own.
 
-### Open defects
+### Open defects — genuine (break functionality)
 
 1. **`GaugeGraphNew` does not implement the paper's Eq. 1, and three tests now say so.**
    `65237ba` states the per-node normalisation fix was made "in both niramay and
@@ -139,9 +139,19 @@ Work finished but not merged:
    must coerce empty strings and hand over Python types. Owners: Components 02 and 03
    together, since it is a contract question rather than a bug in either side.
 
-4. **`ruff check .` reports 120 findings**, all in inherited `benchmarks/`, `models/`,
+### Open defects — deferred (non-essential right now)
+
+Understood, don't break functionality or corrupt output, and are being knowingly left for
+later. Revisit if priorities/deliverables are otherwise complete.
+
+1. **`ruff check .` reports 120 findings**, all in inherited `benchmarks/`, `models/`,
    `src/graph/`, `training/` and the root runners. Identical on every branch; not a
    regression from 01 or 03. Two sit in `tests/test_split_integrity.py`.
+2. **Failed/unread raw downloads are excluded from `stations.csv`/`days.csv` correctly but
+   not reported.** A station whose coverage looks low can't be told apart from "genuinely
+   dry" without manually cross-checking `index.csv`. No wrong data results — this is an
+   audit-trail gap, not a correctness bug (shared rule 7, "say what you dropped"). Deferred
+   under time constraints. Owner: Component 02.
 
 ## Open blockers
 
