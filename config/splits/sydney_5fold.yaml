@@ -1,0 +1,5 @@
+stations_file: database/standard/stations.csv
+n_folds: 5
+validation_fraction: 0.15
+n_clusters: 10
+output: config/splits/sydney_5fold.json
