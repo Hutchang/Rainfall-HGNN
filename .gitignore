@@ -218,3 +218,6 @@ __marimo__/
 
 # Experiments
 experiments
+
+# FROM HANDOVER NOTES FROM RICK
+!tests/data/graphs/*.csv
