@@ -3,12 +3,15 @@ import json
 import torch
 import pandas as pd
 from src.utils import read_config
-from src.graphs.gaugegraphnew import GaugeGraphNew 
+from src.graph.gaugegraphnew import GaugeGraphNew #file is "graph" not "graphs" so changed accordingly 
+from src.graph.radargraphnew import RadarGraphNew 
 
 def build_baseline_graphs(
-    gauge_config="config/graphs/gauge_baseline.yaml", 
+    gauge_config="config/graph/gauge_baseline.yaml", 
     data_dir="database/standard", 
-    output_dir="database/graphs/baseline"
+    baseline_dir="database/graph/baseline",
+    radar_dir="database/graph/radar_fusion"
+    #changed to /graph rather than /graphs as the folder is named graph not graphs
 ):
     """
     Ingests standard data, constructs baseline gauge graphs, 
@@ -25,7 +28,11 @@ def build_baseline_graphs(
     mapping_df = mapping_df.rename(columns={"station_id": "id"})
     
     if "use_in_study" in mapping_df.columns:
-        mapping_df = mapping_df[mapping_df["use_in_study"] == True]
+        # Filter the mapping_df to only include rows where "use_in_study" is True
+        # also reset the index after filtering so dataframes are aligned properly for graph construction
+        mapping_df = mapping_df[mapping_df["use_in_study"] == True].reset_index(drop=True)
+        #remake the order column to be sequential after filtering
+        mapping_df["order"] = range(len(mapping_df))
         
     with open("config/splits/sydney_5fold.json", "r") as f:
         split_info = json.load(f)["folds"]
@@ -40,6 +47,30 @@ def build_baseline_graphs(
         columns="station_id", 
         values="rainfall_mm"
     )
+
+
+    #build the radar graph
+
+    radar_nodes_df = pd.read_csv(f"{data_dir}/radar_nodes.csv")
+    long_radar_df = pd.read_csv(f"{data_dir}/radar_hourly.csv")
+
+    # Pivot, handle missing data, and reshape to [952, T, 1]
+    wide_radar_df = long_radar_df.pivot(index="timestamp", columns="node_id", values="rain_rate").fillna(0)
+    radar_tensor = torch.tensor(wide_radar_df.values.T, dtype=torch.float32).unsqueeze(-1)
+
+    # Instantiate your new class
+    radar_builder = RadarGraphNew(
+        radar_tensor=radar_tensor,
+        coords_df=radar_nodes_df,
+        knn=8,
+        distance_metric="haversine_km"
+    )
+
+    radar_layer = radar_builder.heterodata
+
+    #build the satellite graph
+
+    #space to build any other graphs in future implementations
         
     for i, fold in enumerate(split_info):
         print(f"Building fold {i}...")
@@ -55,12 +86,32 @@ def build_baseline_graphs(
             lpe_dimensions=config["lpe_dimensions"],
             layer_is_directed=config["layer_is_directed"]
         )
+
+        #save baseline graphs
+        baseline_fold_dir = f"{baseline_dir}/fold-{i}"
+        os.makedirs(baseline_fold_dir, exist_ok=True)
         
-        fold_dir = f"{output_dir}/fold-{i}"
-        os.makedirs(fold_dir, exist_ok=True)
+        torch.save(graph_builder.get_train_heterodata(), f"{baseline_fold_dir}/train.pt")
+        torch.save(graph_builder.get_validation_heterodata(), f"{baseline_fold_dir}/validation.pt")
+        torch.save(graph_builder.get_test_heterodata(), f"{baseline_fold_dir}/test.pt") 
+
+        #add layer to gauge graph
+        graph_builder.add_heterodata(
+            heterodata_layer=radar_layer,
+            coords=radar_nodes_df,
+            layer_name="radar",
+            knn=4
+        )
+
+        train_fused, val_fused, test_fused = graph_builder.get_fused_heterodata()
+
+        #save radar and gauge fused graphs
+        radar_fold_dir = f"{radar_dir}/fold-{i}"
+        os.makedirs(radar_fold_dir, exist_ok=True)
         
-        torch.save(graph_builder.get_train_heterodata(), f"{fold_dir}/train.pt")
-        torch.save(graph_builder.get_validation_heterodata(), f"{fold_dir}/validation.pt")
-        torch.save(graph_builder.get_test_heterodata(), f"{fold_dir}/test.pt")
+        torch.save(train_fused, f"{radar_fold_dir}/train.pt")
+        torch.save(val_fused, f"{radar_fold_dir}/validation.pt")
+        torch.save(test_fused, f"{radar_fold_dir}/test.pt")
         
-    print(f"✅ All baseline graphs saved to {output_dir}")
+    print(f"✅ Baseline graphs saved to {baseline_dir}")
+    print(f"✅ Combined radar graphs saved to {radar_dir}")
