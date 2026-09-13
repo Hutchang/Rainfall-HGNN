@@ -41,8 +41,24 @@ gauge:
     daily: DMQaQc.Merged.DailyTotal.09HR
 
 # ---------------------------------------------------------------------------
-# Radar and satellite: preprocessed 2022 files already on disk. Owner: TBC.
-# Fill in source paths here when that work starts; see requirements doc 01.
+# Radar: BoM Rainfields 3, "Merged Gauge/Radar Accumulation (15 min)"
+# (product prcp-m15), fetched from NCI THREDDS. Site 71 is T_Hills (Terrey
+# Hills), the Sydney radar. Gauge-corrected: each file's `contributing_gauges`
+# attribute lists the BoM station_no values folded into the correction, which
+# is how Component 02/04 check whether a held-out test station leaked in.
+# Both 2021 and 2022 are available from this source.
 # ---------------------------------------------------------------------------
-radar: {}
+radar:
+  site_id: "71"
+  product: prcp-m15
+  api:
+    base_url: https://thredds.nci.org.au/thredds/fileServer/rq0/rainfields3
+    request_delay_seconds: 1
+    timeout_seconds: 120
+    user_agent: COMP3888-P23-ingestion/0.1 (university capstone)
+
+# ---------------------------------------------------------------------------
+# Satellite: preprocessed file already on disk, provenance and coordinates
+# still unknown. Owner: TBC. See requirements doc 01's open questions.
+# ---------------------------------------------------------------------------
 satellite: {}

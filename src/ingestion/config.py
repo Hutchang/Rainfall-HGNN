@@ -44,5 +44,13 @@ def load_config(path: str | Path) -> dict:
         if k not in g["series"]:
             raise ValueError(f"{path}: gauge.series is missing {k}")
 
+    r = cfg.get("radar") or {}
+    if r:
+        for k in ("site_id", "product", "api"):
+            if k not in r:
+                raise ValueError(f"{path}: radar section is missing {k}")
+        if "base_url" not in r["api"]:
+            raise ValueError(f"{path}: radar.api is missing base_url")
+
     cfg["_path"] = str(path)
     return cfg
