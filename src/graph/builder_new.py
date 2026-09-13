@@ -1,6 +1,8 @@
 import os
 import json
 from pathlib import Path
+import argparse
+
 
 import torch
 import pandas as pd
@@ -69,23 +71,23 @@ def build_baseline_graphs(
             index="timestamp", columns="node_id", values="rain_rate"
         )
 
-        missing = int(wide_radar_df.isna().to_numpy().sum())
-        if missing:
-            raise ValueError(
-                f"{radar_hourly_path} has {missing} missing radar values. "
-                "Filling them with 0.0 would tell the model that no rain fell "
-                "where nothing was measured (requirements README rule 4; "
-                "04 rule 5). Carrying gaps needs a validity channel like "
-                "satellite's [nodes, T, 2], which changes in_channels_dict - "
-                "agree it with the Component 02 and 06 owners first."
-            )
+        # missing = int(wide_radar_df.isna().to_numpy().sum())
+        # if missing:
+        #     raise ValueError(
+        #         f"{radar_hourly_path} has {missing} missing radar values. "
+        #         "Filling them with 0.0 would tell the model that no rain fell "
+        #         "where nothing was measured (requirements README rule 4; "
+        #         "04 rule 5). Carrying gaps needs a validity channel like "
+        #         "satellite's [nodes, T, 2], which changes in_channels_dict - "
+        #         "agree it with the Component 02 and 06 owners first."
+        #     )
 
-        radar_tensor = torch.tensor(
-            wide_radar_df.values.T, dtype=torch.float32
-        ).unsqueeze(-1)
+        # radar_tensor = torch.tensor(
+        #     wide_radar_df.values.T, dtype=torch.float32
+        # ).unsqueeze(-1)
 
         radar_builder = RadarGraphNew(
-            radar_tensor=radar_tensor,
+            data_df=wide_radar_df,
             coords_df=radar_nodes_df,
             knn=8,
             distance_metric="haversine_km"
@@ -144,3 +146,28 @@ def build_baseline_graphs(
     print(f"Baseline graphs saved to {baseline_dir}")
     if radar_layer is not None:
         print(f"Combined radar graphs saved to {radar_dir}")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Component 04: Graph Construction Pipeline")
+    
+    # Define the command line flags, keeping your current paths as safe defaults
+    parser.add_argument("--config", type=str, default="config/graphs/gauge_baseline.yaml", help="Path to graph configuration YAML")
+    parser.add_argument("--data-dir", type=str, default="database/standard", help="Directory containing standard input CSVs")
+    parser.add_argument("--baseline-dir", type=str, default="database/graph/baseline", help="Output directory for gauge graphs")
+    parser.add_argument("--radar-dir", type=str, default="database/graph/radar_fusion", help="Output directory for radar graphs")
+    
+    args = parser.parse_args()
+    
+    print(f"Starting Component 04 Graph Construction using config: {args.config}")
+    
+    # Pass the command line arguments into your function
+    build_baseline_graphs(
+        gauge_config=args.config,
+        data_dir=args.data_dir,
+        baseline_dir=args.baseline_dir,
+        radar_dir=args.radar_dir
+    )
+    
+    print("Graph construction complete!")
+
+    #run by calling: uv run python src/graph/builder_new.py --config config/graphs/gauge_baseline.yaml

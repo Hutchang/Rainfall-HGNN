@@ -188,13 +188,17 @@ def test_dataset_iterator_shapes(sample_graph_builder):
 
 def test_radar_fusion_addition(sample_graph_builder):
     """Test 10: Verifies add_heterodata successfully injects the radar modality."""
-    # Create mock radar data
     T = sample_graph_builder.train_heterodata["raingauge"].x.shape[1]
-    mock_radar_tensor = torch.zeros((3, T, 1)) # 3 radar nodes
+    
+    # FIX: Provide a mock Pandas DataFrame instead of a tensor
+    mock_radar_df = pd.DataFrame(
+        np.zeros((T, 3)), 
+        columns=[0, 1, 2] # 3 radar nodes
+    )
     mock_coords = pd.DataFrame({"node_id": [0,1,2], "latitude": [-33.8, -33.9, -34.0], "longitude": [151.1, 151.2, 151.3]})
     
     radar_builder = RadarGraphNew(
-        radar_tensor=mock_radar_tensor,
+        data_df=mock_radar_df, # Pass the DataFrame here
         coords_df=mock_coords,
         knn=2,
         distance_metric="haversine_km"
@@ -208,6 +212,5 @@ def test_radar_fusion_addition(sample_graph_builder):
         knn=2
     )
     
-    # Check that radar exists in the graph types
     assert "radar" in train_fused.node_types, "Radar node type missing after fusion."
     assert ("radar", "connects", "raingauge") in train_fused.edge_types, "Bipartite fusion edges missing."
