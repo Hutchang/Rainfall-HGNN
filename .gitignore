@@ -6,6 +6,8 @@ local/
 *.jsonl
 *.png
 *.pth
+*.pkl
+australia/
 !tests/data/study/stations.csv
 !tests/data/study/stations_sydney.csv
 
