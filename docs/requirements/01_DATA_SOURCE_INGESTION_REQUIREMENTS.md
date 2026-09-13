@@ -6,10 +6,11 @@
 
 Three jobs:
 
-1. Ask the Bureau of Meteorology (BoM) API for Sydney rain-gauge records, with the query
-   parameters coming from a YAML config file rather than from hard-coded values.
-2. Write what comes back to disk in a fixed, predictable layout, plus register the radar
-   and satellite files we already have.
+1. Ask the Bureau of Meteorology (BoM) API for Sydney rain-gauge records, and NCI's
+   THREDDS archive for Sydney radar, with the query parameters coming from a YAML config
+   file rather than from hard-coded values. Register the satellite file we already have
+   (still unowned — see **Open questions**).
+2. Write what comes back to disk in a fixed, predictable layout.
 3. Produce one `index.csv` that tells Component 02 exactly what exists.
 
 You store what the source gave you. You do **not** convert timezones, add tips into
@@ -41,8 +42,16 @@ gauge:
     tips: DMQaQc.Merged.AsStored.1
     daily: DMQaQc.Merged.DailyTotal.09HR
 
-radar: {}        # filled in when the radar/satellite owner starts
-satellite: {}
+radar:
+  site_id: "71"          # T_Hills (Terrey Hills) — the Sydney radar
+  product: prcp-m15      # Merged Gauge/Radar Accumulation, 15 min — gauge-corrected
+  api:
+    base_url: https://thredds.nci.org.au/thredds/fileServer/rq0/rainfields3
+    request_delay_seconds: 1
+    timeout_seconds: 120
+    user_agent: COMP3888-P23-ingestion/0.1 (university capstone)
+
+satellite: {}        # filled in when the satellite owner starts
 ```
 
 Everything that decides *which data we get* lives here, so a reviewer can see it without
@@ -83,19 +92,63 @@ documents a second interface to the same BoM server, using OGC-style requests
 KiWIS interface above because those exact calls are already verified. If you switch to
 SOS2, re-verify with the storm case in **Done when** and update this section.
 
-### Radar and satellite files, already on disk
+### Radar: NCI THREDDS, BoM Rainfields 3
 
-These exist; nothing needs downloading. Copy them under `database/raw/` and add index
-rows. Do not modify them.
+**Superseded finding, 2026-09-13:** a preprocessed `radar_2022_preprocessed.pkl` was
+handed to the team, but it carries no coordinates, no companion `radar_node_coords.csv`,
+and no way to recover either — it is a flat `[timestamp, data]` array with no embedded
+lat/lon, bounds, or CRS. Nobody on the team has access to whoever produced it. Rather
+than guess a grid to match its 952-value arrays, Component 01 now fetches the real,
+georeferenced source directly and derives coordinates from its genuine projection
+metadata. Do not manufacture coordinates from a node count or an assumed grid.
 
-| File | Contents |
-|---|---|
-| `radar_2022_preprocessed.pkl` | pandas DataFrame, 8,640 rows, columns `timestamp` (UTC) and `data`; each `data` cell is a float32 array of 952 values |
-| `radar_node_coords.csv` | 952 rows, columns `latitude`, `longitude` — one row per radar value, same order |
-| `satellite_2022_preprocessed.pkl` | pandas DataFrame, 8,760 rows, columns `timestamp` (UTC) and `data`; each `data` cell is a float32 array shaped (726, 2) |
+The source is NCI's public `rq0` THREDDS archive (BoM/Monash's Rainfields 3 volumetric
+radar collection): `https://thredds.nci.org.au/thredds/catalog/rq0/rainfields3/`.
+One file per radar site per day:
 
-Component 02 needs to know what these numbers mean, and right now we do not. Your job is
-to find out and write it down — see **Open questions**.
+```text
+https://thredds.nci.org.au/thredds/fileServer/rq0/rainfields3/<site>/<year>/<product>/<site>_<YYYYMMDD>.<product>.zip
+```
+
+Site **71** is `T_Hills` (Terrey Hills), the Sydney radar — confirmed from the
+`station_name` attribute inside a downloaded file, not assumed from the site number.
+Three products exist per site-year; use **`prcp-m15`**, not the others:
+
+| Product | Contents | Size |
+|---|---|---|
+| `gndrefl` | raw reflectivity volumes | ~100–200 MB/day, ~40 GB/year — too large to fetch whole |
+| `prcp-crate` | instantaneous precipitation rate | ~2–20 MB/day |
+| **`prcp-m15`** | **"Merged Gauge/Radar Accumulation (15 min)"** | ~2 MB/day, **~1.4 GB for the whole 2021–2022 Sydney period** |
+
+`prcp-m15` is the gauge-corrected Rainfields 3 product: each file's `contributing_gauges`
+global attribute lists the BoM `station_no` values folded into that correction. Cross-
+check this list against the study's gauge stations before quoting a radar result — if a
+held-out test station's number appears, that comparison leaks (see **Rules**).
+
+Each daily zip contains one NetCDF4 file per ~15 minutes
+(`<site>_<YYYYMMDD>_<HHMMSS>.<product>.nc`), verified structure:
+
+- grid: 512×512 cells, 0.5 km spacing, fixed and radar-centred (not the gauge bounding
+  box)
+- projection: `albers_conical_equal_area`, a complete CF grid-mapping definition
+  (standard parallels, projection origin, WGS84 ellipsoid) — real, transformable to
+  WGS84 lat/lon with `pyproj`, not assumed
+- `precipitation`: kg/m² (≈ mm) accumulated over the 15-minute window — **not mm/h**,
+  and not hourly; Component 02 sums four files per hour, the same way it sums gauge tips
+- global attributes also give `station_id`, `station_name`, `source` (Rainfields
+  version), and `contributing_gauges`
+
+Both 2021 and 2022 are available from this source, resolving the "radar/satellite are
+2022-only" open question below for radar specifically (satellite is unaffected).
+
+### Satellite: preprocessed file already on disk, still unowned
+
+`satellite_2022_preprocessed.pkl` exists (pandas DataFrame, 8,760 rows, columns
+`timestamp` and `data`; each `data` cell a float32 array shaped (726, 2)) but has the
+same missing-coordinates problem as radar did, with no known equivalent public archive
+yet identified. Copy it under `database/raw/` and add an index row; do not modify it.
+Component 02 needs to know what these numbers mean, and right now nobody does — see
+**Open questions**.
 
 ## What you produce
 
@@ -107,8 +160,8 @@ database/raw/
     tips/<station_id>/<YYYY-MM>.json.gz    getTimeseriesValues response, unchanged
     daily/<station_id>/<YYYY>.json.gz      getTimeseriesValues response, unchanged
   radar/
-    radar_2022_preprocessed.pkl
-    radar_node_coords.csv
+    <YYYY>/<YYYY-MM-DD>.prcp-m15.zip        NCI daily zip of ~15-min NetCDF files, unchanged
+    radar_node_coords.csv                   node_id, latitude, longitude — 512x512 grid, real projection
   satellite/
     satellite_2022_preprocessed.pkl
   index.csv
@@ -119,10 +172,10 @@ database/raw/
 
 | Column | Example | Purpose |
 |---|---|---|
-| `source` | `gauge_tips` | the kind of file: `gauge_tips`, `gauge_daily`, or a radar/satellite row |
+| `source` | `gauge_tips` | the kind of file: `gauge_tips`, `gauge_daily`, `radar_precip`, or a satellite row |
 | `station_id` | `7730155` | blank for radar/satellite rows |
 | `path` | `gauge/tips/7730155/2022-01.json.gz` | relative to `database/raw/` |
-| `start`, `end` | `2022-01-01`, `2022-01-31` | what the file is supposed to cover |
+| `start`, `end` | `2022-01-01`, `2022-01-31` | what the file is supposed to cover; for radar, `start` and `end` are the same day |
 | `n_records` | `412` | `0` is fine and means a dry month; it is not a failure |
 | `status` | `ok` or `failed` | |
 | `error` | `HTTP 504` | blank when `ok` |
@@ -166,23 +219,37 @@ had no rain" and "this month failed to download".
 - [ ] One real station-month of tips and one real station-year of daily totals are
       committed under `tests/data/` (a few KB, gzipped and unmodified) so Component 02's
       tests run on a fresh clone with no network.
+- [ ] `uv run python -m src.ingestion.radar.fetch config/ingestion/sydney.yaml` runs end
+      to end and, run twice, does not re-fetch days it already wrote.
+- [ ] `uv run python -m src.ingestion.radar.fetch config/ingestion/sydney.yaml --sample`
+      fetches a handful of days (5 by default; `--sample N` for a different count) into
+      `local/radar-sample/` rather than `database/raw/`, so a fresh clone can be tried out
+      without committing to the full ~1.4 GB, ~20-minute, 2021–2022 download.
+- [ ] `radar_node_coords.csv` has one row per grid cell (`node_id, latitude, longitude`),
+      derived from a downloaded file's own CF projection metadata, not assumed or
+      reverse-engineered from an array length.
+- [ ] One real day's radar zip (trimmed to a couple of its ~15-minute files) is committed
+      under `tests/data/ingestion/radar/` so Component 02's tests run on a fresh clone
+      with no network.
 - [ ] `docs/ingestion/README.md` gives the copy-pasteable commands and the meaning of
-      every `index.csv` column.
+      every `index.csv` column, for both gauge and radar.
 
 ## Open questions
 
-- **Radar and satellite provenance — you own this.** For each file we need: which
-  product, which units, and how it was made. Specifically: are the 952 radar values
-  mm/h or mm accumulated over the hour? Values run 0 to ~72 with a mean near 0.28, which
-  is consistent with mm/h but is not proof. Is the radar gauge-corrected, and if so with
-  which gauges? If those gauges include our test stations, radar results leak and the
-  comparison is invalid. Ask whoever produced the files and write the answers into
-  `docs/ingestion/README.md`.
-- **Satellite node coordinates are missing.** Radar has `radar_node_coords.csv`;
-  satellite has no equivalent, so its 726 nodes cannot be placed on the map and cannot be
-  connected to gauges. Component 04 is blocked on satellite until this file exists. Find
-  it or regenerate it.
-- **Radar is missing 120 hours** of 2022 (8,640 rows where 8,760 were expected). Which
-  hours, and why? Component 02 needs to know whether they are absent or corrupt.
-- **Radar and satellite are 2022 only.** Gauges will cover 2021–2022. Confirm with the
-  project lead that fusion experiments are 2022-only, or source 2021.
+- **Radar provenance — resolved for the `prcp-m15` product.** It is Rainfields 3
+  "Merged Gauge/Radar Accumulation (15 min)", units kg/m² (≈ mm) per 15-minute window,
+  gauge-corrected with the contributing station numbers listed in each file's
+  `contributing_gauges` attribute. `TO CONFIRM`: whether any contributing gauge is one of
+  our held-out test stations (would leak); cross-check the list against
+  `standard/stations.csv` once Component 02 produces it.
+- **Satellite provenance and node coordinates are still unknown and still unowned.**
+  `satellite_2022_preprocessed.pkl` has the same missing-coordinates problem radar did,
+  and no equivalent public archive has been identified yet. Its 726 nodes cannot be
+  placed on the map or connected to gauges until this is resolved. Component 04 is
+  blocked on satellite until it is. Do not manufacture coordinates from the node count.
+- **Which specific radar hours are missing or corrupt, and why** — `TO CONFIRM` once a
+  full 2021–2022 fetch has run; check `index.csv` for `failed` days and gaps in the
+  15-minute file count per day against the expected 96.
+- **Radar is no longer 2022-only.** Both 2021 and 2022 are available from NCI for the
+  `prcp-m15` product, matching the gauge baseline period. Satellite provenance and
+  coverage remain unresolved.

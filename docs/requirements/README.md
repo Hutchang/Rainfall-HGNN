@@ -31,7 +31,7 @@ committed test sample it was meant to produce is now one bullet in each componen
 
 | # | Reads | Writes | Read by |
 |---|---|---|---|
-| [01](01_DATA_SOURCE_INGESTION_REQUIREMENTS.md) | BoM WaterData API; radar/satellite files already on disk | `database/raw/**` + `database/raw/index.csv` | 02 |
+| [01](01_DATA_SOURCE_INGESTION_REQUIREMENTS.md) | BoM WaterData API; NCI THREDDS radar archive; satellite file already on disk | `database/raw/**` + `database/raw/index.csv` | 02 |
 | [02](02_CANONICAL_DATA_REQUIREMENTS.md) | `database/raw/**` | `database/standard/*.csv` | 03, 04 |
 | [03](03_STUDY_SPLIT_REQUIREMENTS.md) | `standard/stations.csv` | `config/splits/<name>.json`, `config/seeds.yaml` | 04, 06 |
 | [04](04_GRAPH_SAMPLE_REQUIREMENTS.md) | `standard/*.csv` + split JSON | PyG `HeteroData` per fold and role | 06 |

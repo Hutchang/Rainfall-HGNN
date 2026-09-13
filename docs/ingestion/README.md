@@ -8,7 +8,7 @@ Sources:
 | Source | Status | Code |
 |---|---|---|
 | Gauges (BoM Water Data Online) | implemented | `src/ingestion/gauge/` |
-| Radar (2022 preprocessed file) | not started, owner TBC | |
+| Radar (NCI THREDDS, BoM Rainfields 3) | implemented | `src/ingestion/radar/` |
 | Satellite (2022 preprocessed file) | not started, owner TBC | |
 
 ## Commands
@@ -158,11 +158,155 @@ Found while verifying the fetcher on 2026-09-05. None are in the requirements do
 Without `BOM_NETWORK=1` the same file runs offline against the sample in
 `tests/data/ingestion/`, which is what CI and a fresh clone use.
 
+## Radar
+
+Downloads BoM Rainfields 3 "Merged Gauge/Radar Accumulation (15 min)" (product
+`prcp-m15`) for the Sydney radar site from NCI's public THREDDS archive
+(`rq0/rainfields3`), one day's zip of ~15-minute NetCDF files at a time.
+
+```
+uv run python -m src.ingestion.radar.fetch config/ingestion/sydney.yaml
+```
+
+Run it again to resume: days already on disk are skipped. To refetch a day, delete its
+zip. `radar_node_coords.csv` is written once, the first time the command has at least
+one successfully-downloaded day to read a real grid definition from; delete it to
+regenerate from whatever is on disk then.
+
+The full run is both years for one site at `prcp-m15` — roughly 719 requests at one per
+second, ~1.4 GB, about 20 minutes. **Try it small first**, with `--sample`:
+
+```
+uv run python -m src.ingestion.radar.fetch config/ingestion/sydney.yaml --sample
+```
+
+This is a single flag that does two things at once, so you don't touch `database/raw/`
+while trying the fetcher out: it limits the run to the first 5 days of the configured
+period, and writes to `local/radar-sample/` instead of `output_dir`. Pass a number to
+change the day count (`--sample 20`); `local/radar-sample/` is gitignored, safe to
+delete, and independent of any real data you already have under `database/raw/`.
+
+`--limit N` and `--output-dir DIR` are the same two knobs spelled out separately, if you
+want only one of them (e.g. a custom count written to the real `database/raw/`) — either
+one, if given, overrides what `--sample` would otherwise pick:
+
+```
+uv run python -m src.ingestion.radar.fetch config/ingestion/sydney.yaml --output-dir local/test --limit 5
+```
+
+### What the radar fetcher writes
+
+```
+database/raw/
+  radar/
+    <YYYY>/<YYYY-MM-DD>.prcp-m15.zip   NCI's daily zip, unchanged
+    radar_node_coords.csv              node_id, latitude, longitude
+  index.csv
+  report.md
+```
+
+Each `index.csv` row has `source=radar_precip`, a blank `station_id`, and `start`/`end`
+both set to that day. `n_records` is the count of `.nc` files inside the zip (normally
+96 — one per 15 minutes; the server's own `_file_list` manifest entry doesn't count).
+
+`radar_node_coords.csv` has one row per grid cell — 512 × 512 = 262,144 rows, ordered to
+match `precipitation.values.flatten()` (the file's own y axis outer, x axis inner) —
+computed from a downloaded file's real CF projection metadata (`albers_conical_equal_area`,
+via `pyproj`), never assumed. See `src/ingestion/radar/coords.py`.
+
+### The NCI source
+
+Base URL `https://thredds.nci.org.au/thredds/fileServer/rq0/rainfields3`. Site `71` is
+`T_Hills` (Terrey Hills), the Sydney radar — confirmed from a downloaded file's own
+`station_name` attribute. Files are plain zips at a predictable URL; no catalog listing
+or authentication is needed to download one.
+
+Three products exist per site-year; this fetcher uses **`prcp-m15`** only:
+
+| Product | Contents | Size |
+|---|---|---|
+| `gndrefl` | raw reflectivity volumes | ~100–200 MB/day — too large for routine use |
+| `prcp-crate` | instantaneous precipitation rate | ~2–20 MB/day |
+| **`prcp-m15`** | Merged Gauge/Radar Accumulation, 15 min | ~2 MB/day, ~1.4 GB for 2021–2022 |
+
+`prcp-m15` is gauge-corrected: each file's `contributing_gauges` attribute lists the BoM
+`station_no` values used in the correction. Cross-check this list against the study's
+gauge stations before quoting a radar comparison — a held-out test station in that list
+means the comparison leaks.
+
+Each `.nc` file's `precipitation` variable is in kg/m² (≈ mm) accumulated over its own
+15-minute window — not mm/h, and not hourly. Component 02 sums four files per hour.
+
+### Changing what gets downloaded
+
+Everything that decides *which* radar data is fetched lives in `config/ingestion/sydney.yaml`'s
+`radar:` section — nothing is hard-coded in Python, the same principle as the gauge config.
+
+```yaml
+radar:
+  site_id: "71"          # which BoM radar site
+  product: prcp-m15      # which product from that site
+  api:
+    base_url: https://thredds.nci.org.au/thredds/fileServer/rq0/rainfields3
+    request_delay_seconds: 1
+    timeout_seconds: 120
+    user_agent: COMP3888-P23-ingestion/0.1 (university capstone)
+```
+
+| To change... | Edit... | Notes |
+|---|---|---|
+| **Which radar site** | `radar.site_id` | Any BoM site number from the `rq0` collection, e.g. `https://thredds.nci.org.au/thredds/catalog/rq0/rainfields3/catalog.html` lists them all. Changing this changes both the URL *and* the grid: coordinates are re-derived from that site's own files, never assumed, so `radar_node_coords.csv` will be centred on the new site. Delete the old `radar/` directory (or point `output_dir` somewhere new) rather than mixing sites in one run — the fetcher's consistency check (`assert_consistent_grid`) will refuse to build coordinates from files with different projections, exactly to catch this. |
+| **Which product** | `radar.product` | Stick to `prcp-m15` for real work — see the size/gauge-correction table above for why the other two are unsuitable. If you do change it, the daily-file naming pattern (`<site>_<YYYYMMDD>.<product>.zip`) is otherwise the same for all three, so no code changes are needed — only the config value. |
+| **Date range** | the top-level `start` / `end` (not inside `radar:`) | Shared with the gauge fetch — one study period for the whole config file. Both 2021 and 2022 are available on NCI for `prcp-m15`; going earlier than 2019 or into a year not yet listed under the site's catalog will 404 per-day, which the fetcher records as a `failed` row rather than crashing. |
+| **How polite to be to the server** | `radar.api.request_delay_seconds` | Seconds between requests. Raise it if you see repeated failures that look like rate-limiting; the fetcher already retries transient errors with backoff regardless. |
+| **A quick local try before a full run** | nothing in the config — use the `--sample` CLI flag instead (see above) | Keeps experiments out of both `database/raw/` and the YAML. |
+
+A minimal worked example — say you wanted only January 2022, to check the fetcher against
+one month without waiting for the full two years:
+
+```yaml
+# config/ingestion/sydney-jan2022.yaml — a copy of sydney.yaml with:
+start: 2022-01-01
+end: 2022-01-31
+```
+
+```
+uv run python -m src.ingestion.radar.fetch config/ingestion/sydney-jan2022.yaml
+```
+
+(Making a separate file rather than editing `sydney.yaml` in place keeps the real
+2021–2022 config intact — `load_config` validates whichever file you point it at, so
+any config under `config/ingestion/` works the same way.)
+
+### Verifying a run
+
+1. The log ends with a summary line and the process exits 0.
+2. `database/raw/report.md` shows failed days: none (or lists them with cause).
+3. `database/raw/index.csv` has one row per day in the configured period, `n_records`
+   normally 96, every `status` is `ok`.
+4. `database/raw/radar/radar_node_coords.csv` has 262,144 rows; spot-check that a
+   coordinate near the Sydney bounding box centre looks plausible on a map.
+5. Run the fetch command a second time. It should finish in seconds with
+   `0 fetched this run` and the same index row count.
+6. Run the acceptance tests against the live archive:
+
+   ```
+   NCI_NETWORK=1 uv run python -m pytest tests/test_ingestion_radar.py -v
+   ```
+
+Without `NCI_NETWORK=1` the same file runs offline against the trimmed real sample in
+`tests/data/ingestion/radar/`.
+
 ## Open questions
 
 - Whether the upper Blue Mountains (Katoomba, Blackheath; longitude below 150.4) are in
   scope for Greater Sydney. Blackheath G.C. is one of the 563083 collision pair and was
   in the inherited dataset. Project lead to decide; changing the box is one line in the
   YAML.
-- Radar and satellite provenance, units, and the missing satellite coordinates file. See
-  the requirements doc's open questions. Owner TBC.
+- Whether any of radar's `contributing_gauges` station numbers belong to a held-out test
+  station — check once Component 02/03 produce `standard/stations.csv` and the split.
+- Which specific radar days/hours are missing or corrupt in the full 2021–2022 fetch —
+  check `index.csv` for `failed` rows and `n_records` below 96 once a full run has been
+  done.
+- Satellite provenance, units, and the missing satellite coordinates file. See the
+  requirements doc's open questions. Owner TBC.
