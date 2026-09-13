@@ -1,6 +1,7 @@
 #sensitive data
 database/
 local/
+serverfiles/
 *.csv
 *.jpeg
 *.jsonl
