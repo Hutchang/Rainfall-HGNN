@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from src.ingestion.common import INDEX_COLUMNS
 from src.ingestion.config import load_config
 from src.ingestion.gauge import fetch
 from src.ingestion.gauge.kiwis import KiwisClient
@@ -144,7 +145,7 @@ def test_run_writes_layout_index_and_report(tmp_path):
 
     with (raw / "index.csv").open() as fh:
         rows = list(csv.DictReader(fh))
-    assert list(rows[0].keys()) == fetch.INDEX_COLUMNS
+    assert list(rows[0].keys()) == INDEX_COLUMNS
     assert len(rows) == 2 * (2 + 1)
     assert all(
         r["status"] == "ok" and r["n_records"] == "2" and len(r["sha256"]) == 64

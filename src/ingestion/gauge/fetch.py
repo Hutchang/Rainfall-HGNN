@@ -17,13 +17,13 @@ import argparse
 import calendar
 import csv
 import gzip
-import hashlib
 import json
 import sys
 import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from src.ingestion.common import now, sha256_of, write_index
 from src.ingestion.config import load_config
 from src.ingestion.gauge.kiwis import KiwisClient
 
@@ -83,7 +83,7 @@ def write_raw(path: Path, raw: bytes) -> str:
         gzip.GzipFile(filename="", fileobj=out, mode="wb", mtime=0) as fh,
     ):
         fh.write(raw)
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_of(path)
 
 
 def fetch_values(client: KiwisClient, ts_id: str, start: date, end: date, path: Path):
@@ -95,27 +95,6 @@ def fetch_values(client: KiwisClient, ts_id: str, start: date, end: date, path: 
 # ---------------------------------------------------------------------------
 # The run: every station in the box, every window, with resume and an index.
 # ---------------------------------------------------------------------------
-
-INDEX_COLUMNS = [
-    "source",
-    "station_id",
-    "path",
-    "start",
-    "end",
-    "n_records",
-    "status",
-    "error",
-    "retrieved_at",
-    "sha256",
-]
-
-
-def _now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _count_records(path: Path) -> int:
@@ -206,14 +185,14 @@ def fetch_window(client, source, sid, ts_id, label, start, end, path, raw_dir) -
             retrieved_at=datetime.fromtimestamp(path.stat().st_mtime, UTC).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             ),
-            sha256=_sha256(path),
+            sha256=sha256_of(path),
         )
         return row
     try:
         n, sha = fetch_values(client, ts_id, start, end, path)
-        row.update(n_records=n, status="ok", retrieved_at=_now(), sha256=sha)
+        row.update(n_records=n, status="ok", retrieved_at=now(), sha256=sha)
     except (RuntimeError, OSError) as e:
-        row.update(status="failed", error=str(e)[:200], retrieved_at=_now())
+        row.update(status="failed", error=str(e)[:200], retrieved_at=now())
     return row
 
 
@@ -315,13 +294,6 @@ def run(
     return len(failures) + len(no_series)
 
 
-def write_index(path: Path, rows: list[dict]) -> None:
-    with path.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=INDEX_COLUMNS)
-        w.writeheader()
-        w.writerows(rows)
-
-
 def write_report(
     path, cfg, stations, no_series, index, failures, skipped, fetched, seconds
 ) -> None:
@@ -333,7 +305,7 @@ def write_report(
         f"- period: {cfg['start']} to {cfg['end']} inclusive",
         f"- bounding box: {cfg['gauge']['bounds']}",
         f"- series: tips `{cfg['gauge']['series']['tips']}`, daily `{cfg['gauge']['series']['daily']}`",
-        f"- run finished: {_now()}, {seconds / 60:.1f} min",
+        f"- run finished: {now()}, {seconds / 60:.1f} min",
         "",
         "## Counts",
         "",
