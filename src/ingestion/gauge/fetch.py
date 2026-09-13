@@ -233,7 +233,7 @@ def skipped_row(source, sid, path, start, end, reason, raw_dir) -> dict:
     return {
         "source": source,
         "station_id": sid,
-        "path": str(path.relative_to(raw_dir)),
+        "path": path.relative_to(raw_dir).as_posix(),
         "start": start.isoformat(),
         "end": end.isoformat(),
         "n_records": "",
@@ -249,7 +249,7 @@ def fetch_window(client, source, sid, ts_id, label, start, end, path, raw_dir) -
     row = {
         "source": source,
         "station_id": sid,
-        "path": str(path.relative_to(raw_dir)),
+        "path": path.relative_to(raw_dir).as_posix(),
         "start": start.isoformat(),
         "end": end.isoformat(),
         "n_records": "",
