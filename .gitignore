@@ -6,6 +6,8 @@ local/
 *.jsonl
 *.png
 *.pth
+*.pkl
+australia/
 !tests/data/study/stations.csv
 !tests/data/study/stations_sydney.csv
 
@@ -220,3 +222,6 @@ __marimo__/
 
 # Experiments
 experiments
+
+# FROM HANDOVER NOTES FROM RICK
+!tests/data/graphs/*.csv

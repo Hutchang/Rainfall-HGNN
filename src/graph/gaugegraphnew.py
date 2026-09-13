@@ -85,9 +85,10 @@ class GaugeGraphNew:
         self.validation_heterodata = self.fill_heterodata("validation")
         self.test_heterodata = self.fill_heterodata("test")
 
-        self.train_heterodata = ToUndirected()(self.train_heterodata)
-        self.validation_heterodata = ToUndirected()(self.validation_heterodata)
-        self.test_heterodata = ToUndirected()(self.test_heterodata)
+        if not self.layer_is_directed:
+            self.train_heterodata = ToUndirected()(self.train_heterodata)
+            self.validation_heterodata = ToUndirected()(self.validation_heterodata)
+            self.test_heterodata = ToUndirected()(self.test_heterodata)
 
     def get_train_graph(self):
         return self.train_graph
@@ -123,7 +124,7 @@ class GaugeGraphNew:
     def build_graph(self, split: str):
         """
         BUILDS A GRAPH FOR TRAIN/VALIDATION/TEST
-        returns an nx graph
+        returns an nx digraph
         """
         match split:
             case "train":
@@ -172,7 +173,7 @@ class GaugeGraphNew:
                 row_edges = [(nidx, w / row_max) for nidx, w in row_edges]
 
             for neighbor_idx, w in row_edges:
-                G.add_edge(i, neighbor_idx, weight=w)
+                G.add_edge(neighbor_idx, i, weight=w)
 
         return G
 
@@ -186,27 +187,23 @@ class GaugeGraphNew:
         validation_mask = np.zeros(self.mapping_df.shape[0], dtype=bool)
         test_mask = np.zeros(self.mapping_df.shape[0], dtype=bool)
 
+        # remove the ["order"] usage and just use the index of the mapping_df 
+        # directly to set the masks, as the order column is no longer needed after filtering
         train_mask[
-            self.mapping_df["order"][
-                self.mapping_df["id"].isin(self.train_gauges)
-            ].index.to_list()
+            self.mapping_df[self.mapping_df["id"].isin(self.train_gauges)].index.to_list()
         ] = True
         validation_mask[
-            self.mapping_df["order"][
-                self.mapping_df["id"].isin(self.validation_gauges)
-            ].index.to_list()
+            self.mapping_df[self.mapping_df["id"].isin(self.validation_gauges)].index.to_list()
         ] = True
         test_mask[
-            self.mapping_df["order"][
-                self.mapping_df["id"].isin(self.test_gauges)
-            ].index.to_list()
+            self.mapping_df[self.mapping_df["id"].isin(self.test_gauges)].index.to_list()
         ] = True
         return train_mask, validation_mask, test_mask
 
     def fill_heterodata(self, graph: str) -> HeteroData:
         heterodata = HeteroData()
         rainfall_values = torch.tensor(
-            self.raingauge_df.values.T, dtype=torch.float32
+            self.raingauge_df.fillna(0.0).values.T, dtype=torch.float32
         )
         rainfall_validity = torch.tensor(
             self.raingauge_df.notna().astype(int).values.T, dtype=torch.int16
@@ -327,22 +324,22 @@ class GaugeGraphNew:
         # Connect the raingauge and the radar
         train_raingauge_coords = list(
             zip(
-                self.mapping_df[self.train_mask]["longitude"],
                 self.mapping_df[self.train_mask]["latitude"],
+                self.mapping_df[self.train_mask]["longitude"],
             )
         )
         val_raingauge_coords = list(
             zip(
                 self.mapping_df[np.logical_or(self.train_mask, self.val_mask)][
-                    "longitude"
+                    "latitude"
                 ],
                 self.mapping_df[np.logical_or(self.train_mask, self.val_mask)][
-                    "latitude"
+                    "longitude"
                 ],
             )
         )
         test_raingauge_coords = list(
-            zip(self.mapping_df["longitude"], self.mapping_df["latitude"])
+            zip(self.mapping_df["latitude"], self.mapping_df["longitude"])
         )
 
         train_connecting_edges, train_connecting_edge_weight = self.connect_graphs(
@@ -439,10 +436,13 @@ class GaugeGraphNew:
             row_weights = []
             for j in range(knn):
                 edge_list.append((i, indices[i, j]))
+                dist = distances[i, j]
                 if self.inverse_weighted:
-                    row_weights.append(1 / distances[i, j])
+                    # Added safety factor to prevent division by zero
+                    weight = 1.0 / dist if dist > 0 else 1e-6
+                    row_weights.append(weight)
                 else:
-                    row_weights.append(distances[i, j])
+                    row_weights.append(dist)
 
             if self.edge_normalisation == "per_node" and self.inverse_weighted:
                 row_max = max(row_weights)
