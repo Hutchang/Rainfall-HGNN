@@ -1,5 +1,7 @@
 import os
 import json
+from pathlib import Path
+
 import torch
 import pandas as pd
 from src.utils import read_config
@@ -7,11 +9,11 @@ from src.graph.gaugegraphnew import GaugeGraphNew #file is "graph" not "graphs" 
 from src.graph.radargraphnew import RadarGraphNew 
 
 def build_baseline_graphs(
-    gauge_config="config/graph/gauge_baseline.yaml", 
+    gauge_config="config/graphs/gauge_baseline.yaml", 
     data_dir="database/standard", 
     baseline_dir="database/graph/baseline",
     radar_dir="database/graph/radar_fusion"
-    #changed to /graph rather than /graphs as the folder is named graph not graphs
+    # config/graphs/ is the contract path (AGENTS.md, IMPLEMENTATION_HANDOFF.md, 04 requirements)
 ):
     """
     Ingests standard data, constructs baseline gauge graphs, 
@@ -50,23 +52,48 @@ def build_baseline_graphs(
 
 
     #build the radar graph
+    # Radar is optional. Component 02 does not write radar tables yet, and the
+    # gauge-only baseline must stay buildable without them
+    # (04 contract: "Build gauge-only first and radar second").
+    radar_layer = None
+    radar_nodes_df = None
+    radar_nodes_path = Path(data_dir) / "radar_nodes.csv"
+    radar_hourly_path = Path(data_dir) / "radar_hourly.csv"
 
-    radar_nodes_df = pd.read_csv(f"{data_dir}/radar_nodes.csv")
-    long_radar_df = pd.read_csv(f"{data_dir}/radar_hourly.csv")
+    if radar_nodes_path.exists() and radar_hourly_path.exists():
+        radar_nodes_df = pd.read_csv(radar_nodes_path)
+        long_radar_df = pd.read_csv(radar_hourly_path)
 
-    # Pivot, handle missing data, and reshape to [952, T, 1]
-    wide_radar_df = long_radar_df.pivot(index="timestamp", columns="node_id", values="rain_rate").fillna(0)
-    radar_tensor = torch.tensor(wide_radar_df.values.T, dtype=torch.float32).unsqueeze(-1)
+        # Pivot and reshape to [952, T, 1]
+        wide_radar_df = long_radar_df.pivot(
+            index="timestamp", columns="node_id", values="rain_rate"
+        )
 
-    # Instantiate your new class
-    radar_builder = RadarGraphNew(
-        radar_tensor=radar_tensor,
-        coords_df=radar_nodes_df,
-        knn=8,
-        distance_metric="haversine_km"
-    )
+        missing = int(wide_radar_df.isna().to_numpy().sum())
+        if missing:
+            raise ValueError(
+                f"{radar_hourly_path} has {missing} missing radar values. "
+                "Filling them with 0.0 would tell the model that no rain fell "
+                "where nothing was measured (requirements README rule 4; "
+                "04 rule 5). Carrying gaps needs a validity channel like "
+                "satellite's [nodes, T, 2], which changes in_channels_dict - "
+                "agree it with the Component 02 and 06 owners first."
+            )
 
-    radar_layer = radar_builder.heterodata
+        radar_tensor = torch.tensor(
+            wide_radar_df.values.T, dtype=torch.float32
+        ).unsqueeze(-1)
+
+        radar_builder = RadarGraphNew(
+            radar_tensor=radar_tensor,
+            coords_df=radar_nodes_df,
+            knn=8,
+            distance_metric="haversine_km"
+        )
+
+        radar_layer = radar_builder.heterodata
+    else:
+        print(f"no radar tables in {data_dir}; building gauge-only graphs")
 
     #build the satellite graph
 
@@ -96,22 +123,24 @@ def build_baseline_graphs(
         torch.save(graph_builder.get_test_heterodata(), f"{baseline_fold_dir}/test.pt") 
 
         #add layer to gauge graph
-        graph_builder.add_heterodata(
-            heterodata_layer=radar_layer,
-            coords=radar_nodes_df,
-            layer_name="radar",
-            knn=4
-        )
+        if radar_layer is not None:
+            graph_builder.add_heterodata(
+                heterodata_layer=radar_layer,
+                coords=radar_nodes_df,
+                layer_name="radar",
+                knn=4
+            )
 
-        train_fused, val_fused, test_fused = graph_builder.get_fused_heterodata()
+            train_fused, val_fused, test_fused = graph_builder.get_fused_heterodata()
 
-        #save radar and gauge fused graphs
-        radar_fold_dir = f"{radar_dir}/fold-{i}"
-        os.makedirs(radar_fold_dir, exist_ok=True)
-        
-        torch.save(train_fused, f"{radar_fold_dir}/train.pt")
-        torch.save(val_fused, f"{radar_fold_dir}/validation.pt")
-        torch.save(test_fused, f"{radar_fold_dir}/test.pt")
-        
-    print(f"✅ Baseline graphs saved to {baseline_dir}")
-    print(f"✅ Combined radar graphs saved to {radar_dir}")
+            #save radar and gauge fused graphs
+            radar_fold_dir = f"{radar_dir}/fold-{i}"
+            os.makedirs(radar_fold_dir, exist_ok=True)
+
+            torch.save(train_fused, f"{radar_fold_dir}/train.pt")
+            torch.save(val_fused, f"{radar_fold_dir}/validation.pt")
+            torch.save(test_fused, f"{radar_fold_dir}/test.pt")
+
+    print(f"Baseline graphs saved to {baseline_dir}")
+    if radar_layer is not None:
+        print(f"Combined radar graphs saved to {radar_dir}")
