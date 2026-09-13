@@ -242,6 +242,10 @@ def stratified_spatial_kfold_dual(
     Perform Spatial K-Fold Cross-Validation with stratified sampling using K-means clustering.
 
     Key feature: Ensures EXACTLY ONE test station per cluster per fold (when cluster size allows).
+    
+    TODO (extension): ^^ if two stations are right next to each other geographically, only one
+    is in a test fold and the other could be in the train/val subset  holding out one test station which is right next to another test station
+    means model scan simply predict using the known data point 
 
     Each fold has:
       - Statistical method: train/test split (no overlap)
