@@ -2,6 +2,7 @@ import os
 import json
 from pathlib import Path
 import sys
+import numpy as np
 
 
 import torch
@@ -52,10 +53,15 @@ def build_baseline_graphs(
         values="rainfall_mm"
     )
 
-    # NEW PADDING LOGIC: Fill missing stations with 0.0
+    # # NEW PADDING LOGIC: Fill missing stations with 0.0
+    # missing_stations = set(mapping_df["id"]) - set(data_df.columns)
+    # for station in missing_stations:
+    #     data_df[station] = 0.0
+
+    # NEW PADDING LOGIC: Fill missing stations with NaN so the mask catches them
     missing_stations = set(mapping_df["id"]) - set(data_df.columns)
     for station in missing_stations:
-        data_df[station] = 0.0
+        data_df[station] = np.nan
 
 
     #build the radar graph
