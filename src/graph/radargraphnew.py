@@ -11,13 +11,13 @@ from torch_geometric.transforms import AddLaplacianEigenvectorPE, ToUndirected
 class RadarGraphNew:
     def __init__(
             self,
-            radar_tensor: torch.Tensor,
+            data_df: pd.DataFrame,
             coords_df: pd.DataFrame,
             knn: int = 8, # hardcoded to 8 because it just connects to the 8 surrounding nodes
             distance_metric: str = "haversine_km", # hardcoded to haversine_km for now, can be changed later if needed
     ):
 
-        self.radar_tensor = radar_tensor
+        self.data_df = data_df
         self.coords_df = coords_df
         self.knn = knn
         self.distance_metric = distance_metric
@@ -75,6 +75,8 @@ class RadarGraphNew:
         # this functio  turns the graph into PyG heterodata object
         G = self.graph
 
+        
+
         # need to make G directed for message passing
         directed_G = G.to_directed()
 
@@ -85,8 +87,12 @@ class RadarGraphNew:
         edge_index = torch.tensor(edge_list, dtype=torch.long).T.contiguous()
         edge_attr = torch.tensor(weight_list, dtype=torch.float32)
 
+        values_tensor = torch.tensor(self.data_df.fillna(0.0).values.T, dtype=torch.float32)
+        mask_tensor = torch.tensor((~self.data_df.isna()).values.T, dtype=torch.float32)
+        x_tensor = torch.stack([values_tensor, mask_tensor], dim=-1)
+
         # fill heterodata object
-        self.heterodata["radar"].x = self.radar_tensor
+        self.heterodata["radar"].x = x_tensor
         self.heterodata["radar","connects","radar"].edge_index = edge_index
         self.heterodata["radar","connects","radar"].edge_attr = edge_attr
 

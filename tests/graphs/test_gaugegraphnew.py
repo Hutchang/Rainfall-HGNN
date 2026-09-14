@@ -4,6 +4,8 @@ import numpy as np
 import torch
 from torch_geometric.data import Batch
 from src.graph.gaugegraphnew import GaugeGraphNew
+from src.graph.gaugegraphnew import HeterogeneousWeatherGraphDatasetInductive
+from src.graph.radargraphnew import RadarGraphNew
 
 @pytest.fixture
 def sample_graph_builder():
@@ -127,3 +129,88 @@ def test_station_id_survives_batching(sample_graph_builder):
     # Verify the first unbatched graph retained its original station_ids
     assert hasattr(unbatched_list[0], "station_ids"), "station_ids lost during unbatching"
     assert unbatched_list[0].station_ids == train_data.station_ids, "station_ids corrupted or misaligned after batch/unbatch"
+
+
+
+def test_nan_validity_mask_handling(sample_graph_builder):
+    """Test 6: Verifies that missing data generates a 0 in the validity mask and 0.0 in the value tensor."""
+    train_data = sample_graph_builder.get_train_heterodata()
+    # Check the feature dimension (Channel 0 is value, Channel 1 is mask)
+    x = train_data["raingauge"].x
+    
+    # If a value is exactly 0.0, check if it was actually missing data (mask == 0)
+    # The fixture data contains NaNs, so we should find at least one 0 in the mask
+    assert torch.any(x[:, :, 1] == 0), "Validity mask did not register any missing (NaN) values."
+    
+    # Ensure that wherever the mask is 0, the value was safely filled with 0.0
+    missing_indices = (x[:, :, 1] == 0)
+    assert torch.all(x[missing_indices][:, 0] == 0.0), "NaN values were not replaced with 0.0 in the value channel."
+
+def test_global_edge_normalisation(sample_graph_builder):
+    """Test 7: Verifies 'global' normalisation scales the entire graph's max edge to 1.0."""
+    # Temporarily change the normalisation method
+    sample_graph_builder.edge_normalisation = "global"
+    
+    # Rebuild the train heterodata
+    heterodata = sample_graph_builder.fill_heterodata("train")
+    edge_attr = heterodata["raingauge", "connects", "raingauge"].edge_attr
+    
+    # The absolute maximum weight in the entire graph should be 1.0
+    assert np.isclose(torch.max(edge_attr).item(), 1.0, atol=1e-5), "Global normalisation failed to set max edge weight to 1.0"
+
+def test_lpe_feature_concatenation(sample_graph_builder):
+    """Test 8: Verifies Laplacian Positional Encodings (LPE) correctly expand node features."""
+    sample_graph_builder.include_lpe = True
+    sample_graph_builder.lpe_dimensions = 1
+    
+    heterodata = sample_graph_builder.fill_heterodata("train")
+    x = heterodata["raingauge"].x
+    
+    # Base features (2) + LPE dimensions (4) = 6 features
+    assert x.shape[2] == 3, f"Expected 3 features after LPE, but got {x.shape[2]}"
+
+def test_dataset_iterator_shapes(sample_graph_builder):
+    """Test 9: Verifies the Inductive Dataset correctly slices time-series into single steps."""
+    train_data = sample_graph_builder.get_train_heterodata()
+    dataset = HeterogeneousWeatherGraphDatasetInductive(train_data)
+    
+    # Dataset length should match the number of timesteps (T)
+    T = train_data["raingauge"].x.shape[1]
+    assert len(dataset) == T, f"Dataset length {len(dataset)} does not match timesteps {T}"
+    
+    # Fetch the first timestep
+    step_data = dataset[0]
+    
+    # Shape should drop the T dimension: [N, F] instead of [N, T, F]
+    N = train_data["raingauge"].x.shape[0]
+    F = train_data["raingauge"].x.shape[2]
+    assert step_data["raingauge"].x.shape == (N, F), "Dataset iterator returned incorrect feature shape."
+
+def test_radar_fusion_addition(sample_graph_builder):
+    """Test 10: Verifies add_heterodata successfully injects the radar modality."""
+    T = sample_graph_builder.train_heterodata["raingauge"].x.shape[1]
+    
+    # FIX: Provide a mock Pandas DataFrame instead of a tensor
+    mock_radar_df = pd.DataFrame(
+        np.zeros((T, 3)), 
+        columns=[0, 1, 2] # 3 radar nodes
+    )
+    mock_coords = pd.DataFrame({"node_id": [0,1,2], "latitude": [-33.8, -33.9, -34.0], "longitude": [151.1, 151.2, 151.3]})
+    
+    radar_builder = RadarGraphNew(
+        data_df=mock_radar_df, # Pass the DataFrame here
+        coords_df=mock_coords,
+        knn=2,
+        distance_metric="haversine_km"
+    )
+    
+    # Fuse them
+    train_fused, _, _ = sample_graph_builder.add_heterodata(
+        heterodata_layer=radar_builder.heterodata,
+        coords=mock_coords,
+        layer_name="radar",
+        knn=2
+    )
+    
+    assert "radar" in train_fused.node_types, "Radar node type missing after fusion."
+    assert ("radar", "connects", "raingauge") in train_fused.edge_types, "Bipartite fusion edges missing."

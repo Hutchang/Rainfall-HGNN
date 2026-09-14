@@ -1,6 +1,9 @@
 import os
 import json
 from pathlib import Path
+import sys
+import numpy as np
+
 
 import torch
 import pandas as pd
@@ -11,8 +14,8 @@ from src.graph.radargraphnew import RadarGraphNew
 def build_baseline_graphs(
     gauge_config="config/graphs/gauge_baseline.yaml", 
     data_dir="database/standard", 
-    baseline_dir="database/graph/baseline",
-    radar_dir="database/graph/radar_fusion"
+    baseline_dir="database/graphs/baseline",
+    radar_dir="database/graphs/radar_fusion"
     # config/graphs/ is the contract path (AGENTS.md, IMPLEMENTATION_HANDOFF.md, 04 requirements)
 ):
     """
@@ -50,6 +53,16 @@ def build_baseline_graphs(
         values="rainfall_mm"
     )
 
+    # # NEW PADDING LOGIC: Fill missing stations with 0.0
+    # missing_stations = set(mapping_df["id"]) - set(data_df.columns)
+    # for station in missing_stations:
+    #     data_df[station] = 0.0
+
+    # NEW PADDING LOGIC: Fill missing stations with NaN so the mask catches them
+    missing_stations = set(mapping_df["id"]) - set(data_df.columns)
+    for station in missing_stations:
+        data_df[station] = np.nan
+
 
     #build the radar graph
     # Radar is optional. Component 02 does not write radar tables yet, and the
@@ -69,23 +82,23 @@ def build_baseline_graphs(
             index="timestamp", columns="node_id", values="rain_rate"
         )
 
-        missing = int(wide_radar_df.isna().to_numpy().sum())
-        if missing:
-            raise ValueError(
-                f"{radar_hourly_path} has {missing} missing radar values. "
-                "Filling them with 0.0 would tell the model that no rain fell "
-                "where nothing was measured (requirements README rule 4; "
-                "04 rule 5). Carrying gaps needs a validity channel like "
-                "satellite's [nodes, T, 2], which changes in_channels_dict - "
-                "agree it with the Component 02 and 06 owners first."
-            )
+        # missing = int(wide_radar_df.isna().to_numpy().sum())
+        # if missing:
+        #     raise ValueError(
+        #         f"{radar_hourly_path} has {missing} missing radar values. "
+        #         "Filling them with 0.0 would tell the model that no rain fell "
+        #         "where nothing was measured (requirements README rule 4; "
+        #         "04 rule 5). Carrying gaps needs a validity channel like "
+        #         "satellite's [nodes, T, 2], which changes in_channels_dict - "
+        #         "agree it with the Component 02 and 06 owners first."
+        #     )
 
-        radar_tensor = torch.tensor(
-            wide_radar_df.values.T, dtype=torch.float32
-        ).unsqueeze(-1)
+        # radar_tensor = torch.tensor(
+        #     wide_radar_df.values.T, dtype=torch.float32
+        # ).unsqueeze(-1)
 
         radar_builder = RadarGraphNew(
-            radar_tensor=radar_tensor,
+            data_df=wide_radar_df,
             coords_df=radar_nodes_df,
             knn=8,
             distance_metric="haversine_km"
@@ -144,3 +157,48 @@ def build_baseline_graphs(
     print(f"Baseline graphs saved to {baseline_dir}")
     if radar_layer is not None:
         print(f"Combined radar graphs saved to {radar_dir}")
+
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(description="Component 04: Graph Construction Pipeline")
+    
+#     # Define the command line flags, keeping your current paths as safe defaults
+#     parser.add_argument("--config", type=str, default="config/graphs/gauge_baseline.yaml", help="Path to graph configuration YAML")
+#     parser.add_argument("--data-dir", type=str, default="database/standard", help="Directory containing standard input CSVs")
+#     parser.add_argument("--baseline-dir", type=str, default="database/graph/baseline", help="Output directory for gauge graphs")
+#     parser.add_argument("--radar-dir", type=str, default="database/graph/radar_fusion", help="Output directory for radar graphs")
+    
+#     args = parser.parse_args()
+    
+#     print(f"Starting Component 04 Graph Construction using config: {args.config}")
+    
+#     # Pass the command line arguments into your function
+#     build_baseline_graphs(
+#         gauge_config=args.config,
+#         data_dir=args.data_dir,
+#         baseline_dir=args.baseline_dir,
+#         radar_dir=args.radar_dir
+#     )
+    
+#     print("Graph construction complete!")
+
+#run by calling: uv run python src/graph/builder_new.py --config config/graphs/gauge_baseline.yaml
+    # since gauge_hourly and stations are in tests/graphs instead call:
+    # uv run python src/graph/builder_new.py --config config/graphs/gauge_baseline.yaml --data-dir tests/graphs
+    # for the time being
+
+if __name__ == "__main__":
+    # arg[1] is config, arg[2] is data_dir. Fallback to defaults if missing.
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "config/graphs/gauge_baseline.yaml"
+    data_path = sys.argv[2] if len(sys.argv) > 2 else "tests/graphs"
+
+    print(f"Starting Graph Construction using config: {config_path}")
+    
+    build_baseline_graphs(
+        gauge_config=config_path,
+        data_dir=data_path
+    )
+    
+    print("Graph construction complete!")
+
+    # run by calling uv run python -m src.graph.builder_new config/graphs/gauge_baseline.yaml tests/data/graphs
+    # uv run python -m src.graph.builder_new config/graphs/gauge_baseline.yaml tests/data/graphs

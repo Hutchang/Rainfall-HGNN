@@ -3,7 +3,8 @@ distance: haversine_km        # or euclidean_degrees for the inherited compariso
 edge_normalisation: per_node  # or global for the inherited comparison
 include_lpe: true
 lpe_dimensions: 4
-layer_is_directed: false  #made it lowercase l at the start of layer_is_directed to match the other keys in the yaml file
+# if edge_normalisation is per_node then LAYER MUST BE DIRECTED
+layer_is_directed: true  #made it lowercase l at the start of layer_is_directed to match the other keys in the yaml file
 split_file: 
 station_file:
 gauge_file: 
