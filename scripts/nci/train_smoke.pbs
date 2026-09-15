@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#PBS -P no50
+#PBS -q dgxa100
+#PBS -N rainflow-smoke
+#PBS -l ncpus=16
+#PBS -l ngpus=1
+#PBS -l mem=48GB
+#PBS -l jobfs=10GB
+#PBS -l walltime=00:10:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+if [[ ${PBS_NGPUS:-0} != 1 ]]; then
+    printf 'BLOCKED: the smoke job requires one allocated GPU.\n' >&2
+    exit 1
+fi
+
+# The Linux environment must already exist. Compute nodes do not install/download.
+export PYTHONDONTWRITEBYTECODE=1
+export OMP_NUM_THREADS=${PBS_NCPUS:-16}
+export MPLBACKEND=Agg
+config_file=${NCI_MODEL_CONFIG:-config/models/hgnn.yaml}
+epochs=${NCI_SMOKE_EPOCHS:-2}
+if [[ $epochs != 1 && $epochs != 2 ]]; then
+    printf 'BLOCKED: NCI_SMOKE_EPOCHS must be 1 or 2. Use a reviewed production job for longer training.\n' >&2
+    exit 1
+fi
+
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+git status --short
+nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+bash scripts/nci/preflight.sh --cuda "$config_file"
+exec .venv/bin/python -B -u -m src.models.run "$config_file" --epochs "$epochs" --device cuda

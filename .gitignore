@@ -225,3 +225,6 @@ experiments
 
 # FROM HANDOVER NOTES FROM RICK
 !tests/data/graphs/*.csv
+# NCI job output belongs with the private experiment record.
+/rainflow-env.o*
+/rainflow-smoke.o*

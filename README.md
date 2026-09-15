@@ -87,6 +87,9 @@ Python 3.14 or newer, managed with [uv](https://docs.astral.sh/uv/). `pyproject.
 declares the direct dependencies and `uv.lock` pins the exact resolved environment.
 `requirements.txt` and `requirements-dev.txt` were deleted when the project moved to uv
 in `a25ac5f`; do not reintroduce them as dependency authority.
+=======
+Use the repository's locked uv environment. `pyproject.toml` currently requires Python
+3.14 or later and `uv.lock` records the resolved dependencies:
 
 ```console
 uv sync --locked
@@ -98,6 +101,11 @@ tools. Do not install project packages directly with pip.
 The default PyTorch package is suitable for CPU onboarding. Install the matching CUDA
 wheel from the official PyTorch index only when a component actually needs GPU work.
 Record the chosen build in run metadata.
+=======
+The macOS environment supports CPU onboarding. Prepare a separate Linux environment
+for Gadi; do not copy the macOS `.venv` or replace locked dependencies with ad-hoc pip
+installs. See the [training guide](docs/models/README.md) and
+[Gadi setup](docs/nci/README.md) for the Component 06 runner and CUDA compatibility checks.
 
 Run the current checks with:
 

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#PBS -P no50
+#PBS -q copyq
+#PBS -N rainflow-env
+#PBS -l ncpus=1
+#PBS -l mem=8GB
+#PBS -l jobfs=20GB
+#PBS -l walltime=00:30:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+umask 077
+
+task_stage=allocation-check
+trap 'task_exit_code=$?; if [[ $task_exit_code -ne 0 ]]; then printf "ENVIRONMENT_STATUS=FAILED stage=%s exit=%s\n" "$task_stage" "$task_exit_code" >&2; fi' EXIT
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} || -z ${PBS_JOBFS:-} ]]; then
+    printf 'BLOCKED: submit through PBS copyq from the scratch repository root.\n' >&2
+    exit 1
+fi
+if [[ ${PBS_O_QUEUE:-} != copyq || ${PBS_NCPUS:-0} != 1 ]]; then
+    printf 'BLOCKED: this preparation job requires copyq with one CPU.\n' >&2
+    exit 1
+fi
+if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
+    printf 'BLOCKED: the pinned uv asset requires x86_64 Linux.\n' >&2
+    exit 1
+fi
+task_user=$(id -un)
+task_scratch="/scratch/no50/$task_user"
+cd "$PBS_O_WORKDIR"
+task_repo=$(pwd -P)
+case "$task_repo" in
+    "$task_scratch"/*) ;;
+    *) printf 'BLOCKED: the repository must be below %s.\n' "$task_scratch" >&2; exit 1 ;;
+esac
+for task_file in pyproject.toml uv.lock scripts/nci/check_environment.py \
+    scripts/nci/preflight.sh tests/data/models/make_fixture.py config/models/hgnn.yaml; do
+    if [[ ! -f $task_file ]]; then
+        printf 'BLOCKED: missing deployment file %s.\n' "$task_file" >&2
+        exit 1
+    fi
+done
+task_locked_files=$(sha256sum pyproject.toml uv.lock)
+printf 'PBS job: %s; host: %s; checkout: %s\n' "$PBS_JOBID" "$(hostname)" "$task_repo"
+
+task_stage=uv-download-and-verification
+task_uv_version=0.10.5
+task_asset=uv-x86_64-unknown-linux-gnu.tar.gz
+task_expected_sha256=bcb127225873baa5ebd23cf09f29996cc97c1091830c9933e2e320bf1429a584
+task_release="https://github.com/astral-sh/uv/releases/download/$task_uv_version"
+task_bootstrap="$PBS_JOBFS/rainflow-uv-bootstrap"
+mkdir -p "$task_bootstrap"
+curl --proto '=https' --tlsv1.2 --fail --show-error --location \
+    --connect-timeout 30 --max-time 300 --retry 2 \
+    "$task_release/$task_asset" -o "$task_bootstrap/$task_asset"
+curl --proto '=https' --tlsv1.2 --fail --show-error --location \
+    --connect-timeout 30 --max-time 120 --retry 2 \
+    "$task_release/$task_asset.sha256" -o "$task_bootstrap/$task_asset.sha256"
+read -r task_received_sha256 task_received_name task_extra < "$task_bootstrap/$task_asset.sha256"
+if [[ $task_received_sha256 != "$task_expected_sha256" || $task_received_name != "$task_asset" || -n $task_extra ]]; then
+    printf 'BLOCKED: the official uv checksum sidecar differs from the reviewed release.\n' >&2
+    exit 1
+fi
+(
+    cd "$task_bootstrap"
+    printf '%s  %s\n' "$task_expected_sha256" "$task_asset" | sha256sum --check -
+)
+tar -xzf "$task_bootstrap/$task_asset" -C "$task_bootstrap" \
+    uv-x86_64-unknown-linux-gnu/uv
+
+task_stage=uv-install
+task_bin="$task_scratch/.local/bin"
+task_uv="$task_bin/uv"
+mkdir -p "$task_bin"
+if [[ -e $task_uv ]] && ! cmp -s "$task_uv" "$task_bootstrap/uv-x86_64-unknown-linux-gnu/uv"; then
+    printf 'BLOCKED: %s already contains a different uv binary; preserve it and review the version choice.\n' "$task_uv" >&2
+    exit 1
+fi
+if [[ ! -e $task_uv ]]; then
+    install -m 700 "$task_bootstrap/uv-x86_64-unknown-linux-gnu/uv" "$task_uv"
+fi
+"$task_uv" --version
+
+task_stage=locked-python-environment
+export UV_PYTHON_INSTALL_DIR="$task_scratch/.local/share/uv/python"
+export UV_CACHE_DIR="$PBS_JOBFS/rainflow-uv-cache"
+export UV_PROJECT_ENVIRONMENT="$task_repo/.venv"
+export UV_LINK_MODE=copy
+export PYTHONDONTWRITEBYTECODE=1
+export OMP_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export MPLBACKEND=Agg
+"$task_uv" sync --locked --python 3.14.3
+if [[ $(sha256sum pyproject.toml uv.lock) != "$task_locked_files" ]]; then
+    printf 'BLOCKED: dependency authority files changed during preparation.\n' >&2
+    exit 1
+fi
+
+task_stage=environment-check
+.venv/bin/python -B scripts/nci/check_environment.py
+task_stage=synthetic-fixture-generation
+task_fixture="$task_repo/experiments/nci-fixture-$PBS_JOBID"
+.venv/bin/python -B tests/data/models/make_fixture.py "$task_fixture"
+task_stage=synthetic-input-preflight
+bash scripts/nci/preflight.sh "$task_fixture/config.yaml"
+
+printf 'ENVIRONMENT_STATUS=READY\n'
+printf 'NCI_FIXTURE_CONFIG=%s/config.yaml\n' "$task_fixture"
+printf 'UV_EXECUTABLE=%s\n' "$task_uv"
+printf 'PRODUCTION_STATUS=PENDING: real Component 02/03/04 inputs are separate from this synthetic software check.\n'
+printf 'No GPU training or shell-profile modification was performed.\n'
