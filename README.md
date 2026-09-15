@@ -77,6 +77,9 @@ reading:
   for changing a component contract.
 - [Legacy-code guide](docs/LEGACY_CODE.md) — retained transitional code, restored
   reference areas, and removed entry points.
+- [Satellite and radar adapter](docs/grids/README.md) — the grid adapter called task 06
+  in the 10 September team discussion: standard tables, node features and an offline
+  example. The existing 06 requirements document above describes training separately.
 - [Client briefing](docs/CLIENT_BRIEFING.md) — external decisions and approval asks.
 - [Historical archive](docs/archive/README.md) — reconciliation audits, smoke records,
   and superseded planning documents.
