@@ -1,5 +1,5 @@
 """Component 01, gauge source: acceptance tests from
-docs/requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md "Done when".
+docs/archive/sprint1/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md "Done when".
 
 Offline tests use a fake client and the committed sample under tests/data/ingestion/.
 Network tests hit the live BoM API and are skipped unless BOM_NETWORK=1 is set:

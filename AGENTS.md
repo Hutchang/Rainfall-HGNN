@@ -72,7 +72,7 @@ Create these packages and configuration directories only when their owner begins
 | 01 — source data | `src/ingestion/` | `config/ingestion/` |
 | 02 — standard dataset | `src/canonical/` | `config/canonical/` |
 | 03 — study splits | `src/study/`, `src/reproducibility/` | `config/splits/`, `config/seeds.yaml` |
-| 04 — graph samples | `src/graphs/` | `config/graphs/` |
+| 04 — graph samples | `src/graph/` | `config/graphs/` |
 | 06 — model adapters | `src/models/` | `config/models/` |
 
 An owner may use a clearly labelled stub or small test sample while an earlier component

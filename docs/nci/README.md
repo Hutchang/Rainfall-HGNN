@@ -107,7 +107,7 @@ Set the model YAML paths to the verified files:
 Relative paths resolve from the repository root. These are the runner's own config
 keys, not a second data interface. Graph files must be trusted team-produced artifacts;
 their presence is not scientific validation. Component 06 does not rebuild graphs or
-splits. Review the [06 contract](../requirements/06_MODEL_ADAPTER_REQUIREMENTS.md) and
+splits. Review the [archived Sprint 1 06 contract](../archive/sprint1/06_MODEL_ADAPTER_REQUIREMENTS.md) and
 the adjacent component outputs before production training.
 
 ## 3. Prepare the exact environment before the GPU job

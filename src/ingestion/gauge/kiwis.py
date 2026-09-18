@@ -1,6 +1,6 @@
 """Thin client for BoM Water Data Online (KiWIS query services).
 
-Three requests, matching docs/requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md:
+Three requests, matching docs/archive/sprint1/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md:
 getStationList, getTimeseriesList, getTimeseriesValues. Every function returns the
 server's response bytes untouched alongside the parsed JSON, so callers can store the
 raw bytes and only use the parsed form for counting and bookkeeping.

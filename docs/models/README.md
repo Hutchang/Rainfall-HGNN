@@ -13,11 +13,16 @@ its metrics are not rainfall research results.
 
 ## Component 06 scope and integration
 
-[Rainflow Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) assigns
-Oliver training, predictions, baselines and radar/satellite model support. The combined
-branch includes 02/03/04 and connects their published outputs through the
-[pipeline guide](../graphs/README.md). The [handoff](../IMPLEMENTATION_HANDOFF.md)
-records component-owner review points and remaining real-data dependencies.
+Component 06 covers training, predictions, baselines and radar/satellite model support.
+It is integrated with 02, 03 and 04; their published outputs are connected through the
+[pipeline guide](../graphs/README.md).
+
+Open decisions and dependencies affecting this component are tracked in
+[ISSUES.md](../ISSUES.md), not here: **ISS-07** (donor policy differs between 04 and 06),
+**ISS-08** (IDW exponent unprescribed), **ISS-09** (no normalization metadata in the graph
+contract), and **ISS-02**, **ISS-03**, **ISS-04** (radar and satellite provenance,
+coordinates and coverage).
+Do not claim accepted fusion results while those are open.
 
 ## Install and run
 
@@ -155,10 +160,12 @@ incoming relation so the stacked HGNN can keep updating that type; 04 supplies t
 edges. The adapter does not import the inherited graph attachment's known coordinate
 ordering defect.
 
-No feature rescaling is performed. Component 01/02 must establish product, units,
-timestamp meaning and gauge correction before physical interpretation. All fusion run
-reports flag that tensor compatibility alone does not establish independent held-out
-gauge evaluation.
+No feature rescaling is performed. Do not infer scales from the data or change labels to
+fit a model; agree any transform with Component 04 first. Component 01/02 must establish
+product, units, timestamp meaning and gauge correction before physical interpretation. All
+fusion run reports flag that tensor compatibility alone does not establish independent
+held-out gauge evaluation. The supervisor's broader national-run objective does not make
+the first Sydney fixture an Australia-wide result.
 
 To exercise the model adapter without production data:
 
@@ -192,34 +199,13 @@ To add a method, return the exact prediction columns and invoke
 shared split and seed; do not create private target lists. The standalone scorer can
 evaluate any method name that meets the same contract.
 
-## Decisions needing downstream review
-
-1. **Donor mismatch between current requirements.** Component 04 permits train and
-   validation gauges as visible HGNN context at test time; Component 06 specifies
-   training gauges only for IDW and network mean. The implementation preserves both
-   written contracts and flags this in every report. Shared targets alone do not make
-   these a controlled comparison of methods. Kiran, Angus and Rick must agree a common
-   donor policy before the scores support comparative scientific claims.
-2. **Normalization interface.** The published graph shape contains physical rainfall
-   in mm and binary validity but no reversible normalization metadata. This adapter
-   accepts `input_rainfall_scale: physical_mm` and performs no private normalization.
-   Pre-normalized graphs fail validation. Agree any transform with Component 04 before
-   enabling it; do not infer scales from data or change labels to fit a model.
-3. **IDW exponent.** Component 06 does not prescribe a power. The example's explicit
-   2.0 is a proposed setting requiring the Component 03 reviewer's agreement, not a
-   claim to reproduce the inherited paper's exact IDW experiment.
-4. **Radar/satellite readiness.** The current source handoff does not establish their
-   product, units and gauge-correction provenance; satellite coordinates are also
-   outstanding in the written contract. Do not claim accepted fusion results before
-   Components 01/02/04 supply validated inputs. The supervisor's broader national-run
-   objective does not make the first Sydney fixture an Australia-wide result.
-
 ## Verification
 
-The integration candidate passed **133 tests with 29 skips**, and all **8 NCI guards**,
-on 15 September 2026. The reconciled integration modules pass focused Ruff and
-compilation checks; repository-wide Ruff reports 703 findings in inherited,
-transitional and other pre-existing files. Dependency deprecation warnings remain.
+The integration branch passed **133 tests with 29 skips** on 18 September 2026. The
+**8 NCI guards** pass on Linux/macOS and fail on a Windows checkout for a line-ending
+reason unrelated to this component; see [ISSUES.md](../ISSUES.md). The reconciled
+integration modules pass focused Ruff and compilation checks; repository-wide Ruff
+reports 692 findings in inherited, transitional and other pre-existing files. Dependency deprecation warnings remain.
 Each sensor combination passed deterministic CPU prediction and checkpoint replay
 tests. The [pipeline guide](../graphs/README.md) also exercises the real 02/03/04
 implementations with invented raw inputs. None of these tests establishes a completed

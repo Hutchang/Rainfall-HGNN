@@ -1,7 +1,8 @@
 # Component 02: the standard gauge dataset
 
 Turns Component 01's raw BoM responses into the two tables every later component reads.
-Contract: [02_CANONICAL_DATA_REQUIREMENTS.md](../requirements/02_CANONICAL_DATA_REQUIREMENTS.md).
+Sprint 1 contract: [02_CANONICAL_DATA_REQUIREMENTS.md](../archive/sprint1/02_CANONICAL_DATA_REQUIREMENTS.md)
+(archived; the Sprint 2 contract is being written).
 Radar and satellite reshaping is not included here (blocked on Component 01's provenance
 answers; owner TBC).
 
@@ -176,9 +177,10 @@ Rejected stations keep their row with `use_in_study = false` and the reason.
 
 ## What the Sydney run produced (2026-09-08)
 
-***(stale) These figures come from a run that predates the rain-day boundary fix, so
-day verdicts and hourly counts may shift slightly. Rerun the build and replace the
-table before quoting any of it.
+> **STALE — do not quote.** These figures come from a run that predates the rain-day
+> boundary fix, so day verdicts and hourly counts may shift. They are also pre-dated by
+> the region-scope change in `config/ingestion/sydney.yaml`. Rerun the build and replace
+> this table before quoting any of it; tracked in [ISSUES.md](../ISSUES.md).
 
 | | |
 |---|---|

@@ -1,7 +1,8 @@
 # Component 01: source data ingestion
 
 Downloads raw source data to `database/raw/` and writes an index of every file.
-Contract: [01_DATA_SOURCE_INGESTION_REQUIREMENTS.md](../requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md).
+Sprint 1 contract: [01_DATA_SOURCE_INGESTION_REQUIREMENTS.md](../archive/sprint1/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md)
+(archived; the Sprint 2 contract is being written).
 
 Sources:
 

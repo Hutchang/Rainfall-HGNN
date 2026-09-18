@@ -1,6 +1,10 @@
 # Implementation handoff
 
-**Candidate branch:** `feature/06-integration` · **Updated:** 2026-09-15
+**Current branch:** `integration/sydney-gauge-baseline` (`217748c`) · **Updated:** 2026-09-18
+
+Known open defects and knowingly-deferred issues are tracked in
+[ISSUES.md](ISSUES.md), not here. This document records sequencing, repository
+boundaries and integration state only.
 
 Sequencing and blockers. The contracts themselves are in
 [requirements/README.md](requirements/README.md) — read that first.
@@ -17,10 +21,14 @@ Sequencing and blockers. The contracts themselves are in
   non-empty roles, while released split files are now protected from replacement.
 - The complete synthetic pipeline writes all five graph folds, trains HGNN, IDW and
   network mean on identical targets, and exactly replays checkpoint predictions.
-- Verification on 2026-09-15: **133 passed, 29 skipped** in `tests/`; **8 passed** in
-  `scripts/nci/test_guards.py`; focused Ruff and compilation checks pass for the
-  reconciled integration modules. Repository-wide Ruff reports 703 pre-existing
-  findings. PyTorch/PyG emit Python 3.14 deprecation warnings.
+- Verification on 2026-09-18: **133 passed, 29 skipped** in `tests/`; focused Ruff and
+  compilation checks pass for the reconciled integration modules. Repository-wide Ruff
+  reports **692** pre-existing findings. PyTorch/PyG emit Python 3.14 deprecation
+  warnings.
+- `scripts/nci/test_guards.py` passes on Linux/macOS but **all 8 fail on a Windows
+  checkout**: the repository has no `.gitattributes`, so Git converts the `.sh`/`.pbs`
+  scripts to CRLF and Bash reads `set -o pipefail<CR>`. The main `tests/` suite excludes
+  these, so this does not show up in the numbers above.
 - This is software-integration evidence only. Radar/satellite provenance, units,
   coverage and held-out-gauge independence remain scientific blockers.
 
@@ -81,9 +89,15 @@ Work finished but not merged:
 
 `feature/02-canonical-data` points at the integration head with no commits of its own.
 
-### Open defects — genuine (break functionality)
+### Sprint 1 defects — all three resolved
 
-1. **`GaugeGraphNew` does not implement the paper's Eq. 1, and three tests now say so.**
+Kept for the reasoning trail. Nothing below is still open; new issues belong in
+[ISSUES.md](ISSUES.md).
+
+1. **`GaugeGraphNew` did not implement the paper's Eq. 1 — fixed.** `gaugegraphnew.py`
+   now builds an `nx.DiGraph` (line 144) and guards `1 / dist` with the `1e6` cap
+   (lines 156, 358), so both sub-defects below are closed. The inherited-baseline
+   fingerprint test is still owed and is tracked in [ISSUES.md](ISSUES.md).
    `65237ba` states the per-node normalisation fix was made "in both niramay and
    integration", but only the integration side was committed. The `gauge_graph_cls`
    fixture imported niramay's unpatched `GaugeGraph` from the `../COMP3888-niramay`
@@ -150,7 +164,11 @@ Work finished but not merged:
    unchanged, and a live three-station run now fetches APPIN's 26 files instead of
    skipping it, with a rerun making no requests and leaving `series.csv` byte-identical.
 
-3. **The 02→03 seam will reject every eligible station.** `src/study/schema.py`'s
+3. **The 02→03 seam rejected every eligible station — fixed.** `read_station_records`
+   (`src/study/split.py:47`) reads `stations.csv` with the `csv` module and
+   `StationRecord.model_validate_strings`, so pandas never turns an empty
+   `exclusion_reason` into `nan` and no numpy scalars reach the strict model. Original
+   report: `src/study/schema.py`'s
    `StationRecord` uses pydantic `strict=True`. An empty `exclusion_reason` read from
    `stations.csv` by pandas arrives as `nan`, not `""`, so validation fails for exactly
    the rows where `use_in_study` is true — verified against a synthetic two-row table.
@@ -163,9 +181,10 @@ Work finished but not merged:
 Understood, don't break functionality or corrupt output, and are being knowingly left for
 later. Revisit if priorities/deliverables are otherwise complete.
 
-1. **`ruff check .` reports 120 findings**, all in inherited `benchmarks/`, `models/`,
-   `src/graph/`, `training/` and the root runners. Identical on every branch; not a
-   regression from 01 or 03. Two sit in `tests/test_split_integrity.py`.
+1. **`ruff check .` reports 692 findings** (the "120" recorded here previously counted a
+   narrower rule set), all in inherited `benchmarks/`, `models/`, `src/graph/`,
+   `training/` and the root runners. Identical on every branch; not a regression from any
+   component. Two sit in `tests/test_split_integrity.py`.
 2. **Failed/unread raw downloads are excluded from `stations.csv`/`days.csv` correctly but
    not reported.** A station whose coverage looks low can't be told apart from "genuinely
    dry" without manually cross-checking `index.csv`. No wrong data results — this is an
@@ -195,7 +214,7 @@ Create a package when its owner starts.
 | 01 | `src/ingestion/` | `config/ingestion/` |
 | 02 | `src/canonical/` | `config/canonical/` |
 | 03 | `src/study/` | `config/splits/`, `config/seeds.yaml` |
-| 04 | `src/graphs/` | `config/graphs/` |
+| 04 | `src/graph/` | `config/graphs/` |
 | 06 | `src/models/` | `config/models/` |
 
 Useful inherited code lives in `train_fused.py`, `src/graph/gaugegraphnew.py`,

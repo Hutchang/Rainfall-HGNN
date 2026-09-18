@@ -1,7 +1,7 @@
 """Component 01, gauge source: download BoM tip and daily-total series to disk.
 
 Stores every API response exactly as returned, gzipped, in the layout from
-docs/requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md:
+docs/archive/sprint1/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md:
 
     <output_dir>/gauge/
       stations.json                         getStationList response, unchanged

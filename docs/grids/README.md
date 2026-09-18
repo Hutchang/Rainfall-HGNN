@@ -1,23 +1,23 @@
 # Satellite and radar adapter
 
-This implements the grid-input portion of the satellite/radar work Oliver accepted in
-the 10 September Teams discussion. This adapter covers the grid reshaping portion of
-[02](../requirements/02_CANONICAL_DATA_REQUIREMENTS.md) and supplies the node-layer
-interface described in [04](../requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md).
+This implements the grid-input portion of the satellite/radar work. The adapter covers
+the grid reshaping portion of
+[02](../archive/sprint1/02_CANONICAL_DATA_REQUIREMENTS.md) and supplies the node-layer
+interface described in [04](../archive/sprint1/04_GRAPH_SAMPLE_REQUIREMENTS.md) (both
+are the archived Sprint 1 contracts).
 
 It reads the trusted, team-produced Australian pickle exports, validates their
 coordinates and times, and writes the existing standard grid tables. It does not fetch
 source data, infer satellite coordinates, change rainfall units, build graph edges,
 select evaluation splits or train the model.
 
-## Component 06 scope
+## Relationship to Component 06
 
-[Rainflow Sprint One](https://www.notion.so/3cede437d58a8039a588db42a9838aa9) assigns
-Oliver model training, predictions and baselines, including radar/satellite model
-support. The grid reshaping here is one part of that work. The combined branch also
-contains the [model runner](../models/README.md) and the
-[graph integration](../graphs/README.md). Full real-data acceptance remains separate
-from successful synthetic tests.
+The grid reshaping here feeds the radar/satellite model support in Component 06. See the
+[model runner](../models/README.md) and the [graph integration](../graphs/README.md).
+Full real-data acceptance remains separate from successful synthetic tests: source
+product, units and gauge-correction provenance are unresolved and tracked in
+[ISSUES.md](../ISSUES.md).
 
 ## Run
 
@@ -129,14 +129,15 @@ The production inputs were not available in this checkout, and the NCI SSH attem
 could not verify the host key. The adapter is testable offline; real-data validation
 and downstream graph acceptance must be recorded separately when those inputs arrive.
 
-## Verification — 15 September 2026
+## Verification — 18 September 2026
 
-- Combined test suite: 133 passed, 29 legacy-data/live-API skips; the 8 NCI guards also
-  passed. Dependency deprecation warnings remain. The new tests include a
-  forward/backward pass through the inherited
+- Combined test suite: 133 passed, 29 legacy-data/live-API skips. Dependency deprecation
+  warnings remain. The tests include a forward/backward pass through the inherited
   HGNN using both modality feature widths and explicitly synthetic edges.
+- The 8 NCI guards pass on Linux/macOS and fail on a Windows checkout for a line-ending
+  reason unrelated to this component; see [ISSUES.md](../ISSUES.md).
 - New Python files pass Ruff; compilation and whitespace checks pass.
-- Repository-wide Ruff reports 703 findings in inherited, transitional and other
+- Repository-wide Ruff reports 692 findings in inherited, transitional and other
   pre-existing files.
 - The example creator, input check and CSV build run successfully. The production
   input check fails explicitly because `database/raw/index.csv` is absent locally.

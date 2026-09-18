@@ -1,4 +1,4 @@
-"""Component 02, gauge half: acceptance tests from docs/requirements/02_CANONICAL_DATA_REQUIREMENTS.md
+"""Component 02, gauge half: acceptance tests from docs/archive/sprint1/02_CANONICAL_DATA_REQUIREMENTS.md
 "Done when", plus the plausibility and station rules. Offline: synthetic records and the
 committed Component 01 sample under tests/data/ingestion/.
 """

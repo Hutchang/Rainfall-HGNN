@@ -1,8 +1,10 @@
 # Integrated tables, splits, graphs and training
 
-This branch connects the existing components through their published files. Run from
-the repository root with `uv sync --locked`. The [handoff](../IMPLEMENTATION_HANDOFF.md)
-records upstream revisions, numerical graph corrections and scientific review points.
+The repository-wide pipeline guide: how Components 02, 03, 04 and 06 connect through
+their published files. Run from the repository root with `uv sync --locked`. The
+[handoff](../IMPLEMENTATION_HANDOFF.md) records integration state and repository
+boundaries; [ISSUES.md](../ISSUES.md) records open defects and scientific review
+points.
 
 ## From published source inputs
 
