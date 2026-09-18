@@ -23,6 +23,47 @@ from src.ingestion.gauge.kiwis import KiwisClient
 SAMPLE = Path(__file__).parent / "data" / "ingestion"
 CONFIG = Path(__file__).parent.parent / "config" / "ingestion" / "sydney.yaml"
 
+# The offline tests own their config instead of reading config/ingestion/sydney.yaml.
+# That file is a live project setting: its bounds and period change as the study
+# region is redrawn, and a test that mutates it silently stops testing anything.
+CONFIG_YAML = """
+region: testregion
+start: 2022-01-01
+end: 2022-02-28
+output_dir: database/raw
+gauge:
+  bounds:
+    min_lat: -34.3
+    max_lat: -33.4
+    min_lon: 150.4
+    max_lon: 151.4
+  api:
+    base_url: https://example.invalid/waterdata/services
+    request_delay_seconds: 0
+    timeout_seconds: 5
+    user_agent: test-agent/0.1
+  series:
+    tips: DMQaQc.Merged.AsStored.1
+    daily: DMQaQc.Merged.DailyTotal.09HR
+radar: {}
+satellite: {}
+"""
+
+
+@pytest.fixture
+def config_text():
+    """The config as text, for tests that break it on purpose."""
+    return CONFIG_YAML
+
+
+def _without(text, old, new):
+    """Replace and prove it happened. A replace() that matches nothing leaves a valid
+    config behind, so the negative test passes without testing anything - which is how
+    the inverted-bounds case quietly stopped working."""
+    assert old in text, f"{old!r} is not in the config fixture"
+    return text.replace(old, new)
+
+
 network = pytest.mark.skipif(
     not os.environ.get("BOM_NETWORK"), reason="set BOM_NETWORK=1 to hit the live API"
 )
@@ -69,8 +110,7 @@ class FakeClient:
     def series_list(self, station_id=None, ts_name=None):
         self.calls.append(f"series_list:{station_id}")
         if station_id in self.fail_series:
-            raise RuntimeError(
-                "getTimeseriesList failed after 3 attempts: HTTP 504")
+            raise RuntimeError("getTimeseriesList failed after 3 attempts: HTTP 504")
         if station_id in self.no_series:
             return b"", []
         rows = [
@@ -107,9 +147,10 @@ class FakeClient:
 
 
 def small_cfg(tmp_path):
-    cfg = load_config(CONFIG)
-    cfg["start"], cfg["end"] = date(2022, 1, 1), date(
-        2022, 2, 28)  # 2 months, 1 year
+    path = tmp_path / "ingestion.yaml"
+    path.write_text(CONFIG_YAML)
+    cfg = load_config(path)
+    cfg["start"], cfg["end"] = date(2022, 1, 1), date(2022, 2, 28)  # 2 months, 1 year
     cfg["output_dir"] = str(tmp_path / "raw")
     return cfg
 
@@ -166,8 +207,7 @@ def test_run_writes_layout_index_and_report(tmp_path):
     assert list(rows[0].keys()) == fetch.INDEX_COLUMNS
     assert len(rows) == 2 * (2 + 1)
     assert all(
-        r["status"] == "ok" and r["n_records"] == "2" and len(
-            r["sha256"]) == 64
+        r["status"] == "ok" and r["n_records"] == "2" and len(r["sha256"]) == 64
         for r in rows
     )
     assert (raw / "report.md").read_text().startswith("# Gauge ingestion report")
@@ -199,8 +239,7 @@ def test_failed_download_is_indexed_and_run_exits_nonzero(tmp_path):
         rows = {r["path"]: r for r in csv.DictReader(fh)}
     bad = rows["gauge/tips/1/2022-02.json.gz"]
     assert bad["status"] == "failed" and "504" in bad["error"] and bad["sha256"] == ""
-    assert not (Path(cfg["output_dir"]) /
-                "gauge/tips/1/2022-02.json.gz").exists()
+    assert not (Path(cfg["output_dir"]) / "gauge/tips/1/2022-02.json.gz").exists()
     assert (
         "gauge/tips/1/2022-02.json.gz"
         in (Path(cfg["output_dir"]) / "report.md").read_text()
@@ -232,8 +271,7 @@ def test_transient_series_failure_is_retried_on_the_next_run(tmp_path):
     cfg = small_cfg(tmp_path)
 
     first = FakeClient(fail_series={"2"})
-    assert fetch.run(
-        cfg, client=first) == 1, "an unresolved station must exit non-zero"
+    assert fetch.run(cfg, client=first) == 1, "an unresolved station must exit non-zero"
     assert {r["station_id"] for r in _index(cfg)} == {"1", "2"}, (
         "station 2 stays in the index even though nothing was downloaded for it"
     )
@@ -247,8 +285,7 @@ def test_transient_series_failure_is_retried_on_the_next_run(tmp_path):
     assert all(r["status"] == "ok" for r in rows), (
         "run 1's skipped rows are replaced by real downloads, not left behind"
     )
-    assert len(rows) == 2 * \
-        (2 + 1), "2 stations x (2 tip months + 1 daily year)"
+    assert len(rows) == 2 * (2 + 1), "2 stations x (2 tip months + 1 daily year)"
     assert len({(r["station_id"], r["path"]) for r in rows}) == len(rows), (
         "one row per file, so the retry did not append a second row for station 2"
     )
@@ -280,8 +317,7 @@ def test_skipped_rows_are_invisible_to_component_02(tmp_path):
     cfg = small_cfg(tmp_path)
     fetch.run(cfg, client=FakeClient(no_series={"2"}))
     rows = _index(cfg)
-    assert [r["station_id"]
-            for r in rows if r["status"] == "ok"] == ["1", "1", "1"]
+    assert [r["station_id"] for r in rows if r["status"] == "ok"] == ["1", "1", "1"]
     assert {r["station_id"] for r in rows} == {"1", "2"}, (
         "the skipped station is still on the record for a human and for 01's report"
     )
@@ -317,7 +353,7 @@ def test_partially_written_series_csv_is_not_trusted(tmp_path):
 
 def test_series_csv_keeps_its_documented_columns(tmp_path):
     """Series.csv designed to exactly these four columns, so
-    the header is a contract with any future reader. Adding a column here 
+    the header is a contract with any future reader. Adding a column here
     must fail this test and force the doc to change with it."""
     cfg = small_cfg(tmp_path)
     fetch.run(cfg, client=FakeClient())
@@ -365,8 +401,7 @@ def test_stations_sharing_a_public_number_are_kept_separate(tmp_path):
     fetch.run(cfg, client=FakeClient())
     with (Path(cfg["output_dir"]) / "gauge" / "series.csv").open() as fh:
         ids = {r["station_id"] for r in csv.DictReader(fh)}
-    assert ids == {
-        "1", "2"}, "two station_ids with the same station_no both fetched"
+    assert ids == {"1", "2"}, "two station_ids with the same station_no both fetched"
 
 
 # ---------------------------------------------------------------- committed sample
@@ -377,8 +412,7 @@ def test_committed_sample_is_an_unmodified_api_response():
     assert tips[0]["columns"] == "Timestamp,Value,Quality Code"
     assert int(tips[0]["rows"]) == len(tips[0]["data"]) == 390
     assert tips[0]["data"][0] == ["2022-01-01T03:00:00.000+10:00", 0.0, 10]
-    assert all(t[0].endswith("+10:00")
-               for t in tips[0]["data"]), "fixed UTC+10 offset"
+    assert all(t[0].endswith("+10:00") for t in tips[0]["data"]), "fixed UTC+10 offset"
 
     with gzip.open(SAMPLE / "gauge/daily/31531755/2022.json.gz") as fh:
         daily = json.load(fh)
@@ -389,13 +423,12 @@ def test_committed_sample_is_an_unmodified_api_response():
 
 
 # ---------------------------------------------------------------- config
-def test_config_rejects_missing_series_and_inverted_bounds(tmp_path):
-    text = CONFIG.read_text()
+def test_config_rejects_missing_series_and_inverted_bounds(tmp_path, config_text):
     bad = tmp_path / "bad.yaml"
-    bad.write_text(text.replace("  series:\n", "  serie:\n"))
+    bad.write_text(_without(config_text, "  series:\n", "  serie:\n"))
     with pytest.raises(ValueError, match="gauge section is missing"):
         load_config(bad)
-    bad.write_text(text.replace("min_lat: -34.3", "min_lat: -33.0"))
+    bad.write_text(_without(config_text, "min_lat: -34.3", "min_lat: -33.0"))
     with pytest.raises(ValueError, match="min must be less than max"):
         load_config(bad)
 
@@ -409,11 +442,9 @@ def test_storm_check_station_568163_january_2023():
     client = KiwisClient(**cfg["gauge"]["api"])
     _, st = client.station_list(station_no="568163")
     assert len(st) == 1
-    ids = fetch.find_series(
-        client, st[0]["station_id"], cfg["gauge"]["series"])
+    ids = fetch.find_series(client, st[0]["station_id"], cfg["gauge"]["series"])
     raw, _ = client.values(ids["tips"], "2023-01-04", "2023-01-05")
-    tips = [d for d in json.loads(raw)[0]["data"]
-            if d[0].startswith("2023-01-04T19")]
+    tips = [d for d in json.loads(raw)[0]["data"] if d[0].startswith("2023-01-04T19")]
     assert len(tips) == 50 and sum(d[1] for d in tips) == 25.0
     raw, _ = client.values(ids["daily"], "2023-01-04", "2023-01-05")
     assert [d[1] for d in json.loads(raw)[0]["data"]] == [4.0, 30.0]
@@ -425,5 +456,4 @@ def test_collision_check_station_no_563083_is_two_stations():
     client = KiwisClient(**cfg["gauge"]["api"])
     _, rows = client.station_list(station_no="563083")
     got = {r["station_id"]: r["station_name"] for r in rows}
-    assert got == {"7730155": "BLACKHEATH G.C.",
-                   "49645132": "NORTH RICHMOND WFP"}
+    assert got == {"7730155": "BLACKHEATH G.C.", "49645132": "NORTH RICHMOND WFP"}
