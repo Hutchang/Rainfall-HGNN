@@ -129,7 +129,7 @@ Both write the same `predictions.csv` schema through the same interface.
 
 - **Module path correction:** implementation belongs to `src/models/`; this repository
   does not install `src` as an import root. The executable entrypoint is
-  `python -m src.models.run`. See [the training guide](../models/README.md) for validated
+  `python -m src.models.run`. See [the training guide](../../models/README.md) for validated
   commands, current input dependencies and the donor/normalization decisions requiring
   downstream review. The scientific input/output schema is unchanged.
 

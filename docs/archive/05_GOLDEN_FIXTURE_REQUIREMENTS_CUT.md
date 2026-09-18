@@ -402,13 +402,13 @@ prediction row, and validation in plain English.
 
 ## 11. Resources / Glossary
 
-- [GLOSSARY.md](../requirements/GLOSSARY.md) defines golden fixture, standard/canonical data, rain day,
-  held-out, LPE, and prediction table.
-- Related component requirements: [01](../requirements/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md),
-  [02](../requirements/02_CANONICAL_DATA_REQUIREMENTS.md),
-  [03](../requirements/03_STUDY_SPLIT_REQUIREMENTS.md),
-  [04](../requirements/04_GRAPH_SAMPLE_REQUIREMENTS.md), and
-  [06](../requirements/06_MODEL_ADAPTER_REQUIREMENTS.md).
+- `GLOSSARY.md` (removed 2026-09-18; recoverable from Git history) defined golden
+  fixture, standard/canonical data, rain day, held-out, LPE, and prediction table.
+- Related component requirements: [01](sprint1/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md),
+  [02](sprint1/02_CANONICAL_DATA_REQUIREMENTS.md),
+  [03](sprint1/03_STUDY_SPLIT_REQUIREMENTS.md),
+  [04](sprint1/04_GRAPH_SAMPLE_REQUIREMENTS.md), and
+  [06](sprint1/06_MODEL_ADAPTER_REQUIREMENTS.md).
 - Existing test patterns: `tests/conftest.py`, `tests/test_sydney_gauge_loader.py`, and
   `tests/test_split_integrity.py`.
 - Evidence:
