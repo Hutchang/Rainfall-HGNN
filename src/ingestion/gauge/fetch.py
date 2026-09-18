@@ -19,6 +19,7 @@ import csv
 import gzip
 import hashlib
 import json
+import os
 import sys
 import time
 from datetime import UTC, date, datetime
@@ -108,6 +109,12 @@ INDEX_COLUMNS = [
     "retrieved_at",
     "sha256",
 ]
+
+
+# index.csv is rewritten every FLUSH_EVERY stations. A multi-hour run that is
+# killed outright then still leaves bookkeeping for everything up to the last
+# flush, instead of nothing at all.
+FLUSH_EVERY = 25
 
 
 def _now() -> str:
@@ -282,7 +289,9 @@ def run(
     limit: int | None = None,
     client: KiwisClient | None = None,
 ) -> int:
-    """Fetch every gauge file for the config. Returns the number of failures.
+    """Fetch every gauge file for the config. Returns the number of failures plus
+    the stations never reached, so an interrupted run also exits non-zero.
+    index.csv and report.md are written even when the run is interrupted.
     `client` is injectable so tests can run offline against a fake."""
     g = cfg["gauge"]
     raw_dir = Path(output_dir or cfg["output_dir"])
@@ -306,115 +315,147 @@ def run(
 
     months = month_windows(cfg["start"], cfg["end"])
     years = year_windows(cfg["start"], cfg["end"])
-    index, skipped, fetched = [], 0, 0
-    for i, st in enumerate(stations, 1):
-        sid = st["station_id"]
-        if sid not in series:
-            # No ts_ids, so nothing for this station can be requested. Write a row
-            # per expected file anyway, with the cause, so the station cannot drop
-            # out of index.csv between runs and Component 02 can see the whole
-            # expected set rather than inferring it from a directory listing.
-            reason = no_series[sid]
-            for source, subdir, windows in (
-                ("gauge_tips", "tips", months),
-                ("gauge_daily", "daily", years),
-            ):
-                for label, start, end in windows:
-                    index.append(
-                        skipped_row(
-                            source,
-                            sid,
-                            gauge_dir / subdir / sid / f"{label}.json.gz",
-                            start,
-                            end,
-                            reason,
-                            raw_dir,
+    index, skipped, fetched, done = [], 0, 0, 0
+    try:
+        for i, st in enumerate(stations, 1):
+            sid = st["station_id"]
+            if sid not in series:
+                # No ts_ids, so nothing for this station can be requested. Write a row
+                # per expected file anyway, with the cause, so the station cannot drop
+                # out of index.csv between runs and Component 02 can see the whole
+                # expected set rather than inferring it from a directory listing.
+                reason = no_series[sid]
+                for source, subdir, windows in (
+                    ("gauge_tips", "tips", months),
+                    ("gauge_daily", "daily", years),
+                ):
+                    for label, start, end in windows:
+                        index.append(
+                            skipped_row(
+                                source,
+                                sid,
+                                gauge_dir / subdir / sid / f"{label}.json.gz",
+                                start,
+                                end,
+                                reason,
+                                raw_dir,
+                            )
                         )
+                _log(
+                    f"  [{i}/{len(stations)}] {sid} {st['station_name']}: "
+                    f"{len(months) + len(years)} files not requested, {reason}"
+                )
+                done = i
+                continue
+            before = len(index)
+            for label, start, end in months:
+                path = gauge_dir / "tips" / sid / f"{label}.json.gz"
+                existed = path.exists()
+                index.append(
+                    fetch_window(
+                        client,
+                        "gauge_tips",
+                        sid,
+                        series[sid]["tips"],
+                        label,
+                        start,
+                        end,
+                        path,
+                        raw_dir,
                     )
+                )
+                skipped += existed
+                fetched += not existed
+            for label, start, end in years:
+                path = gauge_dir / "daily" / sid / f"{label}.json.gz"
+                existed = path.exists()
+                index.append(
+                    fetch_window(
+                        client,
+                        "gauge_daily",
+                        sid,
+                        series[sid]["daily"],
+                        label,
+                        start,
+                        end,
+                        path,
+                        raw_dir,
+                    )
+                )
+                skipped += existed
+                fetched += not existed
+            failed_here = sum(r["status"] == "failed" for r in index[before:])
             _log(
-                f"  [{i}/{len(stations)}] {sid} {st['station_name']}: "
-                f"{len(months) + len(years)} files not requested, {reason}"
+                f"  [{i}/{len(stations)}] {sid} {st['station_name']}: {len(months) + len(years)} files, {failed_here} failed"
             )
-            continue
-        before = len([r for r in index if r["retrieved_at"]])
-        for label, start, end in months:
-            path = gauge_dir / "tips" / sid / f"{label}.json.gz"
-            existed = path.exists()
-            index.append(
-                fetch_window(
-                    client,
-                    "gauge_tips",
-                    sid,
-                    series[sid]["tips"],
-                    label,
-                    start,
-                    end,
-                    path,
-                    raw_dir,
-                )
-            )
-            skipped += existed
-            fetched += not existed
-        for label, start, end in years:
-            path = gauge_dir / "daily" / sid / f"{label}.json.gz"
-            existed = path.exists()
-            index.append(
-                fetch_window(
-                    client,
-                    "gauge_daily",
-                    sid,
-                    series[sid]["daily"],
-                    label,
-                    start,
-                    end,
-                    path,
-                    raw_dir,
-                )
-            )
-            skipped += existed
-            fetched += not existed
-        failed_here = sum(r["status"] == "failed" for r in index[before:])
-        _log(
-            f"  [{i}/{len(stations)}] {sid} {st['station_name']}: {len(months) + len(years)} files, {failed_here} failed"
+            done = i
+            if i % FLUSH_EVERY == 0:
+                write_index(raw_dir / "index.csv", index)
+    except KeyboardInterrupt:
+        # The downloads themselves survive a Ctrl-C, but the index is built in
+        # memory and dies with the process. Catch it here so the finally below
+        # still describes what did get fetched.
+        _log(f"\ninterrupted after {done} of {len(stations)} stations")
+    finally:
+        failures = [r for r in index if r["status"] == "failed"]
+        write_index(raw_dir / "index.csv", index)
+        write_report(
+            raw_dir / "report.md",
+            cfg,
+            stations,
+            no_series,
+            index,
+            failures,
+            skipped,
+            fetched,
+            time.time() - t0,
+            done,
         )
-
-    failures = [r for r in index if r["status"] == "failed"]
-    write_index(raw_dir / "index.csv", index)
-    write_report(
-        raw_dir / "report.md",
-        cfg,
-        stations,
-        no_series,
-        index,
-        failures,
-        skipped,
-        fetched,
-        time.time() - t0,
-    )
-    _log(
-        f"\nfiles: {len(index)} indexed, {fetched} fetched this run, {skipped} already on disk, {len(failures)} failed"
-    )
-    _log(f"stations with no usable series: {len(no_series)}")
-    _log(f"wrote {raw_dir / 'index.csv'} and {raw_dir / 'report.md'}")
-    return len(failures) + len(no_series)
+        _log(
+            f"\nfiles: {len(index)} indexed, {fetched} fetched this run, {skipped} already on disk, {len(failures)} failed"
+        )
+        _log(f"stations with no usable series: {len(no_series)}")
+        _log(f"wrote {raw_dir / 'index.csv'} and {raw_dir / 'report.md'}")
+    # A run that stopped early is not a success even with nothing failed, so the
+    # stations it never reached count towards the exit code.
+    return len(failures) + len(no_series) + (len(stations) - done)
 
 
 def write_index(path: Path, rows: list[dict]) -> None:
-    with path.open("w", newline="") as fh:
+    """Write via a temp file and one rename, so a kill part-way through a flush
+    leaves the previous index.csv intact rather than a truncated one."""
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=INDEX_COLUMNS)
         w.writeheader()
         w.writerows(rows)
+    os.replace(tmp, path)
 
 
 def write_report(
-    path, cfg, stations, no_series, index, failures, skipped, fetched, seconds
+    path, cfg, stations, no_series, index, failures, skipped, fetched, seconds, done
 ) -> None:
+    """Write report.md. `done` is the number of stations fully processed; when it is
+    short of the station count the report says so, because every count below then
+    describes only part of the config."""
     ok = [r for r in index if r["status"] == "ok"]
     never_requested = [r for r in index if r["status"] == "skipped"]
     names_by_id = {st["station_id"]: st["station_name"] for st in stations}
+    per_station = len(month_windows(cfg["start"], cfg["end"])) + len(
+        year_windows(cfg["start"], cfg["end"])
+    )
     lines = [
         f"# Gauge ingestion report: {cfg['region']}",
         "",
+    ]
+    if done < len(stations):
+        lines += [
+            f"**Incomplete run: {done} of {len(stations)} stations processed.** Every"
+            " count below covers only those stations, not the whole config. Rerun to"
+            " carry on; files already on disk are skipped.",
+            "",
+        ]
+    lines += [
         f"- config: `{cfg['_path']}`",
         f"- period: {cfg['start']} to {cfg['end']} inclusive",
         f"- bounding box: {cfg['gauge']['bounds']}",
@@ -424,10 +465,12 @@ def write_report(
         "## Counts",
         "",
         f"- stations in box: {len(stations)}",
+        f"- stations processed this run: {done}",
         f"- stations with both series: {len(stations) - len(no_series)}",
         f"- stations with no usable series: {len(no_series)}",
+        f"- files expected for the whole config: {len(stations) * per_station}",
         (
-            f"- files expected: {len(index)}, ok: {len(ok)},"
+            f"- files in this index: {len(index)}, ok: {len(ok)},"
             f" failed: {len(failures)}, never requested: {len(never_requested)}"
         ),
         f"- fetched this run: {fetched}, already on disk: {skipped}",
