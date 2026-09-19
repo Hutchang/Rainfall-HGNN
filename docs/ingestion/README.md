@@ -2,7 +2,8 @@
 
 Downloads raw source data to `database/raw/` and writes an index of every file.
 Sprint 1 contract: [01_DATA_SOURCE_INGESTION_REQUIREMENTS.md](../archive/sprint1/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md)
-(archived; the Sprint 2 contract is being written).
+(archived). Sprint 2 work on this component sits in D07, D09 and D10 — see
+[requirements/README.md](../requirements/README.md).
 
 Sources:
 
@@ -29,9 +30,6 @@ uv run python -m src.ingestion.gauge.survey config/ingestion/sydney.yaml --no-bo
 Download the gauge data. About 4,800 requests at one per second for Greater Sydney,
 roughly 90 minutes. Exit code is non-zero if any file failed.
 
-> The box in `sydney.yaml` currently covers the whole continent, so this estimate is
-> wrong for the file as it stands — see ISS-11.
-
 ```
 uv run python -m src.ingestion.gauge.fetch config/ingestion/sydney.yaml
 ```
@@ -52,7 +50,9 @@ uv run python -m src.ingestion.gauge.fetch config/ingestion/sydney.yaml --limit 
 One YAML per region under `config/ingestion/`. Everything that decides which data is
 fetched lives there, so a reviewer can see the query without reading Python. The
 `gauge:` section holds the bounding box, API settings and the two series names; the
-comments in `sydney.yaml` record where the box came from.
+comments in `sydney.yaml` record where the box came from. The box is a setting, not a
+project decision: a different box is a different region config, and each run records the
+box it used (D07). The Sydney baseline (D08) names the box it uses.
 
 ## What the gauge fetcher writes
 
@@ -63,16 +63,20 @@ database/raw/
     series.csv                             station_id, ts_id, series_name, parameter
     tips/<station_id>/<YYYY-MM>.json.gz    getTimeseriesValues response, unchanged
     daily/<station_id>/<YYYY>.json.gz      getTimeseriesValues response, unchanged
-  index.csv
-  report.md
+  index/gauge.csv
+  report/gauge.md
 ```
+
+Each fetcher writes its own index and report file under `index/` and `report/` so
+neither can truncate the other (`src/ingestion/common.py`); Component 02 reads every file
+under `index/`.
 
 Responses are stored as the bytes the server returned, gzipped. Nothing is aggregated,
 converted, rounded or gap-filled here; that is Component 02's job. The gzip header's
 timestamp and filename fields are zeroed so identical responses give identical files
 and checksums.
 
-### `index.csv` columns
+### Index columns (`index/gauge.csv`)
 
 One row per expected file, whether or not it was fetched successfully.
 
@@ -88,7 +92,7 @@ One row per expected file, whether or not it was fetched successfully.
 | `retrieved_at` | UTC time the file was written (file modification time for files found on disk) |
 | `sha256` | hash of the gzip file. Compare two runs to see whether the data changed |
 
-### `report.md`
+### `report/gauge.md`
 
 Human summary: counts of stations and files, stations excluded because a series was
 missing (with cause), failed files (with cause), and the rerun command.
@@ -140,9 +144,9 @@ Found while verifying the fetcher on 2026-09-05. None are in the requirements do
 ## Verifying a run
 
 1. The log ends with a summary line and the process exits 0.
-2. `database/raw/report.md` shows failed files: none, and stations with no usable
+2. `database/raw/report/gauge.md` shows failed files: none, and stations with no usable
    series: none (or lists them with cause).
-3. `database/raw/index.csv` has 26 rows per station (24 tip months, 2 daily years) and
+3. `database/raw/index/gauge.csv` has 26 rows per station (24 tip months, 2 daily years) and
    every `status` is `ok`.
 4. Open one file and look at it:
 
@@ -168,6 +172,11 @@ Without `BOM_NETWORK=1` the same file runs offline against the sample in
 Downloads BoM Rainfields 3 "Merged Gauge/Radar Accumulation (15 min)" (product
 `prcp-m15`) for the Sydney radar site from NCI's public THREDDS archive
 (`rq0/rainfields3`), one day's zip of ~15-minute NetCDF files at a time.
+
+> **Production does not download.** On Gadi the same archive is a mounted directory, and
+> D13 reads it in place, reusing this fetcher's reader and coordinate code. Use the
+> fetcher for the committed test sample and for local tries with `--sample`; do not plan
+> a laptop-side copy of the archive.
 
 ```
 uv run python -m src.ingestion.radar.fetch config/ingestion/sydney.yaml
@@ -206,11 +215,11 @@ database/raw/
   radar/
     <YYYY>/<YYYY-MM-DD>.prcp-m15.zip   NCI's daily zip, unchanged
     radar_node_coords.csv              node_id, latitude, longitude
-  index.csv
-  report.md
+  index/radar.csv
+  report/radar.md
 ```
 
-Each `index.csv` row has `source=radar_precip`, a blank `station_id`, and `start`/`end`
+Each `index/radar.csv` row has `source=radar_precip`, a blank `station_id`, and `start`/`end`
 both set to that day. `n_records` is the count of `.nc` files inside the zip (normally
 96 — one per 15 minutes; the server's own `_file_list` manifest entry doesn't count).
 
@@ -286,8 +295,8 @@ any config under `config/ingestion/` works the same way.)
 ### Verifying a run
 
 1. The log ends with a summary line and the process exits 0.
-2. `database/raw/report.md` shows failed days: none (or lists them with cause).
-3. `database/raw/index.csv` has one row per day in the configured period, `n_records`
+2. `database/raw/report/radar.md` shows failed days: none (or lists them with cause).
+3. `database/raw/index/radar.csv` has one row per day in the configured period, `n_records`
    normally 96, every `status` is `ok`.
 4. `database/raw/radar/radar_node_coords.csv` has 262,144 rows; spot-check that a
    coordinate near the Sydney bounding box centre looks plausible on a map.
@@ -306,10 +315,7 @@ Without `NCI_NETWORK=1` the same file runs offline against the trimmed real samp
 
 Tracked in [ISSUES.md](../ISSUES.md), not here:
 
-- **ISS-11** — `config/ingestion/sydney.yaml` says `region: sydney` but its bounds cover
-  the continent. The request count and runtime above are the Sydney estimates and no
-  longer describe what the documented command does.
-- **ISS-22** — whether the upper Blue Mountains (Katoomba, Blackheath; longitude below
-  150.4) are in scope for Greater Sydney.
+- **ISS-29** — rerunning after a change to the bounding box keeps the old station list,
+  and the index is rewritten from scratch each run.
 - **ISS-02**, **ISS-03**, **ISS-04** — radar and satellite provenance, units, the missing
   satellite coordinates file, and 2022-only coverage.

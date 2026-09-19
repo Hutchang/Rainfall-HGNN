@@ -2,7 +2,8 @@
 
 Turns Component 01's raw BoM responses into the two tables every later component reads.
 Sprint 1 contract: [02_CANONICAL_DATA_REQUIREMENTS.md](../archive/sprint1/02_CANONICAL_DATA_REQUIREMENTS.md)
-(archived; the Sprint 2 contract is being written).
+(archived). Sprint 2 work on this component sits in D07 and D13 — see
+[requirements/README.md](../requirements/README.md).
 Radar and satellite reshaping is not included here; see the
 [grid adapter](../grids/README.md).
 
