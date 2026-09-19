@@ -4,8 +4,11 @@ Outstanding bugs, gaps and unresolved decisions. An entry here is a **recorded, 
 choice**: either it is not worth fixing yet given time and materiality, or it is blocked on
 someone else's answer. Anything not written down here is not deferred — it is forgotten.
 
-[IMPLEMENTATION_HANDOFF.md](IMPLEMENTATION_HANDOFF.md) stays clean and describes only the
-current state of the sprint. Issues live in this doc.
+This is the only place issues are recorded. [CURRENT_STATE.md](CURRENT_STATE.md) describes
+project state and sprint progress and cites `ISS-xx` ids; component READMEs under `docs/`
+may cite ids too. Neither restates an issue's severity, owner or status — there would then
+be two answers and no way to tell which is current. If you find an issue written up
+somewhere else, move it here and leave the id behind.
 
 ## Conventions
 
@@ -45,6 +48,9 @@ current state of the sprint. Issues live in this doc.
 | ISS-18 | Component 03 split summary and plot are not produced | Material | Component 03 | Open |
 | ISS-19 | Component 03 has no component README | Material | Component 03 | Open |
 | ISS-20 | Canonical README's Sydney statistics table is stale | Material | Component 02 | Open |
+| ISS-21 | `docs/requirements/README.md` is empty but three documents route readers to it | Material | Rick | Open |
+| ISS-22 | "Greater Sydney" scope for the upper Blue Mountains is undecided | Material | Rick | Open |
+| ISS-23 | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
 
 ---
 
@@ -72,8 +78,13 @@ Which product, which units, and whether the radar is gauge-corrected are all unk
 was corrected using gauges that include our test stations, every radar result leaks and is
 not publishable.
 
-**Closes when:** whoever produced the files states the product, units and correction method
-in writing, and it is recorded in the Component 01 contract.
+The earlier source investigation found that the inherited Rainfields `prcp-m15` stream
+merges gauges. Holding a gauge out of the graph does not remove information already
+blended into the input, so if the supplied file comes from that stream the leak is real
+rather than theoretical.
+
+**Closes when:** whoever produced the files states the product, units, correction method
+and contributing gauges in writing, and it is recorded in the Component 01 contract.
 
 ### ISS-03 — Satellite node coordinates do not exist
 **Severity:** Blocking · **Owner:** Component 01 · **Status:** Blocked
@@ -150,13 +161,14 @@ records that physical mm is permanent.
 ### ISS-10 — Spatial-block cross-validation decision unresolved
 **Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
 
-[spatial-cv-and-regional-partitioning.md](spatial-cv-and-regional-partitioning.md) works
-through where spatial leakage actually lives in the current k-fold split and proposes a fix,
-but the decision was never taken. The design discussion itself belongs in the archive once
-the decision is recorded here.
+A design discussion worked through where spatial leakage actually lives in the current
+k-fold split and proposed a fix, but the decision was never taken and the document was
+never committed — `docs/spatial-cv-and-regional-partitioning.md` has never existed on any
+ref. The reasoning therefore exists only in whoever's local notes.
 
 **Closes when:** the team decides whether folds are spatially blocked, and the Component 03
-contract states it.
+contract states it. Whoever holds the design note should commit it to `docs/archive/`
+first, or the argument has to be reconstructed from scratch.
 
 ### ISS-11 — Ingestion config claims Sydney but fetches Australia-wide
 **Severity:** Blocking · **Owner:** Component 01 · **Status:** Open
@@ -187,6 +199,33 @@ are config values, and all of them change which stations enter the study.
 
 **Closes when:** the client states what they want, or the team records the defaults as its
 own decision with the reasoning.
+
+### ISS-22 — "Greater Sydney" scope for the upper Blue Mountains is undecided
+**Severity:** Material · **Owner:** Rick · **Status:** Open
+
+Whether Katoomba, Blackheath and the rest of the range above longitude 150.4 are inside
+Greater Sydney has never been decided. Blackheath G.C. is one of the `station_no` 563083
+collision pair and was in the inherited dataset, so the question is not hypothetical — it
+changes which stations enter the study and therefore every split and every score.
+
+Distinct from ISS-11, which is about the config file no longer matching its own name and
+comments. This one is the underlying scientific question that ISS-11's fix has to answer.
+
+**Closes when:** the project lead states the boundary, the YAML box matches it, and the
+comment in `config/ingestion/sydney.yaml` records the reasoning.
+Source: [ingestion/README.md](ingestion/README.md).
+
+### ISS-23 — The paper's exact 75-station Sydney list is unavailable
+**Severity:** Immaterial · **Owner:** _unassigned_ · **Status:** Open
+
+The inherited paper reports results over 75 Sydney stations and the list of which 75 was
+never supplied. Our station set is built from the BoM station list and the Component 02
+rules instead, so it will not match theirs.
+
+**Immaterial because:** the team has already decided that reproducing that table is not an
+acceptance criterion. Recorded so nobody rediscovers it and treats a mismatch as a bug.
+**Closes when:** the list is found, or a contract records permanently that station-level
+reproduction of the paper is out of scope.
 
 ---
 
@@ -295,3 +334,19 @@ in ISS-11, so a rerun today would describe a different area entirely. The table 
 stale in place, but stale numbers in a component README get quoted anyway.
 
 **Closes when:** ISS-11 is resolved, the build is rerun, and the table is replaced.
+
+### ISS-21 — `docs/requirements/README.md` is empty but three documents route readers to it
+**Severity:** Material · **Owner:** Rick · **Status:** Open
+
+The file is tracked and zero bytes. `597c0a2` emptied it when the Sprint 1 contracts moved
+to `docs/archive/sprint1/`, and the Sprint 2 set that replaces it is still being written.
+
+Three places send people there and none of them say it is empty: `README.md`'s "Start
+here" calls it the shared component map, work packages, contracts and team rules;
+`AGENTS.md` makes it item 3 of the required reading order; and `AGENTS.md`'s authority
+order ranks it third, above `CURRENT_STATE.md` and the root `README.md`. A new owner or
+agent following the reading order opens nothing and has no way to tell whether the file is
+missing content or the rule is void.
+
+**Closes when:** the Sprint 2 requirements set lands, or the file states in one line that
+it is a placeholder and where the current contracts actually are.

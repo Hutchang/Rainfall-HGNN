@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 from torch_geometric.loader import DataLoader as GeometricDataLoader
 
-from models.gnn import GNNInductiveHetero
+from src.models.models import GNNInductiveHetero
 from src.graph.gaugegraphnew import (
     GaugeGraphNew,
     HeterogeneousWeatherGraphDatasetInductive,

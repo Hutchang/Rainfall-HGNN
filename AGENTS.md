@@ -10,11 +10,13 @@ Anything which follows ***(issue) in this document is metadata subject to review
 Before editing code, read:
 
 1. `README.md` for the project purpose, scope, repository map, and setup.
-2. `docs/IMPLEMENTATION_HANDOFF.md` for current state, work order, and blockers.
-3. ***(context bloat)`docs/requirements/README.md` for the component map and shared rules.
-4. The assigned component requirements document in full in docs/requirements.
-5. The `Inputs` and `Outputs` sections of directly adjacent component documents.
-6. The implementation and tests directly relevant to the assigned work.
+2. `docs/CURRENT_STATE.md` for where the project is and what the current sprint is doing.
+3. `docs/ISSUES.md` for what is known to be broken, missing or undecided.
+4. ***(context bloat)`docs/requirements/README.md` for the component map and shared rules.
+   It is empty while the Sprint 2 set is written — see ISS-21.
+5. The assigned component requirements document in full in docs/requirements.
+6. The `Inputs` and `Outputs` sections of directly adjacent component documents.
+7. The implementation and tests directly relevant to the assigned work.
 
 Do not read every archived investigation by default. `docs/archive/` is historical
 evidence, not current implementation authority. Consult a specific archived file only
@@ -34,7 +36,7 @@ Use this order:
 1. the project lead's current instruction;
 2. the assigned component requirements document;
 3. shared rules in `docs/requirements/README.md`;
-4. `docs/IMPLEMENTATION_HANDOFF.md`;
+4. `docs/CURRENT_STATE.md`;
 5. the root `README.md`;
 6. archived investigation material.
 
@@ -103,6 +105,41 @@ Mark genuine uncertainty using the labels prescribed by the requirements:
 `BLOCKED`, `TO VALIDATE`, or `UNKNOWN`. These labels do not permit silent placeholders or
 invented scientific decisions.
 
+## Keeping the documentation true
+
+Two documents carry live project information, and each has exactly one job. Keeping them
+separate is what stops either from going stale.
+
+**`docs/CURRENT_STATE.md` — where the project is.** It is a continuously updated source of
+truth, not a milestone report. Its own "How this document is maintained" section is the
+authority; the rules in short:
+
+- It names the **latest commit** the description is true of. Never a branch name — a
+  branch is stale the moment it merges.
+- On a feature branch, your copy is main's latest version plus the lines your feature
+  makes untrue. Take main's version when you branch and again when you rebase, and edit
+  only your own component's lines. Parallel work then merges as small paragraphs rather
+  than competing rewrites.
+- Update it in the same commit or pull request as the change it describes. A PR that makes
+  it wrong and does not fix it is not finished.
+- When a sprint closes, its state description moves to `docs/archive/`.
+
+**`docs/ISSUES.md` — what is broken, missing or undecided.** It is the only place an issue
+is recorded.
+
+- Every issue gets a permanent `ISS-xx` id. Never renumber; close in place with the commit
+  that closed it. Reference the id in branch names, commit messages and PR descriptions.
+- Do not open a new issue instead of making a cheap fix. Defer on purpose, with a reason.
+- If you find an issue written up in a component README, a handover note or a code
+  comment, move it here and leave the id behind.
+
+Other documents may cite an `ISS-xx` id. None of them — `CURRENT_STATE.md` included — may
+restate an issue's severity, owner or status. Two copies means two answers and no way to
+tell which is current.
+
+Component READMEs under `docs/` describe how to run the component and what its outputs
+mean. Under the Sprint 2 standard, a component does not ship without one.
+
 ## Git and repository safety
 
 - Work on the branch assigned by the project lead. Component branches normally use
@@ -146,7 +183,10 @@ Before handoff:
 - check imports or compilation for changed Python modules;
 - verify local Markdown links when documentation paths changed;
 - report the exact tests run and their results;
-- list remaining blockers and assumptions; and
+- update `docs/CURRENT_STATE.md` if the change makes any line of it untrue, including the
+  latest-commit header;
+- record every remaining blocker or assumption in `docs/ISSUES.md` with an `ISS-xx` id,
+  and state the ids here rather than describing them again; and
 - identify the output that the downstream component should review.
 
 Completion means the prescribed output, tests, documentation, and downstream contract

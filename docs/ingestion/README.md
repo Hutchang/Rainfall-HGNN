@@ -29,6 +29,9 @@ uv run python -m src.ingestion.gauge.survey config/ingestion/sydney.yaml --no-bo
 Download the gauge data. About 4,800 requests at one per second for Greater Sydney,
 roughly 90 minutes. Exit code is non-zero if any file failed.
 
+> The box in `sydney.yaml` currently covers the whole continent, so this estimate is
+> wrong for the file as it stands — see ISS-11.
+
 ```
 uv run python -m src.ingestion.gauge.fetch config/ingestion/sydney.yaml
 ```
@@ -125,8 +128,9 @@ Found while verifying the fetcher on 2026-09-05. None are in the requirements do
 - Millimetres per tip is **not** in the series metadata (`ts_unitname` is just
   `millimeter`). The 02 doc's instruction to read it from metadata cannot be followed;
   it must be inferred from the data (0.5 at every station seen so far) and recorded.
-- Quality codes seen: 10, 110, 140, 210, and -1 with a null value. Meanings not yet
-  looked up.
+- Quality codes seen: 10, 110, 140, 210, and -1 with a null value. BoM's `getQualityCodes`
+  table and what Component 02 does with each are in
+  [canonical/README.md](../canonical/README.md).
 - Public `station_no` is not unique: 14 numbers in the Sydney box map to two
   `station_id` rows each. One (567163) is a genuine collision of two distant sites; the
   rest are believed to be dual registrations of one gauge. All rows are fetched.
@@ -161,9 +165,12 @@ Without `BOM_NETWORK=1` the same file runs offline against the sample in
 
 ## Open questions
 
-- Whether the upper Blue Mountains (Katoomba, Blackheath; longitude below 150.4) are in
-  scope for Greater Sydney. Blackheath G.C. is one of the 563083 collision pair and was
-  in the inherited dataset. Project lead to decide; changing the box is one line in the
-  YAML.
-- Radar and satellite provenance, units, and the missing satellite coordinates file. See
-  the requirements doc's open questions. Owner TBC.
+Tracked in [ISSUES.md](../ISSUES.md), not here:
+
+- **ISS-11** — `config/ingestion/sydney.yaml` says `region: sydney` but its bounds cover
+  the continent. The request count and runtime above are the Sydney estimates and no
+  longer describe what the documented command does.
+- **ISS-22** — whether the upper Blue Mountains (Katoomba, Blackheath; longitude below
+  150.4) are in scope for Greater Sydney.
+- **ISS-02**, **ISS-03**, **ISS-04** — radar and satellite provenance, units, the missing
+  satellite coordinates file, and 2022-only coverage.

@@ -10,8 +10,8 @@ supported project capability.
 | Path | Status | Use |
 |---|---|---|
 | `train_fused.py` | validated transitional runner | Exercises the 2022 Sydney gauge-only smoke path. New model work belongs behind component 06's adapter. |
-| `train_homo.py` | restored inherited reference | Potential homogeneous-model ideas only; not baseline-validated or a supported runner. |
-| `train_st.py` | restored inherited reference | Potential temporal-model ideas only; outside the current gauge milestone. |
+| `train_homo.py` | restored inherited reference | Potential homogeneous-model ideas only; not baseline-validated or a supported runner. **Cannot be imported** — ISS-13. |
+| `train_st.py` | restored inherited reference | Potential temporal-model ideas only; outside the current gauge milestone. **Cannot be imported** — ISS-13. |
 | `config.yaml` | transitional 2022 smoke profile | Read by inherited modules at import time. New components use scoped configs under `config/`. |
 
 The canonical current science contract is not encoded by these scripts. It is defined

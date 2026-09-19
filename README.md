@@ -19,15 +19,20 @@ and the out-of-scope remainder is removed file by file.
 
 ## Start here
 
-1. [Integrated pipeline guide](docs/graphs/README.md) — run tables, splits, graphs and training, with an offline example.
-2. [Component requirements](docs/requirements/README.md) — the shared component map,
-   work packages, contracts, and team rules.
-3. [Implementation handoff](docs/IMPLEMENTATION_HANDOFF.md) — current sequencing,
-   repository boundaries, blockers, and completion criteria.
+1. [Current state](docs/CURRENT_STATE.md) — where the project is, what Sprint 2 is doing,
+   repository boundaries, and the latest verification run.
+2. [Known issues](docs/ISSUES.md) — every open bug, gap and unresolved decision, with a
+   permanent id.
+3. [Integrated pipeline guide](docs/graphs/README.md) — run tables, splits, graphs and
+   training, with an offline example.
+4. [Component requirements](docs/requirements/README.md) — the shared component map,
+   work packages, contracts, and team rules. Empty while the Sprint 2 set is written
+   (ISS-21).
 
-The Sprint 2 requirements set is being written. Until it lands, the Sprint 1 contracts
-in [docs/archive/sprint1/](docs/archive/sprint1/) are the accurate description of what
-each component implements today. They are reference, not current assignments:
+Sprint 1 is complete and closed; Components 01, 02, 03, 04 and 06 shipped in it. The
+Sprint 2 requirements set is being written. Until it lands, the Sprint 1 contracts in
+[docs/archive/sprint1/](docs/archive/sprint1/) are the accurate description of what each
+component implements today. They are reference, not current assignments:
 
 - [01 — Get the raw data onto disk](docs/archive/sprint1/01_DATA_SOURCE_INGESTION_REQUIREMENTS.md)
 - [02 — Build the standard tables](docs/archive/sprint1/02_CANONICAL_DATA_REQUIREMENTS.md)
@@ -48,23 +53,32 @@ therefore starts with reproducibly collecting source-faithful BoM data for 2021�
 then preparing the standard dataset, checking splits, creating graph samples, training
 through a common interface, and evaluating every method on identical targets.
 
-As of 2026-09-18 every step on that path exists and is connected. Components 01, 02,
-03, 04 and 06 are implemented, tested and integrated on
-`integration/sydney-gauge-baseline`: the chain runs end to end from raw BoM responses
-through the standard tables, a released split and graph samples to a single prediction
-table covering HGNN, IDW and network mean. This is software-integration evidence.
-Radar/satellite provenance, units, coverage and held-out-gauge independence remain open,
-so no fusion result is publishable yet, and the legacy hand export still may not be
-quoted in millimetres. See the
-[implementation handoff](docs/IMPLEMENTATION_HANDOFF.md) for the current integration
-state and [docs/ISSUES.md](docs/ISSUES.md) for known open defects.
+Every step on that path now exists and is connected, but the result is
+software-integration evidence rather than science: provenance, units, coverage and
+held-out-gauge independence are still open, and the legacy hand export may not be quoted
+in millimetres. How far each component has actually got is recorded once, in
+[docs/CURRENT_STATE.md](docs/CURRENT_STATE.md), and what is known to be wrong is in
+[docs/ISSUES.md](docs/ISSUES.md). This README does not repeat either — a second copy of a
+status is a second answer.
+
+## How the documentation stays true
+
+Two documents carry live information and each has one job. `docs/CURRENT_STATE.md` says
+where the project is; it names the latest commit rather than a branch, and on a feature
+branch it is main's latest version plus the lines your own work makes untrue.
+`docs/ISSUES.md` says what is broken, missing or undecided; it is the only place an issue
+is recorded, and every issue keeps a permanent `ISS-xx` id. Other documents may cite an
+id, but never restate an issue's severity, owner or status. Both are updated in the same
+pull request as the change that makes them wrong. The full rules are in
+[AGENTS.md](AGENTS.md#keeping-the-documentation-true).
 
 ## Repository map
 
 | Path | Purpose |
 |---|---|
-| `docs/requirements/` | Current component contracts; primary implementation authority |
-| `docs/archive/` | Historical planning, audit evidence, and run records; not active requirements |
+| `docs/CURRENT_STATE.md`, `docs/ISSUES.md` | Live project state and the issue register; updated with every change that affects them |
+| `docs/requirements/` | Component contracts and shared rules; primary implementation authority. Empty while the Sprint 2 set is written (ISS-21) |
+| `docs/archive/` | Historical planning, audit evidence, closed-sprint state, and run records; not active requirements |
 | `src/ingestion/`, `config/ingestion/`, `docs/ingestion/` | Component 01 source data: BoM gauge fetcher, region config, and operator guide. Production path |
 | `src/canonical/`, `config/canonical/`, `docs/canonical/` | Component 02 standard tables: tips to hourly, the station table, verification, and grid reshaping. Production path |
 | `src/study/`, `src/reproducibility/`, `config/splits/`, `config/seeds.yaml` | Component 03 study splits: spatial clustering, fold construction, role assignment, and seed control. Production path |
@@ -123,10 +137,11 @@ uv run --locked python -m pytest tests -q -rx
 uv run --locked ruff check .
 ```
 
-`ruff check .` currently reports 692 findings across inherited, transitional and other
-pre-existing files awaiting classification. The Component 06 integration modules pass
-focused Ruff checks. A clean repository-wide lint run is not yet the baseline; do not
-mass-fix inherited files merely to silence it.
+`ruff check .` reports a large number of findings across inherited, transitional and other
+pre-existing files awaiting classification (ISS-17); the current count is in
+[docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). New component modules pass focused Ruff
+checks. A clean repository-wide lint run is not yet the baseline; do not mass-fix
+inherited files merely to silence it.
 
 Some existing tests skip when the untracked legacy gauge data is absent. Each component
 replaces that dependency by committing a small real sample under `tests/data/`, so the
@@ -134,12 +149,9 @@ suite runs on a fresh clone with no network.
 
 ## Important guardrails
 
-- Do not quote current legacy-data RMSE as millimetres or as a paper reproduction.
-- Do not add radar, satellite, or fake sensor nodes to make a gauge-only path run.
 - Do not reintroduce Singapore/NEA paths, timezone assumptions, or commercial microwave
   link support. They are permanently out of scope.
 - Do not create private splits, seeds, prediction schemas, or station identifiers.
 - Do not silently fix inherited scientific behaviour; label compatibility and corrected
   modes separately.
 - Do not commit raw source data, credentials, checkpoints, or experiment outputs.
-- Preserve user changes in a dirty worktree and keep component changes separable.

@@ -2,7 +2,7 @@
 
 The repository-wide pipeline guide: how Components 02, 03, 04 and 06 connect through
 their published files. Run from the repository root with `uv sync --locked`. The
-[handoff](../IMPLEMENTATION_HANDOFF.md) records integration state and repository
+[current state](../CURRENT_STATE.md) records integration state and repository
 boundaries; [ISSUES.md](../ISSUES.md) records open defects and scientific review
 points.
 

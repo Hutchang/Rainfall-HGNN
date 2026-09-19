@@ -39,7 +39,9 @@ uv run --locked python -m src.models.run config/models/hgnn.yaml
 The component boundary assigns implementation to `src/models/`, and the repository
 does not install `src` as an import root. The executable command is
 `python -m src.models.run`; the requirements entrypoint was corrected in this change.
-The existing top-level `models/gnn.py` remains the inherited model implementation.
+`src/models/models.py` holds the inherited architectures, moved under this component's
+boundary from the former top-level `models/gnn.py`. The runner uses `GNNInductiveHetero`;
+the other six classes are retained unused for possible later work.
 
 The YAML supplies paths to the published inputs:
 

@@ -3,8 +3,8 @@
 Turns Component 01's raw BoM responses into the two tables every later component reads.
 Sprint 1 contract: [02_CANONICAL_DATA_REQUIREMENTS.md](../archive/sprint1/02_CANONICAL_DATA_REQUIREMENTS.md)
 (archived; the Sprint 2 contract is being written).
-Radar and satellite reshaping is not included here (blocked on Component 01's provenance
-answers; owner TBC).
+Radar and satellite reshaping is not included here; see the
+[grid adapter](../grids/README.md).
 
 ## Commands
 
@@ -201,15 +201,14 @@ daily loggers, not tipping buckets; Gladesville at 89.85% coverage, just under t
 
 ## Open questions
 
-- **Short blockages produce confident false zeros.** A blocked gauge reports no tips
-  and BoM's daily total, computed from the same tips, reports 0.0, so the day verifies
-  and 24 hours of `0.0` are written as observed-dry. The dead-gauge rule only catches
-  runs of 90+ days. A day-level check (verified-dry while most near neighbours recorded
-  rain) would close this; the threshold is a scientific choice for the client. This is
-  the top risk in the current tables.
-- **Timestamp fidelity within a day** is assumed. If any logger batch-reports, the day
-  total is still right but the hourly distribution is wrong; only BoM can confirm.
-- Whether the client wants the plausibility caps, tolerance, or coverage threshold set
-  differently. All are config values.
-- The cause of the April-May 2021 gap (per-owner outage?).
-- Radar and satellite tables: blocked on Component 01's provenance answers.
+Tracked in [ISSUES.md](../ISSUES.md), not here:
+
+- **ISS-01** — short blockages produce confident false zeros. The top risk in these
+  tables.
+- **ISS-05** — within-day timestamp fidelity is assumed, not verified.
+- **ISS-12** — plausibility caps, tolerance and the coverage threshold need a client
+  decision.
+- **ISS-06** — the unexplained April–May 2021 gap in BoM daily totals.
+- **ISS-20** — the statistics table above is stale.
+- **ISS-02**, **ISS-03**, **ISS-04** — radar and satellite provenance, coordinates and
+  coverage, which block the grid tables.

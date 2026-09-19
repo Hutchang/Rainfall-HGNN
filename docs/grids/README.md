@@ -113,23 +113,26 @@ an existing destination.
 ## Remaining production handoff
 
 - **Amos/source owner:** accessible raw radar/satellite files, matching coordinates and
-  `ok` index rows, plus product, unit and timestamp provenance. The satellite coordinate
-  file has not been verified. Do not manufacture it from node count or an assumed grid.
+  `ok` index rows, plus product, unit and timestamp provenance (ISS-02, ISS-03, ISS-04).
+  Do not manufacture the satellite coordinate file from node count or an assumed grid.
 - **Angus/graph owner:** approved fusion timeline, missing-modality treatment, topology
-  and successful attachment to the actual fold graphs.
-- **Rick/integration:** integrate the adapter and model runner into the experiment
-  workflow, and reconcile the D06 Person field and Teams shorthand with Sprint One.
-  A full training run is separate acceptance evidence.
-- **Scientific review:** the earlier source investigation identified gauge merging in
-  the inherited Rainfields `prcp-m15` stream. Holding a gauge out of the graph does not
-  remove information already blended into that input. Confirm the supplied file's
-  provenance and contributing gauges before claiming an independent comparison.
+  and successful attachment to the actual fold graphs (ISS-09).
+- **Rick/integration:** integrate the adapter and model runner into the Sprint 2
+  experiment runner. A full training run is separate acceptance evidence.
+- **Scientific review:** confirm the supplied file's provenance and contributing gauges
+  before claiming an independent comparison. The inherited Rainfields `prcp-m15` stream
+  merges gauges, and holding a gauge out of the graph does not remove information already
+  blended into the input — recorded under ISS-02.
 
 The production inputs were not available in this checkout, and the NCI SSH attempt
 could not verify the host key. The adapter is testable offline; real-data validation
 and downstream graph acceptance must be recorded separately when those inputs arrive.
 
 ## Verification — 18 September 2026
+
+This component's acceptance run, kept as dated evidence. The repository's current figures
+are in [CURRENT_STATE.md](../CURRENT_STATE.md); the skip count in particular depends on
+whether the local checkout has the legacy gauge data.
 
 - Combined test suite: 133 passed, 29 legacy-data/live-API skips. Dependency deprecation
   warnings remain. The tests include a forward/backward pass through the inherited

@@ -16,8 +16,14 @@ requirements and should not be assigned directly to a component owner.
 - [run_niramay_smoketest_native.log](baseline-reconciliation/run_niramay_smoketest_native.log)
   is the corresponding historical smoke-run record.
 
+[sprint1/](sprint1/) holds the closed sprint: the five component contracts that Sprint 1
+was built to, [HANDOFF_HISTORY.md](sprint1/HANDOFF_HISTORY.md) recording its state and
+resolved defects, and [COMPONENT_04_HANDOVER_NOTES.md](sprint1/COMPONENT_04_HANDOVER_NOTES.md),
+whose fixes have all landed. The contracts still describe what each component implements
+today, but they are reference, not current assignments.
+
 Archived descriptions of Singapore/NEA or commercial microwave link behaviour are
 historical evidence only. They do not override the Australian-only active requirements.
 
-Current implementation work starts at [../requirements/README.md](../requirements/README.md)
-and [../IMPLEMENTATION_HANDOFF.md](../IMPLEMENTATION_HANDOFF.md).
+Current implementation work starts at [../CURRENT_STATE.md](../CURRENT_STATE.md) and
+[../requirements/README.md](../requirements/README.md).
