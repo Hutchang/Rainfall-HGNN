@@ -11,12 +11,15 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.canonical.raw_index import read_index as _read_index
+
 TIP_COLUMNS = ["station_id", "timestamp", "value", "quality"]
 
 
 def read_index(raw_dir: Path) -> pd.DataFrame:
-    """Component 01's manifest: one row per raw file, with its download status."""
-    return pd.read_csv(raw_dir / "index.csv", dtype={"station_id": str})
+    """Component 01's manifest: one row per raw file, with its download status.
+    Every fetcher's index file, read as one table."""
+    return _read_index(raw_dir)
 
 
 def period_from_index(index: pd.DataFrame) -> tuple[date, date]:

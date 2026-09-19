@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.canonical.raw_index import read_index
+
 
 def utc_hours(values, label):
     """Reject ambiguous, duplicate or off-hour timestamps; preserve UTC instants."""
@@ -168,7 +170,7 @@ def build(config_path, check_only=False):
     raw_dir, output_dir = Path(config["raw_dir"]), Path(config["output_dir"])
     if output_dir.resolve().is_relative_to(raw_dir.resolve()):
         raise ValueError("output_dir must not be inside immutable raw_dir")
-    index = pd.read_csv(raw_dir / "index.csv", dtype=str, keep_default_na=False)
+    index = read_index(raw_dir, dtype=str, keep_default_na=False)
     if not {"path", "status"}.issubset(index.columns):
         raise ValueError("raw index needs path and status columns")
     layers = config["layers"]

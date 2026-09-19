@@ -17,14 +17,13 @@ import argparse
 import calendar
 import csv
 import gzip
-import hashlib
 import json
-import os
 import sys
 import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from src.ingestion.common import index_path, now, report_path, sha256_of, write_index
 from src.ingestion.config import load_config
 from src.ingestion.gauge.kiwis import KiwisClient
 
@@ -84,7 +83,7 @@ def write_raw(path: Path, raw: bytes) -> str:
         gzip.GzipFile(filename="", fileobj=out, mode="wb", mtime=0) as fh,
     ):
         fh.write(raw)
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_of(path)
 
 
 def fetch_values(client: KiwisClient, ts_id: str, start: date, end: date, path: Path):
@@ -97,32 +96,10 @@ def fetch_values(client: KiwisClient, ts_id: str, start: date, end: date, path: 
 # The run: every station in the box, every window, with resume and an index.
 # ---------------------------------------------------------------------------
 
-INDEX_COLUMNS = [
-    "source",
-    "station_id",
-    "path",
-    "start",
-    "end",
-    "n_records",
-    "status",
-    "error",
-    "retrieved_at",
-    "sha256",
-]
-
-
-# index.csv is rewritten every FLUSH_EVERY stations. A multi-hour run that is
+# The index is rewritten every FLUSH_EVERY stations. A multi-hour run that is
 # killed outright then still leaves bookkeeping for everything up to the last
 # flush, instead of nothing at all.
 FLUSH_EVERY = 25
-
-
-def _now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _count_records(path: Path) -> int:
@@ -236,7 +213,7 @@ def skipped_row(source, sid, path, start, end, reason, raw_dir) -> dict:
     """An expected file that was never requested, because the station has no series
     ids. `status` is neither ok nor failed: nothing was downloaded, and retrying this
     one file cannot help. Component 02 reads only `status == "ok"` rows, so these are
-    inert downstream while keeping the station and its cause visible in index.csv."""
+    inert downstream while keeping the station and its cause visible in the index."""
     return {
         "source": source,
         "station_id": sid,
@@ -272,14 +249,14 @@ def fetch_window(client, source, sid, ts_id, label, start, end, path, raw_dir) -
             retrieved_at=datetime.fromtimestamp(path.stat().st_mtime, UTC).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             ),
-            sha256=_sha256(path),
+            sha256=sha256_of(path),
         )
         return row
     try:
         n, sha = fetch_values(client, ts_id, start, end, path)
-        row.update(n_records=n, status="ok", retrieved_at=_now(), sha256=sha)
+        row.update(n_records=n, status="ok", retrieved_at=now(), sha256=sha)
     except (RuntimeError, OSError) as e:
-        row.update(status="failed", error=str(e)[:200], retrieved_at=_now())
+        row.update(status="failed", error=str(e)[:200], retrieved_at=now())
     return row
 
 
@@ -291,7 +268,7 @@ def run(
 ) -> int:
     """Fetch every gauge file for the config. Returns the number of failures plus
     the stations never reached, so an interrupted run also exits non-zero.
-    index.csv and report.md are written even when the run is interrupted.
+    The index and report are written even when the run is interrupted.
     `client` is injectable so tests can run offline against a fake."""
     g = cfg["gauge"]
     raw_dir = Path(output_dir or cfg["output_dir"])
@@ -322,7 +299,7 @@ def run(
             if sid not in series:
                 # No ts_ids, so nothing for this station can be requested. Write a row
                 # per expected file anyway, with the cause, so the station cannot drop
-                # out of index.csv between runs and Component 02 can see the whole
+                # out of the index between runs and Component 02 can see the whole
                 # expected set rather than inferring it from a directory listing.
                 reason = no_series[sid]
                 for source, subdir, windows in (
@@ -390,7 +367,7 @@ def run(
             )
             done = i
             if i % FLUSH_EVERY == 0:
-                write_index(raw_dir / "index.csv", index)
+                write_index(index_path(raw_dir, "gauge"), index)
     except KeyboardInterrupt:
         # The downloads themselves survive a Ctrl-C, but the index is built in
         # memory and dies with the process. Catch it here so the finally below
@@ -398,9 +375,9 @@ def run(
         _log(f"\ninterrupted after {done} of {len(stations)} stations")
     finally:
         failures = [r for r in index if r["status"] == "failed"]
-        write_index(raw_dir / "index.csv", index)
+        write_index(index_path(raw_dir, "gauge"), index)
         write_report(
-            raw_dir / "report.md",
+            report_path(raw_dir, "gauge"),
             cfg,
             stations,
             no_series,
@@ -415,29 +392,21 @@ def run(
             f"\nfiles: {len(index)} indexed, {fetched} fetched this run, {skipped} already on disk, {len(failures)} failed"
         )
         _log(f"stations with no usable series: {len(no_series)}")
-        _log(f"wrote {raw_dir / 'index.csv'} and {raw_dir / 'report.md'}")
+        _log(
+            f"wrote {index_path(raw_dir, 'gauge')} and {report_path(raw_dir, 'gauge')}"
+        )
     # A run that stopped early is not a success even with nothing failed, so the
     # stations it never reached count towards the exit code.
     return len(failures) + len(no_series) + (len(stations) - done)
 
 
-def write_index(path: Path, rows: list[dict]) -> None:
-    """Write via a temp file and one rename, so a kill part-way through a flush
-    leaves the previous index.csv intact rather than a truncated one."""
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=INDEX_COLUMNS)
-        w.writeheader()
-        w.writerows(rows)
-    os.replace(tmp, path)
-
-
 def write_report(
     path, cfg, stations, no_series, index, failures, skipped, fetched, seconds, done
 ) -> None:
-    """Write report.md. `done` is the number of stations fully processed; when it is
+    """Write the run report. `done` is the number of stations fully processed; when it is
     short of the station count the report says so, because every count below then
     describes only part of the config."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     ok = [r for r in index if r["status"] == "ok"]
     never_requested = [r for r in index if r["status"] == "skipped"]
     names_by_id = {st["station_id"]: st["station_name"] for st in stations}
@@ -460,7 +429,7 @@ def write_report(
         f"- period: {cfg['start']} to {cfg['end']} inclusive",
         f"- bounding box: {cfg['gauge']['bounds']}",
         f"- series: tips `{cfg['gauge']['series']['tips']}`, daily `{cfg['gauge']['series']['daily']}`",
-        f"- run finished: {_now()}, {seconds / 60:.1f} min",
+        f"- run finished: {now()}, {seconds / 60:.1f} min",
         "",
         "## Counts",
         "",
@@ -485,7 +454,7 @@ def write_report(
             (
                 f"{len(no_series)} stations have no series ids, so none of their "
                 f"{len(never_requested)} expected files were requested. They are in "
-                "index.csv with status `skipped`, not readable by Component 02."
+                "the index with status `skipped`, not readable by Component 02."
             ),
             "",
             "Rerun to retry the ones marked *will retry*; those are transient API",
