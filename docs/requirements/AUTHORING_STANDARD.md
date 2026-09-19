@@ -1,8 +1,10 @@
 # Requirements document authoring standard
 
-This standard applies to every component requirements document in this directory.
-These documents are implementation briefs, onboarding guides, component contracts,
-test specifications, architectural decisions, and handoff records. They are written
+This standard applies to every requirements document in this directory — the component
+documents that follow the eleven sections below, and the study documents that follow the
+shorter template further down. These documents are implementation briefs, onboarding
+guides, component contracts, test specifications, architectural decisions, and handoff
+records. They are written
 for a capable third-year computer-science or data-science student who is new to the
 domain and inherited repositories.
 
@@ -30,6 +32,39 @@ Include one short worked end-to-end example under **System Position**. Do not ad
 “Implementation Freedom” section. Normal engineering judgement applies only to details
 the requirements deliberately leave unspecified.
 
+## Study document template
+
+Some deliverables (D08, D09, D10) are research, not code: a comparison to run, a question to answer, a
+report to write. Forcing the eleven sections onto them produces empty headings. A
+*study* document uses these sections instead, in this order:
+
+1. Summary — what is being found out, in a paragraph.
+2. Question(s) — each one a sentence that a result can answer yes or no.
+3. Protocol — data, split, methods, metrics, and what is held fixed.
+4. Inputs — data and code, with paths and their state today.
+5. Subtasks — a table: id, what, needs (subtasks or decisions), done when.
+6. Deliverable — the document or figure that comes out, with its path.
+7. Acceptance — how a reviewer tells the deliverable is honest and complete.
+8. Dependencies — decisions (`DEC-n`) and issues (`ISS-xx`) by id only.
+9. This week and backlog — which subtasks are in the sprint, which carry over.
+10. Findings — empty at first; filled in as the work runs.
+
+A subtask that is really code (a reader, a converter) is written inside the study document
+in the component style: `FRxx` and `TESTxx` lines with observable completion. The first
+line of every document says which template it uses.
+
+## Writing so a newcomer can follow
+
+Every finding about code or method is written in three steps: what the code does now,
+what the paper or contract expects instead, and why the difference matters for the
+result. If the behaviour is not obvious, give a tiny concrete example (three gauges on a
+line, one neighbour each). Define a term the first time it is used, in the sentence
+where it appears — a glossary link does not replace that. Do not use shorthand that
+assumes the reader already knows the method ("z-score per node type", "round-robin",
+"O(0.1)"); say what happens instead ("subtract the training average and divide by the
+spread"; "hands the stations out one at a time to fold 0, 1, 2…"). Do not name a
+conclusion in a heading-style label without the mechanism under it.
+
 ## Authoring rules
 
 - Bias toward decisions. If a choice affects integration, reproducibility, scientific
@@ -43,7 +78,9 @@ the requirements deliberately leave unspecified.
 - Make outputs concrete: path convention, format, minimum fields, version identifier,
   and the component or teammate that reads them next.
 - Start testing with component-level acceptance tests, then add source- or
-  implementation-specific tests.
+  implementation-specific tests. Every document's Testing or Acceptance section says
+  which modules it touches and that the coverage floors in rule 10 of the README (80 %;
+  90 % for modules that write shared files) hold for them.
 - Separate decisions from investigation. Requirements state what the team has decided;
   **Current Technical Findings** records evidence that may later change.
 - Mark unresolved facts as `BLOCKED`, `TO VALIDATE`, or `UNKNOWN`. Do not present a
