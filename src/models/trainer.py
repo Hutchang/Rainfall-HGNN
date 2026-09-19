@@ -7,8 +7,8 @@ import pandas as pd
 import torch
 from torch_geometric.loader import DataLoader
 
-from models.gnn import GNNInductiveHetero
 from src.models.graphs import HourlyGraphDataset
+from src.models.models import GNNInductiveHetero
 
 
 def seed_everything(seed, deterministic=True):

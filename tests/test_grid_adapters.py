@@ -190,7 +190,7 @@ def test_node_features_work_with_inherited_model(bundle):
     """Exercise both feature widths through a forward/backward pass, not real topology."""
     import torch
 
-    from models.gnn import GNNInductiveHetero
+    from src.models.models import GNNInductiveHetero
 
     x = {"raingauge": torch.ones((2, 6))}
     for name in ("radar", "satellite"):

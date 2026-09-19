@@ -8,9 +8,9 @@ import pytest
 import torch
 from torch_geometric.data import Batch
 
-from models.gnn import GNNInductiveHetero
 from src.models.contracts import load_inputs, validate_predictions
 from src.models.graphs import HourlyGraphDataset, load_graph, validate_graph
+from src.models.models import GNNInductiveHetero
 from src.models.run import (
     check_inputs,
     read_fold,
