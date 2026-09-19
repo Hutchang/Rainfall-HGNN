@@ -51,6 +51,7 @@ somewhere else, move it here and leave the id behind.
 | ISS-21 | `docs/requirements/README.md` is empty but three documents route readers to it | Material | Rick | Open |
 | ISS-22 | "Greater Sydney" scope for the upper Blue Mountains is undecided | Material | Rick | Open |
 | ISS-23 | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
+| ISS-24 | No per-source data manifest for units, CRS and provenance | Material | _unassigned_ | Open |
 
 ---
 
@@ -303,6 +304,36 @@ classified file by file. Do not bulk-fix to silence it.
 **Closes when:** inherited files are classified and either retained-and-cleaned or removed.
 
 ---
+
+### ISS-24 — No per-source data manifest for units, CRS and provenance
+**Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
+
+Every raw source carries assumptions that exist only inside the fetcher that wrote it:
+what units the values are in, what coordinate basis positions are expressed against, what
+the temporal resolution is, and where the data came from. Nothing declares them where a
+consumer can check, so Component 02 either restates the assumption or inherits it silently.
+
+This is the class behind several existing entries rather than a new symptom. ISS-02 and
+ISS-03 are radar and satellite provenance and the missing satellite coordinates; ISS-04 is
+coverage that differs per source. The radar reader assumed its projection axes were in
+kilometres and multiplied by 1000 without checking: that instance is now an explicit
+assertion in `src/ingestion/radar/coords.py`, so a units change raises instead of silently
+scaling every node coordinate by 1000, but the next source gets no such protection for
+free.
+
+A manifest per raw source — units, coordinate reference system, temporal resolution,
+covered period, and provenance including the exact product and retrieval date — would make
+these declared and checkable at the boundary instead of discovered downstream. The index
+already carries per-file status; this is the per-source counterpart.
+
+Deferred deliberately: no current result is wrong because of it, and the fetchers that
+exist have had their individual assumptions checked. It will bite when a fourth source is
+added or when a source changes format.
+
+**Closes when:** each raw source writes a machine-readable manifest declaring units, CRS,
+temporal resolution, coverage and provenance, and Component 02 validates against it rather
+than assuming.
+
 
 ## Documentation gaps
 

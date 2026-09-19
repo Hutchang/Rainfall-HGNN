@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from src.ingestion.common import INDEX_COLUMNS
 from src.ingestion.config import load_config
 from src.ingestion.gauge import fetch
 from src.ingestion.gauge.kiwis import KiwisClient
@@ -202,15 +203,17 @@ def test_run_writes_layout_index_and_report(tmp_path):
         assert (raw / "gauge" / "tips" / sid / "2022-02.json.gz").exists()
         assert (raw / "gauge" / "daily" / sid / "2022.json.gz").exists()
 
-    with (raw / "index.csv").open() as fh:
+    with (raw / "index" / "gauge.csv").open() as fh:
         rows = list(csv.DictReader(fh))
-    assert list(rows[0].keys()) == fetch.INDEX_COLUMNS
+    assert list(rows[0].keys()) == INDEX_COLUMNS
     assert len(rows) == 2 * (2 + 1)
     assert all(
         r["status"] == "ok" and r["n_records"] == "2" and len(r["sha256"]) == 64
         for r in rows
     )
-    assert (raw / "report.md").read_text().startswith("# Gauge ingestion report")
+    assert (
+        (raw / "report" / "gauge.md").read_text().startswith("# Gauge ingestion report")
+    )
 
 
 def test_second_run_skips_existing_files_and_makes_no_value_calls(tmp_path):
@@ -224,7 +227,7 @@ def test_second_run_skips_existing_files_and_makes_no_value_calls(tmp_path):
         for c in second.calls
         if c.startswith(("values", "station_list", "series_list"))
     ]
-    with (Path(cfg["output_dir"]) / "index.csv").open() as fh:
+    with (Path(cfg["output_dir"]) / "index" / "gauge.csv").open() as fh:
         assert len(list(csv.DictReader(fh))) == 6, (
             "index still covers every expected file"
         )
@@ -235,14 +238,14 @@ def test_failed_download_is_indexed_and_run_exits_nonzero(tmp_path):
     client = FakeClient(fail_paths={("101", "2022-02-01")})
     failures = fetch.run(cfg, client=client)
     assert failures == 1
-    with (Path(cfg["output_dir"]) / "index.csv").open() as fh:
+    with (Path(cfg["output_dir"]) / "index" / "gauge.csv").open() as fh:
         rows = {r["path"]: r for r in csv.DictReader(fh)}
     bad = rows["gauge/tips/1/2022-02.json.gz"]
     assert bad["status"] == "failed" and "504" in bad["error"] and bad["sha256"] == ""
     assert not (Path(cfg["output_dir"]) / "gauge/tips/1/2022-02.json.gz").exists()
     assert (
         "gauge/tips/1/2022-02.json.gz"
-        in (Path(cfg["output_dir"]) / "report.md").read_text()
+        in (Path(cfg["output_dir"]) / "report" / "gauge.md").read_text()
     )
     # rerun retries only the failed file
     retry = FakeClient()
@@ -253,7 +256,7 @@ def test_failed_download_is_indexed_and_run_exits_nonzero(tmp_path):
 
 
 def _index(cfg):
-    with (Path(cfg["output_dir"]) / "index.csv").open() as fh:
+    with (Path(cfg["output_dir"]) / "index" / "gauge.csv").open() as fh:
         return list(csv.DictReader(fh))
 
 
@@ -262,7 +265,7 @@ def test_transient_series_failure_is_retried_on_the_next_run(tmp_path):
     the second. FakeClient returns two stations and small_cfg asks for 2 tip months
     plus 1 daily year, so a complete run is 2 stations x 3 files = 6 index rows.
 
-    Run 1 must exit non-zero and still leave station 2 visible in index.csv.
+    Run 1 must exit non-zero and still leave station 2 visible in the index.
     Run 2 must re-ask ONLY station 2: re-asking station 1 would mean the cache was
     abandoned, and not re-asking station 2 is the original bug, where one transient
     error was cached as "already looked up" and the station silently disappeared
@@ -306,7 +309,7 @@ def test_station_with_no_series_is_indexed_reported_and_kept_non_zero(tmp_path):
         assert all(r["sha256"] == "" and r["n_records"] == "" for r in rows), (
             "nothing was downloaded, so there is no hash and no record count"
         )
-        report = (Path(cfg["output_dir"]) / "report.md").read_text()
+        report = (Path(cfg["output_dir"]) / "report" / "gauge.md").read_text()
         assert "- stations with no usable series: 1" in report
         assert "never requested: 3" in report
         assert "2 B: no required series" in report

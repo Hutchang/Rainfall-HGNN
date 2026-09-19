@@ -30,8 +30,8 @@ From Component 01, `database/raw/`:
 | `gauge/tips/<station_id>/<YYYY-MM>.json.gz` | BoM response: irregular timestamps, one row per tip | The rainfall |
 | `gauge/daily/<station_id>/<YYYY>.json.gz` | BoM response: one total per 09:00-to-09:00 rain day | Your independent check that the gauge was working. Job 3 is impossible without it |
 | `gauge/stations.json` | `station_id`, `station_no`, name, lat, lon, owner | Coordinates and identity |
-| `radar/radar_2022_preprocessed.pkl` | DataFrame, 8,640 rows: `timestamp` (UTC) + `data` = float32 array of 952 values | Radar rainfall |
-| `radar/radar_node_coords.csv` | 952 rows: `latitude`, `longitude`, in the same order as the array | Places each radar value on the map |
+| `radar/<YYYY>/<YYYY-MM-DD>.prcp-m15.zip` | NCI daily zip, ~96 NetCDF files/day, each a 512x512 grid, 15-min precipitation accumulation (kg/m², i.e. mm) | Radar rainfall — **shape changed 2026-09-13, see note below** |
+| `radar/radar_node_coords.csv` | 262,144 rows: `node_id`, `latitude`, `longitude`, in the same row-major order as `precipitation.values.flatten()` | Places each radar cell on the map |
 | `satellite/satellite_2022_preprocessed.pkl` | DataFrame, 8,760 rows: `timestamp` (UTC) + `data` = float32 array shaped (726, 2). Column 0 is a rain rate (0 to ~4.2), column 1 is a 0/1 availability flag (about 86% ones) | Satellite rainfall |
 
 You also need one fact that is in neither the raw files nor the API: **the millimetres
@@ -276,16 +276,29 @@ no rain, and the results are wrong in a way no test will catch.
 - **Satellite has no coordinates file.** Without it, `satellite_nodes.csv` cannot be
   written and Component 04 cannot connect satellite nodes to gauges. Tracked in
   Component 01's open questions; satellite work is blocked until it appears.
-- **Radar units are unconfirmed.** If the 952 values turn out to be an accumulation
-  rather than a rate, the column name `rain_rate` is wrong and Component 04's feature
-  scaling changes. Do not convert anything until Component 01 answers.
+- **Radar's real shape is far bigger than this document assumed, and the row/size
+  estimates below (952 nodes, 8.2M rows, 33MB `.npy`) are stale — flagged 2026-09-13,
+  not yet resolved with this component's owner.** Component 01 now fetches BoM
+  Rainfields 3 `prcp-m15` ("Merged Gauge/Radar Accumulation, 15 min") directly from NCI
+  instead of registering a pre-supplied 952-node pkl. Confirmed facts, not guesses:
+  units are kg/m² (≈ mm) accumulated over each file's own 15-minute window, not an
+  hourly rate — the column name `rain_rate` and the "explode into hourly rows" plan both
+  need revisiting; the native grid is 512×512 = 262,144 cells at 0.5 km spacing, not
+  952 — whether Component 02 subsamples this down (the source paper describes
+  Rainfields subsampled to ~5 km) is a scientific decision for this component's owner to
+  make and record, not something Component 01 should decide; and gauge-correction is
+  confirmed, with the exact `contributing_gauges` station numbers available per file for
+  a leakage check against Component 03's held-out stations. See
+  [01's doc](01_DATA_SOURCE_INGESTION_REQUIREMENTS.md) and
+  `docs/ingestion/README.md` for the full detail. Agree the resulting shape with the
+  Component 04 owner before building it, per the "Long-format CSV" question below.
 - **Long-format CSV is probably the wrong shape for the grids.** They are natively 2D
-  arrays, and Component 04 pivots them straight back into `[nodes, time, features]`, so
-  the long form costs roughly 320MB and a pivot to gain nothing. Saving
-  `radar_hourly.npy` (float32, `[8640, 952]`, 33MB) beside `radar_nodes.csv` is one line
-  to load and already matches the shape Component 04 wants. Gauge data stays CSV either
-  way — the grids alone are affected. Agree this with the Component 04 owner before
-  building it.
-- **Radar is missing 120 hours of 2022** and both grids cover 2022 only, while gauges
-  cover 2021–2022. Expect `radar_hourly` and `satellite_hourly` to be shorter than
-  `gauge_hourly`; say so in `report.md` rather than padding them.
+  arrays, and Component 04 pivots them straight back into `[nodes, time, features]`. The
+  row/size estimate here was computed for the old 952-node assumption and must be
+  redone against the real 262,144-node grid (and whatever subsampling Component 02
+  decides on) before choosing a format. Gauge data stays CSV either way — the grids
+  alone are affected. Agree this with the Component 04 owner before building it.
+- **Radar is no longer 2022-only** — both 2021 and 2022 are available from NCI for
+  `prcp-m15`, matching the gauge baseline period. Satellite still covers 2022 only.
+  Whether any radar days/hours are missing within that range needs checking against a
+  full fetch's `index.csv` once one has been run.
