@@ -241,7 +241,7 @@ def gauge_frames():
 
 
 def build_gauge_graph(frames, mapping_df=None, **overrides):
-    """A one-neighbour builder over the sample, with DEC-4 on unless overridden."""
+    """A one-neighbour builder over the sample, both_directions on unless overridden."""
     data_df, default_mapping, ids = frames
     settings = dict(
         knn=1,
@@ -267,7 +267,7 @@ def gauge_edges(builder):
 
 
 def test_one_direction_per_pick_leaves_a_gauge_receiving_nothing(gauge_frames):
-    """Test 11: the ISS-25 case DEC-4 exists to fix. An edge i -> j means j
+    """Test 11: the ISS-25 case both_directions exists to fix. An edge i -> j means j
     receives i's value, so with one edge per pick a gauge that is nobody's
     nearest receives no gauge value at all, and a held-out gauge there would be
     predicted from nothing."""
@@ -281,7 +281,7 @@ def test_one_direction_per_pick_leaves_a_gauge_receiving_nothing(gauge_frames):
 
 
 def test_both_directions_leaves_no_gauge_without_an_incoming_edge(gauge_frames):
-    """Test 12: DEC-4 - every gauge receives from at least one other gauge."""
+    """Test 12: both_directions - every gauge receives from at least one other gauge."""
     edges = gauge_edges(build_gauge_graph(gauge_frames))
     receiving = set(edges.edge_index[1].tolist())
     every_gauge = set(range(len(gauge_frames[2])))
@@ -291,8 +291,8 @@ def test_both_directions_leaves_no_gauge_without_an_incoming_edge(gauge_frames):
 
 
 def test_both_directions_makes_the_edge_set_symmetric(gauge_frames):
-    """Test 13: DEC-4 - for every pick i -> j the reverse j -> i is present, which
-    is what lets the positional encoding use the symmetric eigenvalue solver."""
+    """Test 13: for every pick i -> j the reverse j -> i is present, which is
+    what lets the positional encoding use the symmetric eigenvalue solver."""
     edges = gauge_edges(build_gauge_graph(gauge_frames))
     pairs = set(zip(*edges.edge_index.tolist(), strict=True))
     missing = {(i, j) for i, j in pairs if (j, i) not in pairs}
@@ -300,7 +300,7 @@ def test_both_directions_makes_the_edge_set_symmetric(gauge_frames):
 
 
 def test_both_directions_keeps_receiving_node_normalisation(gauge_frames):
-    """Test 14: DEC-4 - the two directions of one pair start from the same raw
+    """Test 14: both_directions - the two directions of one pair start from the same raw
     weight but are rescaled at their own destination, so every gauge that
     receives anything still has a strongest incoming edge of exactly 1."""
     edges = gauge_edges(build_gauge_graph(gauge_frames))
@@ -313,7 +313,7 @@ def test_both_directions_keeps_receiving_node_normalisation(gauge_frames):
 
 
 def test_both_directions_lets_the_symmetric_eigensolver_be_used(gauge_frames):
-    """Test 15: DEC-4 - `get_laplacian` uses the edge list as given, so the
+    """Test 15: both_directions - `get_laplacian` uses the edge list as given, so the
     positional encoding's matrix is symmetric only when both directions are
     present. That is what makes the symmetric solver the correct one; with one
     direction per pick the general solver is used and its eigenvectors can be

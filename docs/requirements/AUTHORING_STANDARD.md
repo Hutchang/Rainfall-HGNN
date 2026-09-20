@@ -45,7 +45,7 @@ report to write. Forcing the eleven sections onto them produces empty headings. 
 5. Subtasks — a table: id, what, needs (subtasks or decisions), done when.
 6. Deliverable — the document or figure that comes out, with its path.
 7. Acceptance — how a reviewer tells the deliverable is honest and complete.
-8. Dependencies — decisions (`DEC-n`) and issues (`ISS-xx`) by id only.
+8. Dependencies — which other deliverable and which owner to ask, and any `ISS-xx` by id.
 9. This week and backlog — which subtasks are in the sprint, which carry over.
 10. Findings — empty at first; filled in as the work runs.
 

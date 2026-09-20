@@ -45,7 +45,8 @@ class GaugeGraphNew:
             pick, i -> j only. An edge i -> j means j receives i's value, so a
             gauge receives from the gauges that picked it rather than from its
             own nearest, and a gauge nobody picked receives nothing at all
-            (ISS-25). True implements DEC-4: for every pick add j -> i as well.
+            (ISS-25). True matches the paper's symmetric connectivity (sec 3.2,
+            Eq. 1): for every pick add j -> i as well.
             The paper's connectivity is symmetric — sec 3.2 connects each point
             node to its k nearest neighbours, and Eq. 1's N(j) is the set j is
             connected to — while only the weights are direction-dependent. The
@@ -175,7 +176,7 @@ class GaugeGraphNew:
                 )
                 graph.add_edge(i, j, weight=weight)
                 if self.both_directions:
-                    # DEC-4: i picked j, so j is also one of the gauges i may
+                    # both_directions: i picked j, so j is also one of the gauges i may
                     # receive from. Same pair, same distance, same raw weight;
                     # the per-receiving-node loop below rescales each direction
                     # against its own destination's strongest incoming edge.
@@ -317,12 +318,12 @@ class GaugeGraphNew:
         `get_laplacian` uses the edge list exactly as it is given, so with one
         direction per pick the matrix is not symmetric, its eigenvectors can be
         complex, and PyTorch Geometric keeps only their real part. With both
-        directions present (DEC-4) the matrix is symmetric, so we check and say
-        so, and the symmetric solver is used instead of the general one. The
+        directions present the matrix is symmetric, so we check and say so,
+        and the symmetric solver is used instead of the general one. The
         two agree on a symmetric matrix; saying so stops us relying on that.
 
         The sign of each eigenvector is still drawn at random inside the
-        transform, which is a separate question from DEC-4 and is being
+        transform, which is a separate question from both_directions and is being
         measured before anything is changed about it (ISS-27).
         """
         if self.lpe_dimensions >= node_count:

@@ -21,17 +21,16 @@ and the out-of-scope remainder is removed file by file.
 
 1. [Current state](docs/CURRENT_STATE.md) — where the project is, what Sprint 2 is doing,
    repository boundaries, and the latest verification run.
-2. [Known issues](docs/ISSUES.md) — every open bug, gap and unresolved decision, with a
-   permanent id.
+2. [Known issues](docs/ISSUES.md) — every open bug and gap, with a permanent id.
 3. [Integrated pipeline guide](docs/graphs/README.md) — run tables, splits, graphs and
    training, with an offline example.
-4. [Sprint 2 requirements](docs/requirements/README.md) — deliverables D07 to D13, the six
-   day-one decisions, and the rules everyone follows.
+4. [Sprint 2 requirements](docs/requirements/README.md) — deliverables D07 to D13, the
+   rule for what counts as work, and the rules everyone follows.
 
 Sprint 1 is complete and closed; Components 01, 02, 03, 04 and 06 shipped in it. Sprint 2
 is organised as deliverables D07 to D13 (experiment runner, Sydney gauge-only baseline,
-radar fusion, Australia-wide, report, a stretch region-drawing app, and source grids read
-from NCI), numbered on from the Sprint 1 components, each with its own document under
+radar fusion, Australia-wide, report, and source grids read from NCI), numbered on from
+the Sprint 1 components, each with its own document under
 `docs/requirements/`. The
 Sprint 1 contracts in [docs/archive/sprint1/](docs/archive/sprint1/) are still the
 accurate description of what each component implements today. They are reference, not
@@ -71,9 +70,7 @@ where the project is; it names the latest commit rather than a branch, and on a 
 branch it is main's latest version plus the lines your own work makes untrue.
 `docs/ISSUES.md` says what is broken, missing or undecided; it is the only place an issue
 is recorded, and every issue keeps a permanent `ISS-xx` id. Other documents may cite an
-id, but never restate an issue's severity, owner or status (one exception: the decisions
-list in the Sprint 2 requirements names each issue's severity so the decisions can be
-ranked). Both are updated in the same
+id, but never restate an issue's severity, owner or status. Both are updated in the same
 pull request as the change that makes them wrong. The full rules are in
 [AGENTS.md](AGENTS.md#keeping-the-documentation-true).
 

@@ -1,4 +1,4 @@
-"""Baselines use only the supplied fold's training gauges as rainfall donors."""
+"""Baselines read only the supplied fold's training gauges."""
 
 import numpy as np
 import pandas as pd
@@ -63,21 +63,21 @@ def predict_at_targets(
             continue
         if not set(fold_targets.station_id).issubset(fold["ml"]["test"]):
             raise ValueError("baseline targets must belong to the fold test stations")
-        donors = observations.loc[observations.station_id.isin(fold["ml"]["train"])]
+        visible = observations.loc[observations.station_id.isin(fold["ml"]["train"])]
         if method == "network_mean":
-            # One mean per fold-hour avoids repeating the donor matrix for every target.
-            hourly = donors.groupby("timestamp").rainfall_mm.mean()
+            # One mean per fold-hour avoids repeating the gauge matrix for every target.
+            hourly = visible.groupby("timestamp").rainfall_mm.mean()
             part = fold_targets.copy()
             part["predicted_mm"] = part.timestamp.map(hourly)
             if part.predicted_mm.isna().any():
                 bad_hour = part.loc[part.predicted_mm.isna(), "timestamp"].iloc[0]
                 raise ValueError(
-                    f"BLOCKED: fold {fold['fold_index']} has no observed training donor at {bad_hour}"
+                    f"BLOCKED: fold {fold['fold_index']} has no observed training gauge at {bad_hour}"
                 )
             part["method"] = method
             parts.append(part[PREDICTION_COLUMNS])
             continue
-        wide = donors.pivot(
+        wide = visible.pivot(
             index="timestamp", columns="station_id", values="rainfall_mm"
         )
         wide = wide.reindex(columns=fold["ml"]["train"])
@@ -93,7 +93,7 @@ def predict_at_targets(
                     np.flatnonzero(~observed.any(axis=1))[0]
                 ]
                 raise ValueError(
-                    f"BLOCKED: fold {fold['fold_index']} has no observed training donor at {bad_hour}"
+                    f"BLOCKED: fold {fold['fold_index']} has no observed training gauge at {bad_hour}"
                 )
             distances = haversine_km(
                 coordinates.loc[station_id], coordinates.loc[wide.columns]
@@ -111,7 +111,7 @@ def predict_at_targets(
             hourly_weights[has_colocated] = colocated[has_colocated]
             totals = hourly_weights.sum(axis=1)
             if (totals <= 0).any():
-                raise ValueError("IDW has no finite positive donor weights")
+                raise ValueError("IDW has no finite positive gauge weights")
             predictions = (np.nan_to_num(values) * hourly_weights).sum(axis=1) / totals
             part = station_targets.copy()
             part["method"] = method
