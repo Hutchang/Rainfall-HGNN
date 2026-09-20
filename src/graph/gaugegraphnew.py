@@ -7,6 +7,7 @@ from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import Dataset
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.transforms import AddLaplacianEigenvectorPE
+from torch_geometric.utils import is_undirected
 
 # config = read_config("config.yaml")
 # removed the config file reading from this file as it is not needed here
@@ -21,6 +22,7 @@ class GaugeGraphNew:
         knn: int,
         edge_normalisation: str = "global",
         distance: str = "euclidean_degrees",
+        both_directions: bool = False,
         include_lpe: bool = True,
         lpe_dimensions: int = 4,
         layer_is_directed: bool = False,
@@ -38,6 +40,19 @@ class GaugeGraphNew:
             Rainfall Field Reconstruction", arXiv:2607.01621, sec 3.2):
             w_ij = (1/d_ij) / max_{k in N(j)} (1/d_kj) — each node normalises by
             its own neighbourhood's maximum instead of the global one.
+
+        both_directions: False (unmodified baseline, default) adds one edge per
+            pick, i -> j only. An edge i -> j means j receives i's value, so a
+            gauge receives from the gauges that picked it rather than from its
+            own nearest, and a gauge nobody picked receives nothing at all
+            (ISS-25). True implements DEC-4: for every pick add j -> i as well.
+            The paper's connectivity is symmetric — sec 3.2 connects each point
+            node to its k nearest neighbours, and Eq. 1's N(j) is the set j is
+            connected to — while only the weights are direction-dependent. The
+            two gauges are the same distance apart either way, so both
+            directions start from the same raw weight and the per-receiving-node
+            normalisation above then scales each at its own destination. A gauge
+            may then receive from more than k gauges, which is the intent.
         """
         if edge_normalisation not in ("global", "per_node"):
             raise ValueError(
@@ -51,6 +66,7 @@ class GaugeGraphNew:
         self.knn = knn
         self.edge_normalisation = edge_normalisation
         self.distance_metric = distance
+        self.both_directions = both_directions
         # added parameters
         self.include_lpe = include_lpe
         self.lpe_dimensions = lpe_dimensions
@@ -158,6 +174,12 @@ class GaugeGraphNew:
                     else distance
                 )
                 graph.add_edge(i, j, weight=weight)
+                if self.both_directions:
+                    # DEC-4: i picked j, so j is also one of the gauges i may
+                    # receive from. Same pair, same distance, same raw weight;
+                    # the per-receiving-node loop below rescales each direction
+                    # against its own destination's strongest incoming edge.
+                    graph.add_edge(j, i, weight=weight)
         if self.edge_normalisation == "per_node" and self.inverse_weighted:
             for destination in graph.nodes:
                 incoming = list(graph.in_edges(destination, data=True))
@@ -270,19 +292,10 @@ class GaugeGraphNew:
 
         # Fill laplacian
         if self.include_lpe:
-            temp_graph = Data(
-                x=torch.zeros(heterodata["raingauge"].x.shape[0], 1),
-                edge_index=heterodata["raingauge", "connects", "raingauge"].edge_index,
-                num_nodes=heterodata["raingauge"].x.shape[0],
+            lpe = self.positional_encoding(
+                heterodata["raingauge", "connects", "raingauge"].edge_index,
+                heterodata["raingauge"].x.shape[0],
             )
-            lpe_transform = AddLaplacianEigenvectorPE(
-                k=self.lpe_dimensions, attr_name="laplacian_pe"
-            )
-            if self.lpe_dimensions >= temp_graph.num_nodes:
-                raise ValueError("LPE dimensions must be smaller than the node count")
-            temp_graph = lpe_transform(temp_graph)
-            lpe = temp_graph.laplacian_pe
-
             timestamps = heterodata["raingauge"].x.shape[1]
             lpe_expanded = lpe.unsqueeze(1).expand(-1, timestamps, -1)
             heterodata["raingauge"].x = torch.cat(
@@ -290,6 +303,42 @@ class GaugeGraphNew:
             )
 
         return heterodata
+
+    def positional_encoding(
+        self, edge_index: torch.Tensor, node_count: int
+    ) -> torch.Tensor:
+        """Return the numbers describing where each gauge sits in the graph.
+
+        These are the eigenvectors of the graph Laplacian with the smallest
+        non-zero eigenvalues — a gauge's structural address, kept visible when
+        its rainfall is hidden so the model knows which gauge it is predicting
+        (paper secs 3.1 and 3.4).
+
+        `get_laplacian` uses the edge list exactly as it is given, so with one
+        direction per pick the matrix is not symmetric, its eigenvectors can be
+        complex, and PyTorch Geometric keeps only their real part. With both
+        directions present (DEC-4) the matrix is symmetric, so we check and say
+        so, and the symmetric solver is used instead of the general one. The
+        two agree on a symmetric matrix; saying so stops us relying on that.
+
+        The sign of each eigenvector is still drawn at random inside the
+        transform, which is a separate question from DEC-4 and is being
+        measured before anything is changed about it (ISS-27).
+        """
+        if self.lpe_dimensions >= node_count:
+            raise ValueError("LPE dimensions must be smaller than the node count")
+        transform = AddLaplacianEigenvectorPE(
+            k=self.lpe_dimensions,
+            attr_name="laplacian_pe",
+            is_undirected=bool(is_undirected(edge_index, num_nodes=node_count)),
+        )
+        return transform(
+            Data(
+                x=torch.zeros(node_count, 1),
+                edge_index=edge_index,
+                num_nodes=node_count,
+            )
+        ).laplacian_pe
 
     def add_heterodata(self, heterodata_layer, coords, layer_name, knn=4):
         """Attach an aligned point layer using WGS84 latitude/longitude order.
