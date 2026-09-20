@@ -19,11 +19,11 @@ are in [GLOSSARY.md](GLOSSARY.md).
 | Deliverable | Name | Document | This week | Backlog (week 7+) | Owner |
 |---|---|---|---|---|---|
 | D07 | Experiment runner | [D07_EXPERIMENT_RUNNER_REQUIREMENTS.md](D07_EXPERIMENT_RUNNER_REQUIREMENTS.md) | D07.1, D07.2, D07.6, D07.7; D07.5 if a Sydney fetch runs | D07.3, D07.4 | TO CONFIRM |
-| D08 | Sydney gauge-only baseline | [D08_SYDNEY_GAUGE_BASELINE_REQUIREMENTS.md](D08_SYDNEY_GAUGE_BASELINE_REQUIREMENTS.md) | D08.1, D08.6, then D08.2, D08.3 (first table), D08.5 | D08.4, D08.7, ISS-14 | TO CONFIRM |
-| D09 | Radar fusion | [D09_RADAR_FUSION_REQUIREMENTS.md](D09_RADAR_FUSION_REQUIREMENTS.md) | D09.2 | D09.4, D09.5 | Rick |
-| D10 | Australia-wide | [D10_AUSTRALIA_WIDE_REQUIREMENTS.md](D10_AUSTRALIA_WIDE_REQUIREMENTS.md) | D10.1; D10.3 once D10.1 lands; D10.2 started if D08.3 lands; D10.4 started for the first region | D10.5 to D10.9 | TO CONFIRM |
-| D11 | BRAIN paper report | [D11_BRAIN_REPORT_REQUIREMENTS.md](D11_BRAIN_REPORT_REQUIREMENTS.md) | TO CONFIRM | TO CONFIRM | TO CONFIRM |
-| D13 | Source grids from NCI: radar and satellite | [D13_SOURCE_GRIDS_REQUIREMENTS.md](D13_SOURCE_GRIDS_REQUIREMENTS.md) | D13.1, D13.2 | D13.3, D13.4, D13.5 | TO CONFIRM |
+| D08 | Sydney gauge-only baseline | [D08_SYDNEY_GAUGE_BASELINE_REQUIREMENTS.md](D08_SYDNEY_GAUGE_BASELINE_REQUIREMENTS.md) | D08.1, D08.6, then D08.2, D08.3 (first table), D08.5 | D08.4, D08.7, ISS-14 | MYLES |
+| D09 | Radar fusion | [D09_RADAR_FUSION_REQUIREMENTS.md](D09_RADAR_FUSION_REQUIREMENTS.md) | D09.2 | D09.4, D09.5 | OLIVER/ANGUS/AMOS |
+| D10 | Australia-wide | [D10_AUSTRALIA_WIDE_REQUIREMENTS.md](D10_AUSTRALIA_WIDE_REQUIREMENTS.md) | D10.1; D10.3 once D10.1 lands; D10.2 started if D08.3 lands; D10.4 started for the first region | D10.5 to D10.9 | RICK/ANGUS/Anyone |
+| D11 | BRAIN paper report | [D11_BRAIN_REPORT_REQUIREMENTS.md](D11_BRAIN_REPORT_REQUIREMENTS.md) | TO CONFIRM | TO CONFIRM | Kiran |
+| D13 | Source grids from NCI: radar and satellite | [D13_SOURCE_GRIDS_REQUIREMENTS.md](D13_SOURCE_GRIDS_REQUIREMENTS.md) | D13.1, D13.2 | D13.3, D13.4, D13.5 | AMOS |
 
 Suggested split of six people: D07 one person; D08 two (one on D08.1 and D08.5, one on
 D08.2 and D08.3); D09 Rick; D10 one; D11 one. D10 starts last: extending to the rest of
