@@ -1,7 +1,7 @@
 k_neighbours: 5
 distance: haversine_km        # or euclidean_degrees for the inherited comparison
 edge_normalisation: per_node  # or global for the inherited comparison
-# DEC-4: every pick adds i -> j and j -> i, each weight scaled at its own
+# both_directions: every pick adds i -> j and j -> i, each weight scaled at its own
 # receiving gauge, so no gauge is left receiving from nothing (ISS-25).
 # false is the inherited one-direction-per-pick behaviour.
 both_directions: true

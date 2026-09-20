@@ -12,8 +12,8 @@ Before editing code, read:
 1. `README.md` for the project purpose, scope, repository map, and setup.
 2. `docs/CURRENT_STATE.md` for where the project is and what the current sprint is doing.
 3. `docs/ISSUES.md` for what is known to be broken, missing or undecided.
-4. ***(context bloat)`docs/requirements/README.md` for the deliverables, the day-one decisions
-   and the shared rules.
+4. ***(context bloat)`docs/requirements/README.md` for the deliverables, the rule for
+   what counts as work, and the shared rules.
 5. The assigned deliverable document in full in `docs/requirements/`.
 6. The `Inputs` and `Outputs` sections of directly adjacent component documents.
 7. The implementation and tests directly relevant to the assigned work.
@@ -135,10 +135,7 @@ is recorded.
 
 Other documents may cite an `ISS-xx` id. None of them — `CURRENT_STATE.md` included — may
 restate an issue's severity, owner or status. Two copies means two answers and no way to
-tell which is current. One exception: the decisions list in
-`docs/requirements/README.md` names the severity of the issue each decision resolves, so
-the decisions can be ranked; when a severity changes in `ISSUES.md`, that line changes in
-the same commit.
+tell which is current.
 
 Component READMEs under `docs/` describe how to run the component and what its outputs
 mean. Under the Sprint 2 standard, a component does not ship without one.

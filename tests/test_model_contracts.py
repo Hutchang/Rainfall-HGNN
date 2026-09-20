@@ -66,16 +66,16 @@ def test_baselines_share_all_observed_targets(inputs, method):
 def test_deleting_target_observations_cannot_change_predictions(inputs, method):
     gauges, stations, split = inputs
     fixed_targets = target_rows(gauges, split)
-    # One fold's labels are deleted from the entire donor source, while the
+    # One fold's labels are deleted from every gauge the method can read, while the
     # independent evaluation target table retains its labels.
     targets = fixed_targets.loc[fixed_targets.fold.eq(0)]
     expected = predict_at_targets(method, gauges, stations, split, targets)
-    donors_only = gauges.loc[~gauges.station_id.isin(split["folds"][0]["ml"]["test"])]
-    actual = predict_at_targets(method, donors_only, stations, split, targets)
+    visible_only = gauges.loc[~gauges.station_id.isin(split["folds"][0]["ml"]["test"])]
+    actual = predict_at_targets(method, visible_only, stations, split, targets)
     pd.testing.assert_frame_equal(actual, expected)
     mutated = gauges.copy()
     mutated.loc[mutated.station_id.eq("002"), "rainfall_mm"] = 10000
-    # Validation gauges are also excluded from the baseline's donor set.
+    # Validation gauges are also excluded from what the baselines can read.
     pd.testing.assert_frame_equal(
         predict_at_targets(method, mutated, stations, split, targets), expected
     )
@@ -120,24 +120,24 @@ def test_checker_rejects_invalid_result(inputs, change):
         validate_predictions(predictions, gauges, split)
 
 
-def test_idw_collocated_station_uses_only_observed_colocated_donor(inputs):
+def test_idw_collocated_station_uses_only_the_observed_colocated_gauge(inputs):
     gauges, stations, split = inputs
     stations.loc[stations.station_id.eq("003"), "longitude"] = 151.0
     result = predict_baseline("idw", gauges, stations, split)
     assert result.loc[result.fold.eq(0), "predicted_mm"].tolist() == [2, 3, 4]
 
 
-def test_missing_donors_fail_instead_of_fabricating_rainfall(inputs):
+def test_missing_gauges_fail_instead_of_fabricating_rainfall(inputs):
     gauges, stations, split = inputs
     targets = target_rows(gauges, split)
-    donor_ids = split["folds"][0]["ml"]["train"]
+    visible_ids = split["folds"][0]["ml"]["train"]
     gauges = gauges.loc[
         ~(
-            gauges.station_id.isin(donor_ids)
+            gauges.station_id.isin(visible_ids)
             & gauges.timestamp.eq(gauges.timestamp.min())
         )
     ]
-    with pytest.raises(ValueError, match="no observed training donor"):
+    with pytest.raises(ValueError, match="no observed training gauge"):
         predict_at_targets("network_mean", gauges, stations, split, targets)
 
 

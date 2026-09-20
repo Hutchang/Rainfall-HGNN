@@ -1,11 +1,11 @@
 # Current state
 
-**Latest commit:** `d337aa6` · **Sprint:** 2 · **Updated:** 2026-09-19
+**Latest commit:** `45c8dbb` · **Sprint:** 2 · **Updated:** 2026-09-19
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
 
-Open bugs, gaps and unresolved decisions are **not** here. They are in
+Open bugs and gaps are **not** here. They are in
 [ISSUES.md](ISSUES.md) and are referenced below by their `ISS-xx` id only.
 
 ## How this document is maintained
@@ -42,6 +42,13 @@ provenance, units and coverage are unanswered (ISS-02, ISS-03, ISS-04), held-out
 independence is not established, and the inherited hand export still may not be quoted in
 millimetres. The top data risk in the standard tables is ISS-01.
 
+The radar fetcher landed at `45c8dbb` (`src/ingestion/radar/`, NCI Rainfields3
+`prcp-m15`, site 71). It answers the product, units and gauge-correction questions for
+radar. Production will not download the archive: on Gadi it is a mounted directory and
+D13 reads it in place, reusing the fetcher's reader and coordinate code; the fetcher's
+download path serves samples and local tries. Nothing downstream can read the archive
+files yet (ISS-30), so no radar result is possible until D13.2 lands.
+
 No real Sydney build output exists in this checkout — `database/raw/`,
 `database/standard/` and `database/graphs/` are gitignored and absent. Everything
 verified below runs against committed offline samples and synthetic fixtures.
@@ -52,23 +59,30 @@ Sprint 1 is closed. Its component contracts are archived in
 [archive/sprint1/](archive/sprint1/) and describe what each component implements today,
 but they are reference, not current assignments.
 
-In progress:
+Sprint 2 is one week, six people, organised as seven deliverables, D07 to D13, that run
+at the same time; the numbering continues from the Sprint 1 components.
+The requirements are in [requirements/README.md](requirements/README.md): that page holds
+the rule for what counts as work, the three open paper-versus-code gaps, the rules, and a link to
+each deliverable's document. State per deliverable:
 
-| Work | Owner | State |
+| Deliverable | Name | State |
 |---|---|---|
-| Sprint 2 requirements set | Rick | Being written. `docs/requirements/README.md` is empty in the meantime — ISS-21 |
-| Experiment runner | Rick | Being designed. `src/models/run.py` already writes each run's effective config, seeds, versions and input hashes into its own `experiments/` directory; the Sprint 2 runner generalises that across components so any result traces to the settings that produced it |
-| Per-component README standard | all owners | No PR until the component has its own README under `docs/`. Component 03 does not meet this yet — ISS-19 |
+| D07 | Experiment runner | Not started. Today only Component 06 writes one folder per run with the fingerprints of its inputs; every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
+| D08 | Sydney gauge-only baseline | Not started. Model settings already match the paper; the split rule (ISS-10), which gauges each method may read (ISS-07) and input scaling (ISS-09) do not - these are D08's three gaps. Edge direction (ISS-25) is already applied in code behind `both_directions`; it needs only a rebuild on real data. D08 also owns the held-out distance measurement that says whether its own table can be trusted (D08.6, D08.7), and closes ISS-10 with it |
+| D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
+| D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
+| D11 | BRAIN paper report | Not started; scope TO CONFIRM |
+| D13 | Source grids from NCI | Not started. Reads radar and satellite in place on Gadi and writes the grid tables; resolves ISS-02, ISS-03, ISS-04, ISS-30. Gadi paths and the satellite product are TO CONFIRM |
 
-Carried into Sprint 2 as open work, by owner:
+Open work that belongs to a component rather than a deliverable:
 
 | Component | Open |
 |---|---|
-| 01 — source data | Radar/satellite registration and index rows. Provenance answers: ISS-02, ISS-03, ISS-04. Region scope: ISS-11, ISS-22 |
+| 01 — source data | Satellite registration. Provenance: ISS-03, ISS-04 (ISS-02 now answered for radar by the fetcher; the leak caveat belongs to D09) |
 | 02 — standard tables | False-zero detection ISS-01, the April–May 2021 gap ISS-06, excluded-download reporting ISS-16, stale README table ISS-20 |
-| 03 — study splits | Summary and plot ISS-18, component README ISS-19, spatial blocking ISS-10 |
-| 04 — graph samples | Baseline fingerprint test ISS-14, normalization metadata ISS-09, donor policy ISS-07 |
-| 06 — model adapters | Donor policy ISS-07, IDW exponent ISS-08, normalization metadata ISS-09 |
+| 03 — study splits | Summary and plot ISS-18 and component README ISS-19 — both delivered by D08 subtask D08.1 |
+| 04 — graph samples | Baseline fingerprint test ISS-14; positional-encoding sign ISS-27, read by hand 2026-09-20 and awaiting an experiment before anything changes |
+| 06 — model adapters | IDW exponent ISS-08 |
 
 Gauge-only is the first milestone, radar the second, satellite blocked on ISS-03.
 
@@ -109,6 +123,8 @@ uv run --locked ruff check .
   `train_st.py` were deleted. Four of them now sit in `src/models/models.py` — they came
   with the inherited architectures when that file moved under Component 06 and are not
   new. Every module a component actually wrote passes focused checks.
+- Coverage: **not measured** — `pytest-cov` is not installed (ISS-33; D07.7 adds it and
+  records the baseline here).
 - PyTorch and PyG emit Python 3.14 deprecation warnings.
 - `scripts/nci/test_guards.py` is excluded from `tests/` and fails on a Windows checkout
   for a line-ending reason (ISS-15). It passes on Linux and macOS.

@@ -2,7 +2,7 @@
 
 Template: component standard (the eleven sections in
 [AUTHORING_STANDARD.md](AUTHORING_STANDARD.md)) — this deliverable is code with a
-contract. Owner: TO CONFIRM. Decisions and rules are in [README.md](README.md).
+contract. Owner: TO CONFIRM. What counts as work, and the rules, are in [README.md](README.md).
 
 ## 1. Summary
 
@@ -112,9 +112,9 @@ lost export.
 not typed in: product, units, time step, coordinate system, period covered, days and
 hours present and missing, and correction status. For radar it also reports how many
 study stations appear in `contributing_gauges` and in how many hours — the size of the
-caveat DEC-7 attaches to every radar result. It reports whether the 120 missing radar
+caveat D09 attaches to every radar result. It reports whether the 120 missing radar
 hours of ISS-04 exist in the archive.
-**Why:** ISS-02 closes on written provenance; DEC-7 needs the count; ISS-04 needs the
+**Why:** ISS-02 closes on written provenance; D09's caveat needs the count; ISS-04 needs the
 archive checked rather than the export.
 **Done when:** TEST06.
 
@@ -179,7 +179,7 @@ they write the standard tables.
 ## 9. Dependencies and blockers
 
 Gadi access for whoever runs it ([../nci/README.md](../nci/README.md)); confirmation of
-the `rv74` product and access (D13.1). DEC-7 is decided (build on the gauge-corrected
+the `rv74` product and access (D13.1). D09 owns the gauge-correction caveat (build on the gauge-corrected
 product; report the caveat). Issues: ISS-02, ISS-03, ISS-04, ISS-30. D07 is not required
 — the readers can be run with a chosen output directory — but runs should go through it
 once it lands so the archive files read are fingerprinted in the provenance record.

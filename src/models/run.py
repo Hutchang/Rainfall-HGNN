@@ -371,7 +371,7 @@ def run(settings, output_dir=None, predict_from=None):
             "Target checker passed: every method predicts exactly the canonical observed test rows across all five folds.",
             "Gauge features use physical millimetres with no Component 06 normalization; hidden rainfall and validity are zeroed while LPE is preserved. Normalized upstream graphs are rejected until Component 04 supplies an agreed transform contract.",
             "Training retains inherited leave-one-gauge-out masking, weighted MSE and gradient clipping at 1. Missing targets are excluded, and epoch losses are weighted by observed row count; these correct the inherited zero-label/missingness behaviour.",
-            "TO VALIDATE: Component 04 permits train + validation context at GNN test time; the prescribed baselines use training gauges only. This is an unbalanced donor comparison pending reviewer agreement.",
+            "TO VALIDATE: Component 04 permits train + validation context at GNN test time; the prescribed baselines read training gauges only. The two methods therefore read different gauges, so the comparison is unbalanced pending reviewer agreement.",
             f"IDW uses haversine distance with explicit power {settings.get('idw_power', 'not used')}; exponent requires Component 03 reviewer signoff.",
             "Checkpoint prediction uses each fold's lowest validation-loss state.",
             "Validation retains the inherited clamp-before-loss rule: negative outputs become zero before scoring. A tied all-zero plateau keeps the first best epoch and can stop before raw outputs cross zero; training loss remains unclamped. This policy needs reviewer agreement before scientific runs.",

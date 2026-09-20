@@ -62,7 +62,7 @@ def test_raw_tables_to_splits_graphs_training_and_replay(pipeline):
                 assert edge.edge_attr[edge.edge_index[1] == destination].max() == 1
         gauge_edges = graph["raingauge", "connects", "raingauge"].edge_index
         assert (gauge_edges[0] != gauge_edges[1]).all()
-        # DEC-4 adds both directions per pick, so a gauge may now send to more
+        # both_directions adds both directions per pick, so a gauge may now send to more
         # than k_neighbours gauges. What must hold instead is that every gauge
         # receives from at least one gauge, and that no edge lacks its reverse.
         pairs = set(zip(*gauge_edges.tolist(), strict=True))

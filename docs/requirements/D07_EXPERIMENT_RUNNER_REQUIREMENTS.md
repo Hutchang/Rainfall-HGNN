@@ -1,7 +1,7 @@
 # D07 — Experiment runner
 
 Template: component standard (the eleven sections in
-[AUTHORING_STANDARD.md](AUTHORING_STANDARD.md)). Decisions and rules are in
+[AUTHORING_STANDARD.md](AUTHORING_STANDARD.md)). The rule for what counts as work, and the rules everyone follows, are in
 [README.md](README.md).
 
 ## 1. Summary

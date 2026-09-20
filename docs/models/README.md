@@ -18,7 +18,8 @@ It is integrated with 02, 03 and 04; their published outputs are connected throu
 [pipeline guide](../graphs/README.md).
 
 Open decisions and dependencies affecting this component are tracked in
-[ISSUES.md](../ISSUES.md), not here: **ISS-07** (donor policy differs between 04 and 06),
+[ISSUES.md](../ISSUES.md), not here: **ISS-07** (04 and 06 let a method read different
+gauges when predicting),
 **ISS-08** (IDW exponent unprescribed), **ISS-09** (no normalization metadata in the graph
 contract), and **ISS-02**, **ISS-03**, **ISS-04** (radar and satellite provenance,
 coordinates and coverage).
@@ -185,11 +186,11 @@ used here. Their end-to-end path is tested with synthetic inputs.
 ## Baselines and model behaviour
 
 `network_mean` averages only observed **training** gauges at the target hour. `idw`
-uses those same donors, WGS84 haversine distances, and the explicitly configured
-`idw_power` (the example is 2.0). An observed collocated donor takes precedence over
-non-collocated donors; multiple collocated donors are averaged. No donor hour is
-gap-filled. If there is no observed training donor, the run fails with the fold/hour
-instead of dropping targets or inventing rainfall.
+reads those same gauges, WGS84 haversine distances, and the explicitly configured
+`idw_power` (the example is 2.0). A gauge at the same location as the target, if it is
+observed, takes precedence over the rest; several such gauges are averaged. No hour is
+gap-filled. If no training gauge is observed at that hour, the run fails with the
+fold/hour instead of dropping targets or inventing rainfall.
 
 The model adapter keeps the inherited `GNNInductiveHetero` and leave-one-gauge-out
 training objective. It masks rainfall and validity while preserving positional
@@ -220,8 +221,9 @@ uv run --locked python -m pytest scripts/nci/test_guards.py -q
 git diff --check
 ```
 
-The tests cover exact target rows and labels, deliberate target-data deletion, missing
-donors, collocated IDW, metric recomputation, CPU determinism, checkpoint inference,
+The tests cover exact target rows and labels, deliberate target-data deletion, a target
+hour with no gauge observed, collocated IDW, metric recomputation, CPU determinism,
+checkpoint inference,
 and a two-epoch synthetic run. Multimodal tests cover each sensor combination through
 five folds, deterministic predictions and checkpoint replay; they also prove that
 sensor values affect the output and receive gradients while hidden gauge readings do

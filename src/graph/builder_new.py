@@ -125,7 +125,7 @@ def build_baseline_graphs(
             "Numerical fixes: retain directed gauge edges; normalize by receiving "
             "node; add both directions for every neighbour pick when "
             "both_directions is set, so no gauge is left without an incoming edge "
-            "(DEC-4), which also makes the graph Laplacian symmetric so the "
+            "(both_directions), which also makes the graph Laplacian symmetric so the "
             "positional encoding uses the symmetric solver; finite 1e6 "
             "inverse-distance weight for coincident coordinates; "
             "remove self neighbours by identity; preserve binary validity and physical "

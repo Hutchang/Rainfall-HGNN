@@ -1,7 +1,7 @@
 # D09 — Radar fusion
 
 Template: study (see [AUTHORING_STANDARD.md](AUTHORING_STANDARD.md)). Owner: 
-Decisions and rules are in [README.md](README.md). The data path — reading the radar and
+What counts as work, and the rules, are in [README.md](README.md). The data path — reading the radar and
 satellite products on NCI and writing the grid tables — is D13; this deliverable is the
 science that runs on those tables.
 
@@ -9,7 +9,8 @@ science that runs on those tables.
 
 Add radar, then satellite, to the gauge-only model and find out whether either helps on
 Sydney under the paper's protocol. The system is built on the gauge-corrected radar
-product we have (DEC-7); every result carries the caveat, and switching to an uncorrected
+product we have — the same kind the paper used (§4.1); every result carries the caveat
+below, and switching to an uncorrected
 product later is a config change, not a rebuild.
 
 ## Question
@@ -23,7 +24,7 @@ resolve the field.
 
 Same as D08 (split, which gauges each method may read, scaling, metrics), plus a radar node layer and then a
 satellite node layer. Every result row states the product used (`prcp-m15`,
-gauge-corrected) and carries the DEC-7 caveat with D13's contributing-gauges count when
+gauge-corrected) and carries the caveat below with D13's contributing-gauges count when
 it is available.
 
 ## Inputs
@@ -65,7 +66,7 @@ D08 or D13; it can be built and tested on synthetic data now.
 ## Deliverable
 
 Added rows in `docs/results/B_sydney_gauge_baseline.md` (or a D09 section of it): G+R
-and G+R+S beside G and IDW; the product used; the DEC-7 caveat with the count; the
+and G+R+S beside G and IDW; the product used; the caveat with the count; the
 subsample rule D13 recorded; run ids.
 
 ## Acceptance
@@ -78,7 +79,7 @@ subsample rule D13 recorded; run ids.
 
 ## Dependencies
 
-DEC-7 (decided). D08.1 and D08.2 for the protocol. D13.2 for D09.4; D13.3 for D09.5.
+D08.1 and D08.2 for the protocol. D13.2 for D09.4; D13.3 for D09.5.
 Issues: ISS-02 and ISS-04 are D13's to close; D09 only inherits their caveats.
 
 ## This week and backlog

@@ -60,7 +60,7 @@ def write_report(path, df, settings, notes=()):
         ]
     if settings.get("method") == "hgnn":
         lines += [
-            "**Comparison pending review:** the current graph and baseline contracts use different test-time donor sets. These scores do not yet establish which method is better.",
+            "**Comparison pending review:** the current graph and baseline contracts let each method read a different set of gauges at test time. These scores do not yet establish which method is better.",
             "",
         ]
     lines += [
