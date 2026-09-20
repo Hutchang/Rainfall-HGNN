@@ -62,7 +62,14 @@ def test_raw_tables_to_splits_graphs_training_and_replay(pipeline):
                 assert edge.edge_attr[edge.edge_index[1] == destination].max() == 1
         gauge_edges = graph["raingauge", "connects", "raingauge"].edge_index
         assert (gauge_edges[0] != gauge_edges[1]).all()
-        assert torch.bincount(gauge_edges[0]).max() <= 2
+        # DEC-4 adds both directions per pick, so a gauge may now send to more
+        # than k_neighbours gauges. What must hold instead is that every gauge
+        # receives from at least one gauge, and that no edge lacks its reverse.
+        pairs = set(zip(*gauge_edges.tolist(), strict=True))
+        assert {destination for _, destination in pairs} == set(
+            range(graph["raingauge"].x.shape[0])
+        )
+        assert all((j, i) in pairs for i, j in pairs)
         assert graph["raingauge"].mask.dtype == torch.bool
         assert (
             graph["raingauge"].x.untyped_storage().data_ptr()
@@ -99,7 +106,13 @@ def test_gauge_only_and_held_out_rainfall_cannot_change_training_graph(pipeline)
     )
     split_payload = json.loads((pipeline / "split.json").read_text())
     positional = GaugeGraphNew(
-        wide, mapping, split_payload["folds"][0], 2, "per_node", distance="haversine_km"
+        wide,
+        mapping,
+        split_payload["folds"][0],
+        2,
+        "per_node",
+        distance="haversine_km",
+        both_directions=True,
     )
     assert torch.equal(
         positional.get_train_heterodata()[

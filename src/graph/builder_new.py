@@ -51,6 +51,7 @@ def build_baseline_graphs(
         "k_neighbours",
         "distance",
         "edge_normalisation",
+        "both_directions",
         "include_lpe",
         "lpe_dimensions",
         "layer_is_directed",
@@ -122,7 +123,11 @@ def build_baseline_graphs(
         "",
         (
             "Numerical fixes: retain directed gauge edges; normalize by receiving "
-            "node; finite 1e6 inverse-distance weight for coincident coordinates; "
+            "node; add both directions for every neighbour pick when "
+            "both_directions is set, so no gauge is left without an incoming edge "
+            "(DEC-4), which also makes the graph Laplacian symmetric so the "
+            "positional encoding uses the symmetric solver; finite 1e6 "
+            "inverse-distance weight for coincident coordinates; "
             "remove self neighbours by identity; preserve binary validity and physical "
             "gauge millimetres; independent y storage; sensor coordinates consistently "
             "latitude/longitude."
@@ -160,6 +165,7 @@ def build_baseline_graphs(
                 knn=config["k_neighbours"],
                 distance=config["distance"],
                 edge_normalisation=config["edge_normalisation"],
+                both_directions=config["both_directions"],
                 include_lpe=config["include_lpe"],
                 lpe_dimensions=config["lpe_dimensions"],
                 layer_is_directed=config["layer_is_directed"],

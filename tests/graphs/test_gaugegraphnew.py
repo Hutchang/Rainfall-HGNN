@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import torch
 from torch_geometric.data import Batch
+from torch_geometric.utils import is_undirected
 from src.graph.gaugegraphnew import GaugeGraphNew
 from src.graph.gaugegraphnew import HeterogeneousWeatherGraphDatasetInductive
 from src.graph.radargraphnew import RadarGraphNew
@@ -217,3 +218,109 @@ def test_radar_fusion_addition(sample_graph_builder):
     
     assert "radar" in train_fused.node_types, "Radar node type missing after fusion."
     assert ("radar", "connects", "raingauge") in train_fused.edge_types, "Bipartite fusion edges missing."
+
+
+@pytest.fixture
+def gauge_frames():
+    """The committed sample as (wide hourly table, station mapping, station ids)."""
+    long_gauge_df = pd.read_csv(
+        "tests/data/graphs/gauge_hourly.csv", dtype={"station_id": str}
+    )
+    data_df = long_gauge_df.pivot(
+        index="timestamp", columns="station_id", values="rainfall_mm"
+    )
+    mapping_df = pd.read_csv(
+        "tests/data/graphs/stations.csv", dtype={"station_id": str}
+    ).rename(columns={"station_id": "id"})
+    mapping_df = mapping_df[mapping_df["id"].isin(data_df.columns)]
+    if "use_in_study" in mapping_df.columns:
+        mapping_df = mapping_df.loc[mapping_df["use_in_study"]]
+    mapping_df = mapping_df.reset_index(drop=True)
+    mapping_df["order"] = range(len(mapping_df))
+    return data_df, mapping_df, mapping_df["id"].tolist()
+
+
+def build_gauge_graph(frames, mapping_df=None, **overrides):
+    """A one-neighbour builder over the sample, with DEC-4 on unless overridden."""
+    data_df, default_mapping, ids = frames
+    settings = dict(
+        knn=1,
+        distance="haversine_km",
+        edge_normalisation="per_node",
+        both_directions=True,
+        include_lpe=False,
+        lpe_dimensions=1,
+    )
+    settings.update(overrides)
+    return GaugeGraphNew(
+        data_df=data_df,
+        mapping_df=default_mapping if mapping_df is None else mapping_df,
+        split_info={
+            "ml": {"train": ids[:2], "validation": ids[2:3], "test": ids[3:]}
+        },
+        **settings,
+    )
+
+
+def gauge_edges(builder):
+    return builder.get_test_heterodata()["raingauge", "connects", "raingauge"]
+
+
+def test_one_direction_per_pick_leaves_a_gauge_receiving_nothing(gauge_frames):
+    """Test 11: the ISS-25 case DEC-4 exists to fix. An edge i -> j means j
+    receives i's value, so with one edge per pick a gauge that is nobody's
+    nearest receives no gauge value at all, and a held-out gauge there would be
+    predicted from nothing."""
+    edges = gauge_edges(build_gauge_graph(gauge_frames, both_directions=False))
+    receiving = set(edges.edge_index[1].tolist())
+    every_gauge = set(range(len(gauge_frames[2])))
+    assert receiving != every_gauge, (
+        "the committed sample is expected to contain a gauge that no other gauge "
+        "picks; if the sample changes this test needs a different fixture"
+    )
+
+
+def test_both_directions_leaves_no_gauge_without_an_incoming_edge(gauge_frames):
+    """Test 12: DEC-4 - every gauge receives from at least one other gauge."""
+    edges = gauge_edges(build_gauge_graph(gauge_frames))
+    receiving = set(edges.edge_index[1].tolist())
+    every_gauge = set(range(len(gauge_frames[2])))
+    assert receiving == every_gauge, (
+        f"gauges receiving nothing: {sorted(every_gauge - receiving)}"
+    )
+
+
+def test_both_directions_makes_the_edge_set_symmetric(gauge_frames):
+    """Test 13: DEC-4 - for every pick i -> j the reverse j -> i is present, which
+    is what lets the positional encoding use the symmetric eigenvalue solver."""
+    edges = gauge_edges(build_gauge_graph(gauge_frames))
+    pairs = set(zip(*edges.edge_index.tolist(), strict=True))
+    missing = {(i, j) for i, j in pairs if (j, i) not in pairs}
+    assert not missing, f"edges with no reverse: {sorted(missing)}"
+
+
+def test_both_directions_keeps_receiving_node_normalisation(gauge_frames):
+    """Test 14: DEC-4 - the two directions of one pair start from the same raw
+    weight but are rescaled at their own destination, so every gauge that
+    receives anything still has a strongest incoming edge of exactly 1."""
+    edges = gauge_edges(build_gauge_graph(gauge_frames))
+    destinations, weights = edges.edge_index[1], edges.edge_attr
+    for node in destinations.unique().tolist():
+        strongest = weights[destinations == node].max().item()
+        assert np.isclose(strongest, 1.0, atol=1e-6), (
+            f"gauge {node} strongest incoming weight is {strongest}, expected 1.0"
+        )
+
+
+def test_both_directions_lets_the_symmetric_eigensolver_be_used(gauge_frames):
+    """Test 15: DEC-4 - `get_laplacian` uses the edge list as given, so the
+    positional encoding's matrix is symmetric only when both directions are
+    present. That is what makes the symmetric solver the correct one; with one
+    direction per pick the general solver is used and its eigenvectors can be
+    complex."""
+    both = gauge_edges(build_gauge_graph(gauge_frames)).edge_index
+    one_way = gauge_edges(
+        build_gauge_graph(gauge_frames, both_directions=False)
+    ).edge_index
+    assert is_undirected(both, num_nodes=4)
+    assert not is_undirected(one_way, num_nodes=4)
