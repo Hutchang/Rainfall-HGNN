@@ -85,7 +85,9 @@ Existing directories are never overwritten.
 
 - `config.yaml`: effective settings, seed, package/CUDA versions, code revision,
   source hashes and input hashes. Uncommitted local code is identified explicitly.
-- `history.csv`: fold, epoch, training loss and validation loss.
+- `history.csv`: fold, epoch, training loss, validation loss, best validation loss,
+  accumulated deteriorations, remaining patience and early-stopping status. The same
+  progress is printed once per epoch for live runners.
 - `best.pt`: each fold's lowest-validation-loss weights and model construction
   settings. Intermediate checkpoints preserve the completed folds.
 - `predictions.csv`: all requested methods, on exactly the same observed test rows.
