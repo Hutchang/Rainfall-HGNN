@@ -222,7 +222,7 @@ __marimo__/
 .DS_Store
 
 # Experiments
-experiments
+/experiments/
 
 # FROM HANDOVER NOTES FROM RICK
 !tests/data/graphs/*.csv

@@ -18,6 +18,7 @@ dependencies = [
     "scikit-learn==1.9.0",
     "scipy==1.18.1",
     "shapely==2.1.2",
+    "textual>=6,<7",
     "torch==2.13.0",
     "torch-geometric==2.8.0.post1",
     "tqdm==4.70.0",
@@ -27,6 +28,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest==9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff==0.16.5",
     "scikit-learn-stubs>=0.0.3",
 ]

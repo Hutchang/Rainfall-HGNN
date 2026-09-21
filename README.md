@@ -86,6 +86,7 @@ pull request as the change that makes them wrong. The full rules are in
 | `src/study/`, `src/reproducibility/`, `config/splits/`, `config/seeds.yaml` | Component 03 study splits: spatial clustering, fold construction, role assignment, and seed control. Production path |
 | `src/graph/`, `config/graphs/`, `docs/graphs/` | Component 04 graph samples: directed gauge edges, sensor layers, and the per-fold builder. Production path |
 | `src/models/`, `config/models/`, `docs/models/` | Component 06 model adapters: HGNN, IDW and network mean trained and scored through one prediction contract. Production path |
+| `src/experiments/`, `docs/experiments/` | Researcher terminal workbench: snapshot and edit configs, run a selected pipeline range, follow live output, and inspect losses |
 | `models/`, `training/`, `benchmarks/`, `src/cml/`, `src/radar/`, `src/raingauge/`, `src/sampling/`, `src/visualization/` | Restored inherited reference modules awaiting file-by-file classification; review-only |
 | `adapters/legacy_sydney_gauge_export.py` | Transitional Sydney legacy-data export; not a canonical ingestion pipeline |
 | `train_fused.py` | Validated transitional 2022 smoke runner; not the target architecture |
@@ -138,6 +139,15 @@ Run the current checks with:
 uv run --locked python -m pytest tests -q -rx
 uv run --locked ruff check .
 ```
+
+Launch the researcher experiment workbench with:
+
+```console
+uv run --locked python -m src.experiments.tui
+```
+
+The [workbench guide](docs/experiments/README.md) covers new and cloned experiments,
+custom locations, configuration editing, partial pipeline runs, stopping, and results.
 
 `ruff check .` reports a large number of findings across inherited, transitional and other
 pre-existing files awaiting classification (ISS-17); the current count is in
