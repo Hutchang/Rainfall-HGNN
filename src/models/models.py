@@ -364,12 +364,17 @@ class GNNInductiveHetero(torch.nn.Module):
         h_dict = x_dict
 
         for conv in self.convs:
-            h_dict = conv(
+            updated = conv(
                 h_dict,
                 edge_index_dict,
                 edge_weight_dict=edge_attr_dict,
             )
-            h_dict = {k: self.dropout(F.relu(v)) for k, v in h_dict.items()}
+            # HeteroConv returns destinations only. Source-only sensors must remain
+            # available to later layers without inventing reverse edges (D09.2).
+            h_dict = {
+                **h_dict,
+                **{k: self.dropout(F.relu(v)) for k, v in updated.items()},
+            }
 
         # No output activation: allow any real value during training so that
         # MSE gradients never vanish (softplus saturates for large-negative

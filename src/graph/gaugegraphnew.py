@@ -341,12 +341,18 @@ class GaugeGraphNew:
             )
         ).laplacian_pe
 
-    def add_heterodata(self, heterodata_layer, coords, layer_name, knn=4):
+    def add_heterodata(
+        self, heterodata_layer, coords, layer_name, knn=9, *,
+        reverse_cross_support=False,
+    ):
         """Attach an aligned point layer using WGS84 latitude/longitude order.
 
+        Sensors send to gauges; reverse edges require an explicit opt-in (D09.2).
         Numerical correction: finite zero-distance weights, receiving-node
         normalization on each directed relation, and no coordinate-axis swap.
         """
+        if type(reverse_cross_support) is not bool:
+            raise ValueError("reverse_cross_support must be a boolean")
         if layer_name not in {"radar", "satellite"}:
             raise ValueError("only Australian radar/satellite layers are supported")
         if heterodata_layer.timestamps != self.train_heterodata.timestamps:
@@ -370,10 +376,13 @@ class GaugeGraphNew:
             ].to_numpy()
             pairs, raw_weights = self.connect_graphs(gauge_coords, coords, knn)
             gauge_to_grid = torch.tensor(pairs, dtype=torch.long).T.contiguous()
-            for relation, index in (
-                ((layer_name, "connects", "raingauge"), gauge_to_grid.flip(0)),
-                (("raingauge", "rev_connects", layer_name), gauge_to_grid),
-            ):
+            relations = [((layer_name, "connects", "raingauge"), gauge_to_grid.flip(0))]
+            reverse_relation = ("raingauge", "rev_connects", layer_name)
+            if reverse_cross_support:
+                relations.append((reverse_relation, gauge_to_grid))
+            elif reverse_relation in graph.edge_types:
+                del graph[reverse_relation]
+            for relation, index in relations:
                 weights = torch.tensor(raw_weights, dtype=torch.float32)
                 if self.edge_normalisation == "global":
                     weights /= weights.max()
