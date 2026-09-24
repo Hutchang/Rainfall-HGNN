@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `45c8dbb` · **Sprint:** 2 · **Updated:** 2026-09-19
+**Latest commit:** `5110638` · **Sprint:** 2 · **Updated:** 2026-09-24
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
@@ -69,7 +69,7 @@ each deliverable's document. State per deliverable:
 |---|---|---|
 | D07 | Experiment runner | Not started. Today only Component 06 writes one folder per run with the fingerprints of its inputs; every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
 | D08 | Sydney gauge-only baseline | Not started. Model settings already match the paper; the split rule (ISS-10), which gauges each method may read (ISS-07) and input scaling (ISS-09) do not - these are D08's three gaps. Edge direction (ISS-25) is already applied in code behind `both_directions`; it needs only a rebuild on real data. D08 also owns the held-out distance measurement that says whether its own table can be trusted (D08.6, D08.7), and closes ISS-10 with it |
-| D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
+| D09 | Radar fusion | D09.2 cross-support direction implemented: nine sensor neighbours, sensor-to-gauge edges by default, explicit reverse-edge option, and stacked HGNN support for source-only sensors. Synthetic graph, training and checkpoint-replay tests pass in both modes. Full D09.2 acceptance is tracked by ISS-35. D09.4/D09.5 still require D08's protocol and D13's tables; no real-data fusion result is claimed |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |
 | D13 | Source grids from NCI | Not started. Reads radar and satellite in place on Gadi and writes the grid tables; resolves ISS-02, ISS-03, ISS-04, ISS-30. Gadi paths and the satellite product are TO CONFIRM |
@@ -109,22 +109,31 @@ outputs. See [LEGACY_CODE.md](LEGACY_CODE.md).
 
 ## Verification
 
-Run on 2026-09-19 at `d337aa6`, Windows, Python 3.14:
+Run on 2026-09-24 at `5110638`, macOS, Python 3.14.3, after `uv sync --locked`:
 
 ```console
-uv run --locked python -m pytest tests -q -rx
+uv run --locked python -m pytest tests -q -rx --cov=src --cov-report=term-missing
 uv run --locked ruff check .
 ```
 
-- `tests/`: **153 passed, 2 skipped, 7 xfailed**. Both skips are the live-API acceptance
-  checks; set `BOM_NETWORK=1` to run them. A checkout without
-  `database/sydney_gauge_legacy/` skips the legacy-data tests as well, which is expected.
-- Repository-wide Ruff: **686** findings (ISS-17), down from 692 when `train_homo.py` and
-  `train_st.py` were deleted. Four of them now sit in `src/models/models.py` — they came
-  with the inherited architectures when that file moved under Component 06 and are not
-  new. Every module a component actually wrote passes focused checks.
-- Coverage: **not measured** — `pytest-cov` is not installed (ISS-33; D07.7 adds it and
-  records the baseline here).
-- PyTorch and PyG emit Python 3.14 deprecation warnings.
+- `tests/`: **174 passed, 30 skipped**. This offline checkout has no inherited legacy
+  data and does not opt into live-API checks. The synthetic production pipeline trains
+  and replays all five folds in both one-way and explicitly bidirectional modes, with
+  864 predictions per run. Multi-layer modality tests also cover supplied within-grid
+  edges. No production data or scientific accuracy claim is involved.
+- Repository-wide Ruff: **683** findings (ISS-17), exactly the pre-change baseline;
+  there are no new findings. Focused checks pass for the changed graph, adapter and test
+  files; `src/models/models.py` retains its four pre-existing findings.
+- Coverage is now measured with a locked `pytest-cov` dependency. Scoped production
+  coverage is **70.02 %**; listed writer modules cover **87.91 %** combined. Both
+  repository floor checks fail (ISS-33). Changed modules: `builder_new.py` **92.11 %**,
+  `gaugegraphnew.py` **84.29 %**, `modalities.py` **96.67 %**, `models.py` **35.54 %**.
+  The exercised `GNNInductiveHetero.forward` is **100 %** covered; the inherited
+  architectures remain included in the module total.
+- A same-weights regression comparison preserves gauge-only and existing bidirectional
+  three-layer model outputs exactly. Changed modules compile and `git diff --check`
+  passes.
+- PyTorch and PyG emit Python 3.14 deprecation warnings. PyG also warns that source-only
+  sensors receive no updates; preserving their features across layers is intentional.
 - `scripts/nci/test_guards.py` is excluded from `tests/` and fails on a Windows checkout
   for a line-ending reason (ISS-15). It passes on Linux and macOS.
