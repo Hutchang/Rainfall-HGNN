@@ -239,18 +239,41 @@ def _contributing_gauges_report(
     ]
 
 
-def build(config_path, check_only=False):
+# D13.5: the committed offline samples --sample points archive-mode layers
+# at, so the readers can be tried with no Gadi access. Real, complete for
+# satellite (one hour, six 10-minute files); real but incomplete for radar
+# (two of the four 15-minute files a complete hour needs) -- see
+# tests/data/ingestion/README.md.
+SAMPLE_ROOTS = {
+    "radar": "tests/data/ingestion/radar",
+    "satellite": "tests/data/ingestion/satellite",
+}
+DEFAULT_SAMPLE_OUTPUT_DIR = "local/grid-sample"
+
+
+def build(config_path, check_only=False, sample=False):
     """Validate all enabled layers before writing; never modify gauge outputs/raw."""
     config = yaml.safe_load(Path(config_path).read_text())
-    raw_dir, output_dir = Path(config["raw_dir"]), Path(config["output_dir"])
-    if output_dir.resolve().is_relative_to(raw_dir.resolve()):
-        raise ValueError("output_dir must not be inside immutable raw_dir")
-    index = read_index(raw_dir, dtype=str, keep_default_na=False)
-    if not {"path", "status"}.issubset(index.columns):
-        raise ValueError("raw index needs path and status columns")
+    if sample:
+        for layer, settings in config.get("layers", {}).items():
+            if settings.get("root") and layer in SAMPLE_ROOTS:
+                settings["root"] = SAMPLE_ROOTS[layer]
+        config["output_dir"] = DEFAULT_SAMPLE_OUTPUT_DIR
     layers = config["layers"]
     if not layers or set(layers) - {"radar", "satellite"}:
         raise ValueError("configure at least one of radar or satellite")
+    raw_dir, output_dir = Path(config["raw_dir"]), Path(config["output_dir"])
+    if output_dir.resolve().is_relative_to(raw_dir.resolve()):
+        raise ValueError("output_dir must not be inside immutable raw_dir")
+    # A config where every layer reads the archive in place (D13.2/D13.3) has
+    # no pickle input, so Component 01's index -- which only that path needs
+    # -- is not required either. Reading it unconditionally would block
+    # --sample (and any all-archive config) on a raw_dir that never exists.
+    index = None
+    if any(not settings.get("root") for settings in layers.values()):
+        index = read_index(raw_dir, dtype=str, keep_default_na=False)
+        if not {"path", "status"}.issubset(index.columns):
+            raise ValueError("raw index needs path and status columns")
     grids = []
     report = [
         "# Radar and satellite adapter",
@@ -372,9 +395,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
     parser.add_argument("--check-inputs", action="store_true")
+    parser.add_argument(
+        "--sample",
+        action="store_true",
+        help=(
+            "D13.5: point every archive-mode layer (root already set) at its "
+            "committed offline sample under tests/data/ingestion/ instead of "
+            f"the configured root, and write to {DEFAULT_SAMPLE_OUTPUT_DIR}/ "
+            "instead of the real output_dir -- try the readers with no Gadi "
+            "access"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
-        build(args.config, args.check_inputs)
+        build(args.config, args.check_inputs, args.sample)
     except (ValueError, OSError, KeyError, TypeError) as error:
         parser.exit(1, f"BLOCKED: {error}\n")
 
