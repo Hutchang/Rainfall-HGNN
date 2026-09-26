@@ -78,6 +78,35 @@ archive reader produces the same `GridData` the pickle path does, so everything 
 validation onward — CSV shapes, `to_heterodata`, the report — is the adapter's
 existing, unchanged machinery.
 
+## Reading grid_report.md (D13.4)
+
+Each source's section states, taken from the files themselves rather than typed into
+config:
+
+- **Coordinate system** — the file's own `grid_mapping_name` (`albers_conical_equal_area`
+  for radar, `geostationary` for satellite).
+- **Native time step** — computed, not assumed: radar from `valid_time - start_time`
+  within one file (15 minutes); satellite from the smallest gap between consecutive
+  files' `nominal_product_time` (10 minutes).
+- **Configured period coverage** — hours possible/present/missing against the config's
+  own `start`/`end`, not just the span of hours the run happened to find. This is
+  deliberately a single count, not an itemised list, so a real multi-year run doesn't
+  flood the report; the existing "Absent hours within that range" line above it stays
+  scoped to what was actually read and keeps its itemised list. This is also how
+  ISS-04's "120 missing hours" question gets answered: compare this count, from a run
+  against the real archive, against that hand-export number.
+- **Contributing-gauges cross-reference** (radar only) — how many *study* stations (from
+  Component 02's `stations.csv`, `use_in_study` rows only, since an excluded station can
+  never be a held-out test station) appear in at least one written hour's
+  `contributing_gauges`, and in how many of the written hours. This is the actual size
+  of D09's leakage caveat, not just "yes, it's gauge-corrected" — see
+  [RADAR_SOURCE.md](RADAR_SOURCE.md) and ISS-02. The match is on `station_no`, the only
+  key the archive gives us; `station_no` is not a unique key project-wide
+  (docs/ingestion/README.md), so the report names this explicitly rather than implying
+  more precision than the key supports. If `stations.csv` doesn't exist yet under
+  `output_dir` (Component 02 hasn't run), this line says so instead of failing the
+  build — a soft cross-component dependency, not a hard one.
+
 ## Relationship to Component 06
 
 The grid reshaping here feeds the radar/satellite model support in Component 06. See the
