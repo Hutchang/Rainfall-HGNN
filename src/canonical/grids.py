@@ -185,13 +185,25 @@ def build(config_path, check_only=False):
         "",
     ]
     for layer, settings in layers.items():
-        data_file = indexed_path(raw_dir, index, settings["data_file"])
-        coordinates_file = indexed_path(raw_dir, index, settings["coordinates_file"])
-        grid = load_grid(
-            data_file,
-            coordinates_file,
-            layer,
-        )
+        archive_root = settings.get("root")
+        if archive_root:
+            # D13.2: read the archive in place rather than a team-produced
+            # pickle. Local import avoids a circular import with
+            # radar_archive, which needs GridData from this module.
+            from src.canonical.radar_archive import build_radar_grid_data
+
+            grid = build_radar_grid_data(
+                Path(archive_root),
+                config["start"],
+                config["end"],
+                settings.get("subsample_stride", 10),
+            )
+        else:
+            data_file = indexed_path(raw_dir, index, settings["data_file"])
+            coordinates_file = indexed_path(
+                raw_dir, index, settings["coordinates_file"]
+            )
+            grid = load_grid(data_file, coordinates_file, layer)
         grids.append(grid)
         expected = pd.date_range(grid.timestamps[0], grid.timestamps[-1], freq="h")
         missing = expected.difference(grid.timestamps)
@@ -209,10 +221,13 @@ def build(config_path, check_only=False):
             report.append(
                 f"Source unavailable node-hours: {(grid.values[:, :, 1] == 0).sum()}."
             )
-        for path in (data_file, coordinates_file):
-            with path.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            report.append(f"Input: {path}; SHA256: {digest}.")
+        if archive_root:
+            report.append(f"Input root: {archive_root} (read in place, not hashed).")
+        else:
+            for path in (data_file, coordinates_file):
+                with path.open("rb") as stream:
+                    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                report.append(f"Input: {path}; SHA256: {digest}.")
         for field in (
             "product",
             "units",
