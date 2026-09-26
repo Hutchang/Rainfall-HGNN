@@ -134,9 +134,20 @@ recreated. Without it the nodes cannot be placed on the map or connected to gaug
 satellite fusion cannot run.
 
 The way out is not to find the file but to stop using the export: the archive product
-itself (Himawari CRRPH on NCI, project `rv74` — TO CONFIRM) carries latitude and
-longitude for every cell, so coordinates come from the source and the subsample becomes a
-rule we write down.
+itself (Himawari CRRPH on NCI, project `rv74`) lets coordinates be derived for every
+cell from the file's own projection metadata, so coordinates come from the source and
+the subsample becomes a rule we write down.
+
+Checked 2026-09-26, project `rv74` access confirmed and the archive browsed via the
+public THREDDS catalog and OPeNDAP metadata (no Gadi shell needed): the file does not
+carry a stored `lat`/`lon` array — the correction to the line above — but its CF grid
+mapping (`+proj=geos`, the geostationary projection) is exactly the same situation as
+radar's Albers grid, decodable with `pyproj` the same way
+`src/ingestion/radar/coords.py` already does. The grid is the full 5500x5500 Himawari
+disk, not pre-cropped to Sydney the way radar's 512x512 already was, so D13.3 needs a
+crop-to-study-area step radar didn't. See
+[grids/SATELLITE_SOURCE.md](grids/SATELLITE_SOURCE.md) for the full investigation,
+including the `crr`-vs-`crrph` and `intensity`-vs-`accum` decisions.
 
 **Closes when:** D13.3 reads the satellite product from the archive and writes
 `satellite_nodes.csv` with coordinates taken from the files.
