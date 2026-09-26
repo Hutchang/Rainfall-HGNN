@@ -40,21 +40,35 @@ _DATE_RE = re.compile(r"(\d{8})")
 
 @dataclass
 class QuarterHour:
-    """One 15-minute file's precipitation grid (mm, NaN for missing cells)
-    and the UTC start of the window it covers."""
+    """One 15-minute file's precipitation grid (mm, NaN for missing cells),
+    the UTC start and end of the window it covers, and the BoM station_no
+    values its `contributing_gauges` attribute lists (D13.4: the size of
+    D09's leakage caveat)."""
 
     start: pd.Timestamp
     precipitation: np.ndarray
+    valid_time: pd.Timestamp | None = None
+    contributing_gauges: frozenset[int] = frozenset()
 
 
 def read_quarter_hour(nc_path: Path) -> QuarterHour:
     """Decode one 15-minute file: CF-scaled precipitation in mm (NaN where
-    the file's own `_FillValue` marks a cell as no-data) and its start time.
+    the file's own `_FillValue` marks a cell as no-data), its start/end time,
+    and its contributing gauges.
     """
     with xr.open_dataset(nc_path) as ds:
         start = pd.Timestamp(ds["start_time"].values.item(), tz="UTC")
+        valid_time = pd.Timestamp(ds["valid_time"].values.item(), tz="UTC")
         precipitation = ds["precipitation"].values.astype(np.float64)
-    return QuarterHour(start=start, precipitation=precipitation)
+        contributing_gauges = frozenset(
+            int(v) for v in ds.attrs.get("contributing_gauges", [])
+        )
+    return QuarterHour(
+        start=start,
+        precipitation=precipitation,
+        valid_time=valid_time,
+        contributing_gauges=contributing_gauges,
+    )
 
 
 def read_daily_zip(zip_path: Path) -> list[QuarterHour]:
@@ -92,6 +106,26 @@ def hourly_grids(quarters: list[QuarterHour]) -> dict[pd.Timestamp, np.ndarray]:
                 f"{FILES_PER_HOUR} -- duplicate or misaligned archive files"
             )
     return result
+
+
+def hourly_contributing_gauges(
+    quarters: list[QuarterHour],
+) -> dict[pd.Timestamp, frozenset[int]]:
+    """Union of `contributing_gauges` across each complete hour's four files
+    (D13.4). Uses the same floor-hour bucketing and four-file completeness
+    rule as `hourly_grids`, applied to the same `quarters` list, so this
+    always agrees with `hourly_grids` on which hours are complete.
+    """
+    by_hour: dict[pd.Timestamp, list[frozenset[int]]] = {}
+    for quarter in quarters:
+        by_hour.setdefault(quarter.start.floor("h"), []).append(
+            quarter.contributing_gauges
+        )
+    return {
+        hour: frozenset().union(*gauge_sets)
+        for hour, gauge_sets in by_hour.items()
+        if len(gauge_sets) == FILES_PER_HOUR
+    }
 
 
 def subsampled_flat_indices(size: int, stride: int) -> list[int]:
@@ -135,6 +169,8 @@ def build_radar_grid_data(
         )
 
     hours: dict[pd.Timestamp, np.ndarray] = {}
+    gauges_by_hour: dict[pd.Timestamp, frozenset[int]] = {}
+    native_time_step_minutes = None
     grid_def = None
     for zip_path in zip_paths:
         if grid_def is None:
@@ -142,7 +178,12 @@ def build_radar_grid_data(
                 member = next(n for n in zf.namelist() if n.endswith(".nc"))
                 with tempfile.TemporaryDirectory() as tmp:
                     grid_def = read_grid(Path(zf.extract(member, tmp)))
-        hours.update(hourly_grids(read_daily_zip(zip_path)))
+        quarters = read_daily_zip(zip_path)
+        if native_time_step_minutes is None and quarters:
+            delta = quarters[0].valid_time - quarters[0].start
+            native_time_step_minutes = round(delta.total_seconds() / 60)
+        hours.update(hourly_grids(quarters))
+        gauges_by_hour.update(hourly_contributing_gauges(quarters))
 
     if not hours:
         raise ValueError(f"no complete hours found under {root} in {start} to {end}")
@@ -167,4 +208,17 @@ def build_radar_grid_data(
     # stays 0 with valid True.
     valid = np.isfinite(rain)
     values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
-    return GridData("radar", pd.DatetimeIndex(ordered_hours), values, coordinates)
+    provenance = {
+        # D13.4: taken from the files' own attributes, not assumed -- see
+        # docs/requirements/D13_SOURCE_GRIDS_REQUIREMENTS.md, FR04.
+        "coordinate_system": grid_def["proj_attrs"]["grid_mapping_name"],
+        "native_time_step_minutes": native_time_step_minutes,
+        "contributing_gauges_by_hour": {
+            hour: gauges_by_hour[hour]
+            for hour in ordered_hours
+            if hour in gauges_by_hour
+        },
+    }
+    return GridData(
+        "radar", pd.DatetimeIndex(ordered_hours), values, coordinates, provenance
+    )
