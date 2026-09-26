@@ -190,7 +190,7 @@ def build(config_path, check_only=False):
     ]
     for layer, settings in layers.items():
         archive_root = settings.get("root")
-        if archive_root:
+        if archive_root and layer == "radar":
             # D13.2: read the archive in place rather than a team-produced
             # pickle. Local import avoids a circular import with
             # radar_archive, which needs GridData from this module.
@@ -201,6 +201,19 @@ def build(config_path, check_only=False):
                 config["start"],
                 config["end"],
                 settings.get("subsample_stride", 10),
+            )
+        elif archive_root and layer == "satellite":
+            # D13.3: same idea, a different archive shape -- see
+            # docs/grids/SATELLITE_SOURCE.md for why crop/subsample_stride
+            # default the way they do.
+            from src.canonical.satellite_archive import build_satellite_grid_data
+
+            grid = build_satellite_grid_data(
+                Path(archive_root),
+                config["start"],
+                config["end"],
+                settings["crop"],
+                settings.get("subsample_stride", 1),
             )
         else:
             data_file = indexed_path(raw_dir, index, settings["data_file"])
