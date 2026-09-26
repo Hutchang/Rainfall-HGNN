@@ -72,7 +72,7 @@ each deliverable's document. State per deliverable:
 | D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |
-| D13 | Source grids from NCI | Not started. Reads radar and satellite in place on Gadi and writes the grid tables; resolves ISS-02, ISS-03, ISS-04, ISS-30. Gadi paths and the satellite product are TO CONFIRM |
+| D13 | Source grids from NCI | D13.1 landed: `config/canonical/grids.yaml` takes `layers.<name>.root`, and `python -m src.canonical.grid_inputs --check-inputs` confirms a configured root exists and lists the archive days found in the study period, from filenames only. Both roots ship `null` on `main` because neither is confirmed yet. D13.2 (the radar reader that turns those files into hourly tables) not started; resolves ISS-02, ISS-03, ISS-04, ISS-30. Gadi paths and the satellite product remain TO CONFIRM |
 
 Open work that belongs to a component rather than a deliverable:
 
