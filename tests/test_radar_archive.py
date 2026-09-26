@@ -120,20 +120,34 @@ def test_read_quarter_hour_extracts_contributing_gauges_from_real_sample(tmp_pat
     assert 999999 not in quarter.contributing_gauges
 
 
-def test_read_daily_zip_reads_both_real_members_in_time_order():
+def test_read_daily_zip_reads_all_real_members_in_time_order():
     quarters = read_daily_zip(REAL_SAMPLE_ZIP)
     assert [q.start for q in quarters] == [
         pd.Timestamp("2022-01-02 23:45:00", tz="UTC"),
         pd.Timestamp("2022-01-03 00:00:00", tz="UTC"),
+        pd.Timestamp("2022-01-03 00:15:00", tz="UTC"),
+        pd.Timestamp("2022-01-03 00:30:00", tz="UTC"),
+        pd.Timestamp("2022-01-03 00:45:00", tz="UTC"),
     ]
 
 
-def test_build_radar_grid_data_on_real_sample_alone_has_no_complete_hour(tmp_path):
+def test_build_radar_grid_data_succeeds_end_to_end_on_the_real_sample(tmp_path):
+    """D13.5: five real files -- the original two (a 23:45-00:00 fragment)
+    plus three added to complete the 00:00-01:00 UTC hour -- so the full
+    pipeline runs successfully here, unlike a single incomplete fragment."""
     sample_dir = tmp_path / "sample"
     sample_dir.mkdir()
     (sample_dir / REAL_SAMPLE_ZIP.name).write_bytes(REAL_SAMPLE_ZIP.read_bytes())
-    with pytest.raises(ValueError, match="no complete hours"):
-        build_radar_grid_data(sample_dir, date(2022, 1, 1), date(2022, 1, 31), 10)
+    grid = build_radar_grid_data(sample_dir, date(2022, 1, 1), date(2022, 1, 31), 10)
+    assert grid.layer == "radar"
+    assert list(grid.timestamps) == [pd.Timestamp("2022-01-03 00:00:00", tz="UTC")]
+    assert len(grid.coordinates) == 2704  # stride 10 over the 512x512 grid
+    # Real, computed data, not a placeholder: no fill cells this hour (every
+    # one of the four contributing files covers the full grid), and the
+    # subsampled maximum matches a hand check against the real files.
+    assert (grid.values[0, :, 1] == 1).all()
+    assert grid.values[0, :, 0].max() == pytest.approx(1.55)
+    assert grid.values[0, :, 0].min() == pytest.approx(0.0)
 
 
 # ---- TEST03: synthetic quarter-hours sum to an hour, or are missing --------
