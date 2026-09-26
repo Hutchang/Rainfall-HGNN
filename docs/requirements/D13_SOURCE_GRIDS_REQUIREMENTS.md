@@ -193,7 +193,7 @@ Read by Component 04 (D09.2 edges, then the graph builder) and, through it, Comp
 | TEST02 | The radar reader on the committed sample gives the expected values and the expected coordinates for known cells. | D13.2 |
 | TEST03 | Four synthetic 15-minute files sum to the right hourly value; three give a missing hour. | D13.2 |
 | TEST04 | The subsample rule is deterministic — same input, same node list — and the node count in the report matches the table. | D13.2 |
-| TEST05 | The satellite reader on the committed sample gives expected values, coordinates and `valid` flags. | D13.3 |
+| TEST05 | The satellite reader gives expected values, coordinates and `valid` flags. Against synthetic fixtures until D13.5 commits a real sample (the same gap radar had between D13.2 and D13.5, closed there by the already-committed `71_20220103.prcp-m15.zip`). | D13.3 |
 | TEST06 | `grid_report.md` carries no `UNKNOWN` for radar, and the contributing-gauges count equals a hand count on the sample. | D13.4 |
 
 Coverage: both readers and `src/canonical/grids.py` sit in the 90 % class (rule 10) —
