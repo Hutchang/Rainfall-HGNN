@@ -129,7 +129,26 @@ Input paths resolve beneath `raw_dir`. Each configured input must have exactly o
 `status=ok` row in `raw_dir/index.csv`, using a relative `path`. Pickle can execute
 code: use only the team's trusted files, never an arbitrary downloaded pickle. A
 layer with `root` set (radar, since D13.2) skips this entirely and reads the archive
-in place instead — see "Radar: from daily zips to hourly tables" above.
+in place instead — see "Radar: from daily zips to hourly tables" above. A config where
+every layer is archive-mode has no pickle input at all, so `raw_dir/index.csv` isn't
+required either.
+
+### Try it without Gadi (D13.5)
+
+```console
+uv run --locked python -m src.canonical.grids config/canonical/grids.yaml --sample
+```
+
+Points every archive-mode layer (`root` already set) at its committed offline sample
+under `tests/data/ingestion/` instead of the configured Gadi root, and writes to
+`local/grid-sample/` instead of the real `output_dir`, so it never touches
+`database/standard/` or needs a mounted archive. Against the committed `grids.yaml`
+this runs both readers successfully end to end: radar's sample is five real files (one
+complete hour plus a fragment of the previous one); satellite's is six real files (one
+complete hour, cropped to the Sydney window — see
+`tests/data/ingestion/README.md` for why it's cropped and radar's isn't). Delete
+`local/grid-sample/` before running it again; the existing-output refusal above applies
+here too.
 
 The default config requires both modalities. A missing satellite coordinate file
 blocks it explicitly. A radar-only config contains only `layers.radar`; it produces
