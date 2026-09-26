@@ -21,10 +21,14 @@ someone try the fetcher without Gadi access.
 | Source | NCI project | Layout | Years present | Access |
 |---|---|---|---|---|
 | Radar (Rainfields3 `prcp-m15`) | `rq0` | `/g/data/rq0/rainfields3/<site_id>/<year>/<product>/<site_id>_<YYYYMMDD>.<product>.zip` — path confirmed via the public THREDDS catalog, not yet cross-checked against a Gadi shell listing | 2021 and 2022 confirmed present for site 71 (T_Hills) — see `src/ingestion/radar/fetch.py` and CURRENT_STATE.md | [Gadi access](../nci/README.md), project `rq0` membership |
-| Satellite (Himawari CRRPH, the paper's source) | `rv74` (project access confirmed 2026-09-26) | unknown — never read by this project (ISS-03) | unknown | project `rv74` membership confirmed; product/layout still TO CONFIRM |
+| Satellite (Himawari CRRPH `crrph_intensity`, the paper's source) | `rv74` (access confirmed 2026-09-26) | `/g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1/<year>/<month>/<day>/S_NWC_CRRPh_HIMA08_HIMA-N-NR_<date>T<time>Z.nc` — confirmed via the public THREDDS catalog and OPeNDAP metadata, not yet cross-checked against a Gadi shell listing | 2021 and 2022 confirmed present (site data spans 2015–2026) | project `rv74` membership confirmed |
 
 `rq0` also holds a second, uncorrected radar tree (`level_2/`) considered and set aside
-for D13.2 — see [RADAR_SOURCE.md](RADAR_SOURCE.md) for why.
+for D13.2 — see [RADAR_SOURCE.md](RADAR_SOURCE.md) for why. `rv74` also holds `crr`
+(a categorical rain-class product, not used) and unrelated `cloud`/`solar` product
+families under the same `himawari-ahi` tree — see
+[SATELLITE_SOURCE.md](SATELLITE_SOURCE.md) for the full investigation and the
+`intensity`-vs-`accum` decision.
 
 Point `layers.<name>.root` in `config/canonical/grids.yaml` at the mount path (or a
 local sample directory holding files named the same way) and run:
