@@ -19,13 +19,22 @@ layers:
     # actual Gadi shell -- see docs/grids/RADAR_SOURCE.md. Only exists on Gadi
     # with project rq0 membership; --check-inputs names that if it's missing.
     root: /g/data/rq0/rainfields3
-    data_file: radar/radar_2022_preprocessed.pkl
-    coordinates_file: radar/radar_node_coords.csv
-    product: UNKNOWN
-    units: UNKNOWN
-    timestamp_convention: UNKNOWN
-    gauge_correction: UNKNOWN
-    evidence: TO CONFIRM against the supplied file and its producer
+
+    # D13.2: subsample the native 512x512, 0.5 km grid to the cell nearest
+    # each point of a stride*0.5 km grid -- stride 10 gives ~5 km spacing,
+    # matching the paper's radar spacing (sec 4.1), and ~2,700 nodes for one
+    # site's extent. A scientific choice, not an incidental default; see
+    # docs/grids/README.md.
+    subsample_stride: 10
+
+    # Declared from the archive files themselves (D13.2), not assumed:
+    # title="Merged Gauge/Radar Accumulation (15 min)" and the presence of
+    # contributing_gauges are read directly off the NetCDF global attributes.
+    product: prcp-m15
+    units: mm accumulated per hour (native files are mm per 15-minute window; summed here)
+    timestamp_convention: hour beginning, UTC
+    gauge_correction: "yes -- see each file's contributing_gauges attribute"
+    evidence: confirmed against tests/data/ingestion/radar/71_20220103.prcp-m15.zip and the fetcher's earlier work; see docs/grids/RADAR_SOURCE.md
   satellite:
     # See radar.root above. Project, layout and access are all TO CONFIRM
     # (ISS-03) -- likely NCI project rv74, Himawari CRRPH.
