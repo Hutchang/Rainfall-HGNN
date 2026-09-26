@@ -46,8 +46,10 @@ The radar fetcher landed at `45c8dbb` (`src/ingestion/radar/`, NCI Rainfields3
 `prcp-m15`, site 71). It answers the product, units and gauge-correction questions for
 radar. Production will not download the archive: on Gadi it is a mounted directory and
 D13 reads it in place, reusing the fetcher's reader and coordinate code; the fetcher's
-download path serves samples and local tries. Nothing downstream can read the archive
-files yet (ISS-30), so no radar result is possible until D13.2 lands.
+download path serves samples and local tries. `src/canonical/radar_archive.py` (D13.2)
+now reads the archive's daily zips into hourly node tables, closing ISS-30; a radar
+result still needs Gadi access to run against real data, and D09's edges (D09.2) and
+runs (D09.4) to actually produce one.
 
 No real Sydney build output exists in this checkout — `database/raw/`,
 `database/standard/` and `database/graphs/` are gitignored and absent. Everything
@@ -72,7 +74,7 @@ each deliverable's document. State per deliverable:
 | D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |
-| D13 | Source grids from NCI | D13.1 landed: `config/canonical/grids.yaml` takes `layers.<name>.root`, and `python -m src.canonical.grid_inputs --check-inputs` confirms a configured root exists and lists the archive days found in the study period, from filenames only. Both roots ship `null` on `main` because neither is confirmed yet. D13.2 (the radar reader that turns those files into hourly tables) not started; resolves ISS-02, ISS-03, ISS-04, ISS-30. Gadi paths and the satellite product remain TO CONFIRM |
+| D13 | Source grids from NCI | D13.1 and D13.2 landed for radar: `config/canonical/grids.yaml` takes `layers.radar.root` (set to `/g/data/rq0/rainfields3`) and `subsample_stride`; `src.canonical.grids.build()` now reads the archive's daily zips in place, sums complete four-file hours, subsamples the native grid, and writes `radar_hourly.csv`/`radar_nodes.csv` with product/units/timestamp/gauge-correction declared from the files' own attributes — closes ISS-30, half of ISS-02. Satellite (`root: null`, D13.3) and the full provenance report (D13.4) remain backlog. Gadi mount access is still needed to run this against real data; only offline samples and synthetic fixtures have been exercised |
 
 Open work that belongs to a component rather than a deliverable:
 
