@@ -145,6 +145,15 @@ hours of ISS-04 exist in the archive.
 archive checked rather than the export.
 **Done when:** TEST06.
 
+Landed 2026-09-26: coordinate system and native time step (computed from the files, not
+assumed) for both sources; days/hours present and missing against the *configured*
+period, not just the span found; and, for radar, the contributing-gauges cross-reference
+against Component 02's `stations.csv` (`use_in_study` rows, matched on `station_no`,
+graceful when `stations.csv` doesn't exist yet). Closes ISS-02 fully. ISS-04's 120-hour
+question is now answerable by the report; nobody has run it against the real archive yet,
+so it stays open pending that. See [grids/README.md](../grids/README.md), "Reading
+grid_report.md".
+
 ### FR05 [D13.5] — Offline samples so the tests run without Gadi.
 
 **Must do:** a committed real satellite sample of a few files (as the radar sample is),
