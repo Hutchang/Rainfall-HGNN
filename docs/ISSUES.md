@@ -107,6 +107,14 @@ accepted for now and stated on every result by D09; D13.4 reports its size.
 status for both radar and satellite into the grid report, taken from the files' own
 attributes.
 
+Checked 2026-09-26 whether an uncorrected radar alternative exists in the same NCI
+project (`rq0`): it does not. `rq0/level_2/` holds reflectivity and derived products, but
+none is a rainfall accumulation, so using it would mean designing and validating a Z-R
+conversion — new scientific work, not a parsing change. `rainfields3`'s `prcp-m15`
+remains the only ready rainfall product available, and D13.2 stays targeting it, carrying
+this issue's caveat. See [grids/RADAR_SOURCE.md](grids/RADAR_SOURCE.md) for the full
+comparison.
+
 <a id="iss-03"></a>
 
 ### ISS-03 — Satellite node coordinates do not exist
