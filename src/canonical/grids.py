@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.canonical.gauge.build import load_stations
 from src.canonical.raw_index import read_index
 
 
@@ -27,12 +28,20 @@ def utc_hours(values, label):
 
 @dataclass
 class GridData:
-    """Values are [time,node,feature]; coordinates retain the source array order."""
+    """Values are [time,node,feature]; coordinates retain the source array order.
+
+    `provenance` (D13.4) carries extra facts an archive reader took from its
+    own files -- coordinate system, native time step and, for radar, each
+    written hour's `contributing_gauges` union -- for the report to state.
+    `None` for a legacy pickle-mode grid, which has no file attributes to
+    take these from.
+    """
 
     layer: str
     timestamps: pd.DatetimeIndex
     values: np.ndarray
     coordinates: pd.DataFrame
+    provenance: dict | None = None
 
     def to_heterodata(self, target_timestamps):
         """Return a node layer for 04; topology remains the graph builder's job.
@@ -168,6 +177,68 @@ def indexed_path(raw_dir, index, relative_path):
     return path
 
 
+def _period_coverage_line(grid: GridData, start, end) -> str:
+    """D13.4: days and hours present/missing against the *configured* period,
+    not just the span of hours the run actually found -- a source that is
+    entirely absent for a leading or trailing stretch doesn't hide inside
+    "absent hours within the observed range" the way it would above. A
+    single count, not an itemised list: the itemised list below stays scoped
+    to the observed range so a real multi-year run doesn't flood the report.
+    Also how ISS-04's "120 missing hours" gets answered: compare this
+    archive's missing count against that hand-export number.
+    """
+    expected = pd.date_range(
+        pd.Timestamp(start, tz="UTC"),
+        pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1),
+        freq="h",
+        inclusive="left",
+    )
+    present = len(expected.intersection(grid.timestamps))
+    return (
+        f"Configured period {start} to {end}: {len(expected)} hours possible, "
+        f"{present} present, {len(expected) - present} missing."
+    )
+
+
+def _contributing_gauges_report(
+    gauges_by_hour: dict, output_dir: Path
+) -> list[str]:
+    """D13.4: how many *study* stations appear in radar's `contributing_gauges`
+    and in how many written hours -- the actual size of D09's leakage caveat,
+    not just "yes, it's gauge-corrected". Matches on `station_no`, the only
+    key the archive gives us; `station_no` is not a unique key project-wide
+    (docs/ingestion/README.md), so this count is named as a `station_no`
+    match, not a `station_id` one. Graceful, not a hard failure, when
+    Component 02 hasn't run yet: this is a soft cross-component dependency.
+    """
+    stations_path = output_dir / "stations.csv"
+    if not stations_path.is_file():
+        return [
+            f"Contributing-gauges cross-reference: not computed -- "
+            f"{stations_path} not found; run Component 02 first."
+        ]
+    stations = load_stations(stations_path)
+    use_in_study = stations["use_in_study"]
+    if use_in_study.dtype != bool:
+        use_in_study = use_in_study.astype(str).str.strip().str.lower() == "true"
+    usable = stations[use_in_study]
+    station_nos = pd.to_numeric(usable["station_no"], errors="coerce").dropna()
+    study_station_nos = set(station_nos.astype(int))
+    all_gauges = (
+        frozenset().union(*gauges_by_hour.values()) if gauges_by_hour else frozenset()
+    )
+    matched = study_station_nos & all_gauges
+    hours_with_a_match = sum(
+        1 for gauges in gauges_by_hour.values() if gauges & study_station_nos
+    )
+    return [
+        f"Contributing-gauges cross-reference (by station_no, not a unique "
+        f"key project-wide): {len(matched)} of {len(study_station_nos)} study "
+        f"stations appear in at least one written hour's contributing_gauges, "
+        f"in {hours_with_a_match} of {len(gauges_by_hour)} written hours.",
+    ]
+
+
 def build(config_path, check_only=False):
     """Validate all enabled layers before writing; never modify gauge outputs/raw."""
     config = yaml.safe_load(Path(config_path).read_text())
@@ -224,13 +295,18 @@ def build(config_path, check_only=False):
         grids.append(grid)
         expected = pd.date_range(grid.timestamps[0], grid.timestamps[-1], freq="h")
         missing = expected.difference(grid.timestamps)
+        provenance = grid.provenance or {}
         report.extend(
             [
                 f"## {layer}",
                 "",
                 f"Nodes: {len(grid.coordinates)}; source hours: {len(grid.timestamps)}; rows: {len(grid.coordinates) * len(grid.timestamps)}.",
+                f"Coordinate system: {provenance.get('coordinate_system', 'UNKNOWN')}.",
+                "Native time step: "
+                f"{provenance.get('native_time_step_minutes', 'UNKNOWN')} minutes.",
                 f"Range: {grid.timestamps[0].isoformat()} to {grid.timestamps[-1].isoformat()}.",
                 f"Absent hours within that range: {len(missing)}. Boundaries outside the source range are not inferred.",
+                _period_coverage_line(grid, config["start"], config["end"]),
                 "Missing rain payloads: "
                 + (
                     f"{(grid.values[:, :, 1] == 0).sum()}."
@@ -242,6 +318,12 @@ def build(config_path, check_only=False):
         if layer == "satellite":
             report.append(
                 f"Source unavailable node-hours: {(grid.values[:, :, 1] == 0).sum()}."
+            )
+        if layer == "radar" and "contributing_gauges_by_hour" in provenance:
+            report.extend(
+                _contributing_gauges_report(
+                    provenance["contributing_gauges_by_hour"], output_dir
+                )
             )
         if archive_root:
             report.append(f"Input root: {archive_root} (read in place, not hashed).")
