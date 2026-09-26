@@ -11,6 +11,35 @@ coordinates and times, and writes the existing standard grid tables. It does not
 source data, infer satellite coordinates, change rainfall units, build graph edges,
 select evaluation splits or train the model.
 
+## Where the data is (D13.1)
+
+The archive is not downloaded for production use; on Gadi it is a mounted directory
+and D13's readers point at it in place. This is separate from `src/ingestion/radar/`,
+whose download path exists only to produce the committed offline sample and to let
+someone try the fetcher without Gadi access.
+
+| Source | NCI project | Layout | Years present | Access |
+|---|---|---|---|---|
+| Radar (Rainfields3 `prcp-m15`) | `rq0` | `/g/data/rq0/rainfields3/<site_id>/<year>/<product>/<site_id>_<YYYYMMDD>.<product>.zip` — path confirmed via the public THREDDS catalog, not yet cross-checked against a Gadi shell listing | 2021 and 2022 confirmed present for site 71 (T_Hills) — see `src/ingestion/radar/fetch.py` and CURRENT_STATE.md | [Gadi access](../nci/README.md), project `rq0` membership |
+| Satellite (Himawari CRRPH, the paper's source) | `rv74` (project access confirmed 2026-09-26) | unknown — never read by this project (ISS-03) | unknown | project `rv74` membership confirmed; product/layout still TO CONFIRM |
+
+`rq0` also holds a second, uncorrected radar tree (`level_2/`) considered and set aside
+for D13.2 — see [RADAR_SOURCE.md](RADAR_SOURCE.md) for why.
+
+Point `layers.<name>.root` in `config/canonical/grids.yaml` at the mount path (or a
+local sample directory holding files named the same way) and run:
+
+```console
+uv run --locked python -m src.canonical.grid_inputs config/canonical/grids.yaml --check-inputs
+```
+
+This confirms each configured root exists and reports how many archive days, within
+the config's `start`/`end` period, have a file whose name embeds that date — nothing
+is opened or read yet. A `root` of `null` (both sources ship this way on `main`,
+since neither location is confirmed) is not checked. A missing root refuses to
+continue and names it; this is a separate, earlier check from the pickle-input
+`--check-inputs` below, which validates the current hand-exported files.
+
 ## Relationship to Component 06
 
 The grid reshaping here feeds the radar/satellite model support in Component 06. See the
