@@ -163,6 +163,19 @@ samples. The NCI guard tests (`scripts/nci/`) cover the Gadi-only parts.
 offline.
 **Done when:** the suite passes on a laptop with no archive mounted.
 
+Landed 2026-09-27: `tests/data/ingestion/satellite/` holds six real, consecutive
+10-minute Himawari files (one complete hour), each cropped from a real downloaded file
+to the Sydney window and reduced to the three variables the reader uses — real,
+unmodified values in that window, ~25 KB/file, since a full file is the whole 5500x5500
+disk across six variables (~18.6 MB) and can't be committed as-is. The radar sample
+(`tests/data/ingestion/radar/71_20220103.prcp-m15.zip`) gained three more real,
+byte-identical files from the same archive day, completing one real hour there too — it
+previously supported only per-file checks (TEST02), not a full build. `src.canonical
+.grids`'s CLI gained `--sample`, pointing every archive-mode layer at its committed
+sample and writing to `local/grid-sample/`; running it against the real committed
+`grids.yaml` now succeeds end-to-end for both sources with no Gadi access. See
+`tests/data/ingestion/README.md` and [grids/README.md](../grids/README.md).
+
 ## 5. Non-negotiable rules
 
 - Source-faithful: no unit change, no smoothing, no gap-filling; a missing hour stays
@@ -255,3 +268,7 @@ once it lands so the archive files read are fingerprinted in the provenance reco
 
 **This week:** D13.1, D13.2.
 **Backlog (week 7+):** D13.3, D13.4, D13.5.
+
+All five subtasks landed 2026-09-27, chained on the branches described in section 8a;
+one pull request for the whole deliverable is next. Real-archive verification (an actual
+run on Gadi) is not part of any subtask here and remains open.
