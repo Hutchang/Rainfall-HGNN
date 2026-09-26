@@ -34,6 +34,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-07](#iss-07) | Methods are allowed to read different gauges when predicting | Blocking | Components 04 + 06 | Open |
 | [ISS-11](#iss-11) | Ingestion config claims Sydney but fetches Australia-wide | Blocking | Component 01 | Closed |
 | [ISS-30](#iss-30) | Fetched radar files cannot be read by the grid adapter | Blocking | D13 | Closed |
+| [ISS-35](#iss-35) | Component 06 rejects two-feature radar graphs | Blocking | Component 06 | Open |
 | [ISS-04](#iss-04) | Radar and satellite cover 2022 only; radar missing 120 hours | Material | D13 | Open |
 | [ISS-05](#iss-05) | Within-day timestamp fidelity is assumed, not verified | Material | Component 02 | Blocked |
 | [ISS-06](#iss-06) | Unexplained April–May 2021 gap in BoM daily totals | Material | Component 02 | Open |
@@ -688,6 +689,36 @@ measurement must be scoped to the production packages.
 **Closes when:** D07.7 lands — `pytest-cov` installed, measurement scoped, both floors
 failing the run, and the baseline recorded in `CURRENT_STATE.md`.
 
+<a id="iss-35"></a>
+
+### ISS-35 — Component 06 rejects two-feature radar graphs
+**Severity:** Blocking · **Owner:** Component 06 · **Status:** Open
+
+`src/models/modalities.py:30` hardcodes radar's feature width as 1 in
+`prepare_modalities()`, which `validate_graph()` (`src/models/graphs.py`) calls before
+every training run. D13.2 changed radar's contract to `[value, valid]` (2 features),
+matching satellite, so a missing cell can be represented instead of failing the whole
+graph on any missing pixel (see ISS-30, closed). Component 04's actual production path
+(`src/graph/builder_new.py:114`, `GridData.to_heterodata`) now legitimately produces
+2-feature radar, which this check rejects outright with "radar.x must be floating
+[nodes,time,1]" — gauge+radar and gauge+radar+satellite training would fail the moment a
+real archive-built radar graph reaches Component 06.
+
+Found 2026-09-27 while confirming D13's work doesn't quietly break the gauge-only /
+gauge+radar / gauge+radar+satellite combinations it exists to enable — it does, but only
+downstream of D13, in code D13 does not own. The existing test suite does not catch it:
+`tests/data/models/make_fixture.py` still builds synthetic radar as 1-feature, predating
+D13.2, so `test_model_modalities.py`'s multimodal parametrization (`radar`, `satellite`,
+`radar`+`satellite`) never exercises the real, current shape — including its own
+`radar_width` damage case, which asserts that *expanding* radar to 2 features is invalid,
+the opposite of what D13.2 established. `src/models/run.py`'s own run-report text ("Radar
+missingness is rejected because its prescribed single feature has no validity channel")
+is stale for the same reason.
+
+**Closes when:** `prepare_modalities` accepts either one or two features for radar,
+masking invalid cells the same way satellite's are whenever a validity channel is
+present; the fixture and its damage case are updated to the real current shape; and the
+stale report text in `src/models/run.py` is corrected.
 
 ## Documentation gaps
 
