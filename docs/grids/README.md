@@ -50,9 +50,13 @@ complete run of four consecutive quarter-hours into one hour-beginning UTC value
 Filenames embed each file's *end* time, not its start, so hours are grouped by each
 file's own `start_time` floored to the hour — not by the filename — to avoid
 misassigning every file to the wrong hour. An hour with fewer than four files is
-missing, not written; a cell that is NaN in even one of an hour's four files makes
-that cell's hourly value NaN too, the same source-faithful rule applied one level
-down. See `src/canonical/radar_archive.py`.
+missing, not written; a cell that is missing in even one of an hour's four files makes
+that cell invalid too. The model cannot accept a null, so an invalid cell is written as
+`rain_rate` 0 with `valid` false rather than NaN — the same `[value, valid]` shape
+satellite already has, so `radar_hourly.csv` gains a `valid` column. An hour's own
+genuine zero (all four files agree, observed dry) stays `rain_rate` 0 with `valid`
+true; the missing/dry distinction lives entirely in `valid`, never in the value. See
+`src/canonical/radar_archive.py`.
 
 The native 512x512, 0.5 km grid is far too large to carry densely (~36 TB for
 Sydney), so it is subsampled to the cell nearest each point of a `subsample_stride`
@@ -104,7 +108,7 @@ Outputs:
 
 | File | Columns |
 |---|---|
-| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate` |
+| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` (via the archive reader, D13.2; a legacy pickle-mode radar table has no `valid` column) |
 | `radar_nodes.csv` | `node_id`, `latitude`, `longitude` |
 | `satellite_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` |
 | `satellite_nodes.csv` | `node_id`, `latitude`, `longitude` |
@@ -116,13 +120,16 @@ coordinate file includes `node_id`, the adapter verifies that it is `0..N-1` in 
 Without IDs, positional ordering is an upstream assertion; matching counts alone
 cannot prove that the coordinates correspond to the values.
 
-The input radar shape is `[nodes]` per hour; satellite is `[nodes,2]`, with source
-availability in column 1. Node counts are validated against coordinates rather than
-hard-coded, allowing the documented 952/726-node inputs and small offline fixtures.
-Times must be timezone-aware, sorted, unique and exactly on hourly boundaries. UTC
-conversion preserves instants; it does not guess whether an hour label marks its
-start or end. Missing hours remain absent. Radar NaNs remain missing values in CSV;
-satellite invalid payloads and flags are preserved exactly. Observed dry zeros remain
+A legacy pickle input's radar shape is `[nodes]` per hour, one feature; satellite's
+pickle is `[nodes,2]`, with source availability in column 1. Node counts are validated
+against coordinates rather than hard-coded, allowing the documented 952/726-node
+inputs and small offline fixtures. Times must be timezone-aware, sorted, unique and
+exactly on hourly boundaries. UTC conversion preserves instants; it does not guess
+whether an hour label marks its start or end. Missing hours remain absent. A legacy
+one-feature radar pickle's NaNs remain missing values in CSV, since it has no column
+to flag them in; satellite's (and the archive reader's radar, D13.2) invalid payloads
+and flags are preserved exactly instead — the model cannot accept a null, so an
+invalid cell is `rain_rate` 0 with `valid` false, not NaN. Observed dry zeros remain
 valid zeros. No resampling, smoothing, gap filling, regridding or unit scaling occurs.
 
 `rain_rate` is the existing contract's column name, **not proof of source units**.
@@ -138,10 +145,12 @@ radar = load_grid(radar_pickle, radar_coordinates, "radar")
 layer, coordinates = radar.to_heterodata(approved_graph_timestamps)
 ```
 
-The result has `layer['radar'].x` shaped `[N,T,1]`, or satellite `[N,T,2]`, plus
-`observed` and node IDs. The returned coordinates have `latitude, longitude` in tensor
-node order. `layer.timestamps` records the exact requested UTC sequence. The graph
-builder owns edges, distances, neighbour counts and attachment to each fold/role.
+The result has `layer['radar'].x` shaped `[N,T,2]` (via the archive reader, D13.2) or
+`[N,T,1]` (a legacy pickle-mode radar table, no validity feature), and satellite always
+`[N,T,2]`; plus `observed` and node IDs. The returned coordinates have `latitude,
+longitude` in tensor node order. `layer.timestamps` records the exact requested UTC
+sequence. The graph builder owns edges, distances, neighbour counts and attachment to
+each fold/role.
 
 The caller must provide the approved timeline. The adapter never intersects or drops
 target hours automatically. If a requested source hour is missing, it fails with the
