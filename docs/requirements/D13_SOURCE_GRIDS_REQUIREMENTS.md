@@ -184,6 +184,19 @@ they write the standard tables.
 - `docs/ingestion/README.md`: one paragraph making clear the radar fetcher's download is
   for samples and local tries, and production reads the archive in place.
 
+## 8a. Branching for this deliverable
+
+D13 departs from the general working agreement's one-PR-per-subtask branch (see
+[README.md](README.md)) by deliberate choice, recorded here rather than left to
+rediscover: each subtask (`feature/D13.1-...`, `feature/D13.2-...`, ...) still gets its
+own branch, but they chain onto one another (`D13.2` branches from `D13.1`, `D13.3` from
+`D13.2`, and so on) rather than each branching independently from
+`integration/sydney-gauge-baseline`. Only one pull request is opened for the whole
+deliverable, from the final subtask's branch (renamed `feature/D13`) into
+`integration/sydney-gauge-baseline`, once all five subtasks land. This keeps every
+subtask's commits individually labelled and reviewable inside that one PR without
+needing five separate merges into the integration branch first.
+
 ## 9. Dependencies and blockers
 
 Gadi access for whoever runs it ([../nci/README.md](../nci/README.md)); confirmation of
