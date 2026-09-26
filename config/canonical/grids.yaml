@@ -1,8 +1,24 @@
 # Paths resolve from the repository root. Each input needs an ok index.csv row.
 raw_dir: database/raw
 output_dir: database/standard
+
+# Study period the archive roots below are checked against, inclusive. Matches
+# config/ingestion/sydney.yaml's period for the same region.
+start: 2021-01-01
+end: 2022-12-31
+
 layers:
   radar:
+    # Where the NCI archive lives (D13.1). `null` means "not checked yet": on
+    # Gadi this is the mounted rq0 project directory; locally it can point at a
+    # sample tree such as tests/data/ingestion/radar/. Read in place, never
+    # downloaded -- see docs/grids/README.md, "Where the data is".
+    #
+    # Path confirmed by browsing the public THREDDS catalog (mirrors the Gadi
+    # mount 1:1 for this archive) on 2026-09-26; not yet verified against an
+    # actual Gadi shell -- see docs/grids/RADAR_SOURCE.md. Only exists on Gadi
+    # with project rq0 membership; --check-inputs names that if it's missing.
+    root: /g/data/rq0/rainfields3
     data_file: radar/radar_2022_preprocessed.pkl
     coordinates_file: radar/radar_node_coords.csv
     product: UNKNOWN
@@ -11,6 +27,9 @@ layers:
     gauge_correction: UNKNOWN
     evidence: TO CONFIRM against the supplied file and its producer
   satellite:
+    # See radar.root above. Project, layout and access are all TO CONFIRM
+    # (ISS-03) -- likely NCI project rv74, Himawari CRRPH.
+    root: null
     data_file: satellite/satellite_2022_preprocessed.pkl
     coordinates_file: satellite/satellite_node_coords.csv
     product: UNKNOWN
