@@ -29,7 +29,7 @@ somewhere else, move it here and leave the id behind.
 | ID | Title | Severity | Owner | Status |
 |---|---|---|---|---|
 | [ISS-01](#iss-01) | Short gauge blockages produce confident false zeros | Blocking | Component 02 | Open |
-| [ISS-02](#iss-02) | Radar and satellite provenance unknown | Blocking | D13 | Open |
+| [ISS-02](#iss-02) | Radar and satellite provenance unknown | Blocking | D13 | Closed |
 | [ISS-03](#iss-03) | Satellite node coordinates do not exist | Blocking | D13 | Open |
 | [ISS-07](#iss-07) | Methods are allowed to read different gauges when predicting | Blocking | Components 04 + 06 | Open |
 | [ISS-11](#iss-11) | Ingestion config claims Sydney but fetches Australia-wide | Blocking | Component 01 | Closed |
@@ -87,7 +87,7 @@ Source: [canonical/README.md](canonical/README.md).
 <a id="iss-02"></a>
 
 ### ISS-02 — Radar and satellite provenance unknown
-**Severity:** Blocking · **Owner:** D13 · **Status:** Open
+**Severity:** Blocking · **Owner:** D13 · **Status:** Closed 2026-09-26 (D13.4)
 
 Which product, which units, and whether the radar is gauge-corrected are all unknown. If it
 was corrected using gauges that include our test stations, every radar result leaks and is
@@ -118,8 +118,14 @@ comparison.
 D13.2 (2026-09-26) closes the radar half of this issue's "Closes when" line: `grids.yaml`
 now declares `product`, `units`, `timestamp_convention` and `gauge_correction` for radar
 from the archive files' own attributes, with no `UNKNOWN` remaining (see ISS-30, closed).
-The satellite half — product, units and correction status for the Himawari source — is
-still open, tracked as D13.3.
+D13.3 does the same for satellite.
+
+**Closed 2026-09-26 (D13.4).** `grid_report.md` now states coordinate system and native
+time step for both sources too, computed from the files themselves
+(`grid_mapping_name`, and `valid_time - start_time` for radar / the gap between
+consecutive `nominal_product_time` values for satellite) — the last two fields this
+issue's "Closes when" line named. Confirmed against synthetic fixtures for both sources;
+real-archive verification still needs Gadi access, tracked separately.
 
 <a id="iss-03"></a>
 
@@ -168,6 +174,12 @@ are missing in the archive too is not yet known.
 
 **Closes when:** D13.4's grid report states, per source, the days and hours present and
 missing in the archive for 2021–2022, and any remaining gap is excluded by a written rule.
+
+D13.4 (2026-09-26) lands the mechanism: `grid_report.md` now states, per source, hours
+possible/present/missing against the configured period, so the 120-hour question is
+answerable by comparison once a run reads the real archive. Not yet closed: nobody has
+run this against Gadi, so whether the 120 hours are actually present or absent in the
+archive is still unmeasured.
 
 <a id="iss-05"></a>
 
