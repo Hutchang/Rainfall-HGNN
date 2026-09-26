@@ -40,6 +40,36 @@ since neither location is confirmed) is not checked. A missing root refuses to
 continue and names it; this is a separate, earlier check from the pickle-input
 `--check-inputs` below, which validates the current hand-exported files.
 
+## Radar: from daily zips to hourly tables (D13.2)
+
+When `layers.radar.root` is set, `build()` (below) reads the archive in place instead
+of the pickle: it opens every daily zip under the root that falls in the config's
+`start`/`end` period, decodes each 15-minute NetCDF member's `precipitation` (CF
+scale/offset applied, `_FillValue` masked to NaN) and `start_time`, and sums each
+complete run of four consecutive quarter-hours into one hour-beginning UTC value.
+Filenames embed each file's *end* time, not its start, so hours are grouped by each
+file's own `start_time` floored to the hour — not by the filename — to avoid
+misassigning every file to the wrong hour. An hour with fewer than four files is
+missing, not written; a cell that is NaN in even one of an hour's four files makes
+that cell's hourly value NaN too, the same source-faithful rule applied one level
+down. See `src/canonical/radar_archive.py`.
+
+The native 512x512, 0.5 km grid is far too large to carry densely (~36 TB for
+Sydney), so it is subsampled to the cell nearest each point of a `subsample_stride`
+grid — stride 10 gives ~5 km spacing, matching the paper's radar spacing, and about
+2,700 nodes for one site. This is a recorded scientific choice
+(`layers.radar.subsample_stride` in `config/canonical/grids.yaml`), not an
+incidental default; see [RADAR_SOURCE.md](RADAR_SOURCE.md) for the fuller picture of
+why `rainfields3` is the source at all. `product`, `units`, `timestamp_convention`
+and `gauge_correction` are declared in the same config block, read off the archive
+files' own attributes (confirmed against the committed sample and the fetcher's
+earlier work), not assumed.
+
+Coordinates and the report's per-source declarations are otherwise unchanged: the
+archive reader produces the same `GridData` the pickle path does, so everything from
+validation onward — CSV shapes, `to_heterodata`, the report — is the adapter's
+existing, unchanged machinery.
+
 ## Relationship to Component 06
 
 The grid reshaping here feeds the radar/satellite model support in Component 06. See the
@@ -60,7 +90,9 @@ uv run --locked python -m src.canonical.grids config/canonical/grids.yaml
 
 Input paths resolve beneath `raw_dir`. Each configured input must have exactly one
 `status=ok` row in `raw_dir/index.csv`, using a relative `path`. Pickle can execute
-code: use only the team's trusted files, never an arbitrary downloaded pickle.
+code: use only the team's trusted files, never an arbitrary downloaded pickle. A
+layer with `root` set (radar, since D13.2) skips this entirely and reads the archive
+in place instead — see "Radar: from daily zips to hourly tables" above.
 
 The default config requires both modalities. A missing satellite coordinate file
 blocks it explicitly. A radar-only config contains only `layers.radar`; it produces
