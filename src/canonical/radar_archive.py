@@ -158,7 +158,13 @@ def build_radar_grid_data(
     coordinates["node_id"] = np.arange(len(coordinates))
 
     ordered_hours = sorted(hours)
-    values = np.stack(
-        [hours[hour].reshape(-1)[indices] for hour in ordered_hours]
-    )[:, :, None]
+    rain = np.stack([hours[hour].reshape(-1)[indices] for hour in ordered_hours])
+    # The model cannot accept a null: a cell missing in one of its four
+    # contributing files (NaN, per hourly_grids) becomes rain_rate 0 with
+    # valid False, the same [value, valid] shape satellite already uses,
+    # rather than losing the missing/dry distinction or leaking a NaN into
+    # the table. An hour's own genuine zero (all four files agreed, dry)
+    # stays 0 with valid True.
+    valid = np.isfinite(rain)
+    values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
     return GridData("radar", pd.DatetimeIndex(ordered_hours), values, coordinates)
