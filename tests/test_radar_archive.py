@@ -16,6 +16,7 @@ from src.canonical.radar_archive import (
     QuarterHour,
     _daily_zips_in_range,
     build_radar_grid_data,
+    hourly_contributing_gauges,
     hourly_grids,
     read_daily_zip,
     read_quarter_hour,
@@ -41,7 +42,10 @@ TIME_ATTRS = {"units": "seconds since 1970-01-01 00:00:00 UTC", "standard_name":
 
 
 def _write_quarter_hour_nc(
-    path: Path, start_epoch: float, raw_grid: np.ndarray
+    path: Path,
+    start_epoch: float,
+    raw_grid: np.ndarray,
+    contributing_gauges: tuple[int, ...] = (),
 ) -> None:
     """A minimal but faithful synthetic 15-minute file: the same uint16 /
     scale_factor / add_offset / _FillValue encoding and CF grid mapping the
@@ -69,11 +73,15 @@ def _write_quarter_hour_nc(
             "x": ("x", np.arange(size, dtype=np.float64), {"units": "km"}),
             "y": ("y", np.arange(size, dtype=np.float64), {"units": "km"}),
         },
+        attrs={"contributing_gauges": np.array(contributing_gauges, dtype=np.int32)},
     ).to_netcdf(path)
 
 
 def _write_hour_zip(
-    zip_path: Path, start: pd.Timestamp, raws: list[np.ndarray]
+    zip_path: Path,
+    start: pd.Timestamp,
+    raws: list[np.ndarray],
+    contributing_gauges: tuple[int, ...] = (),
 ) -> None:
     """One daily zip holding one synthetic 15-minute file per array in `raws`,
     fifteen minutes apart starting at `start`."""
@@ -81,7 +89,9 @@ def _write_hour_zip(
         tmp_dir = Path(tmp)
         for i, raw in enumerate(raws):
             nc_path = tmp_dir / f"member_{i}.nc"
-            _write_quarter_hour_nc(nc_path, int(start.timestamp()) + i * 900, raw)
+            _write_quarter_hour_nc(
+                nc_path, int(start.timestamp()) + i * 900, raw, contributing_gauges
+            )
             zf.write(nc_path, arcname=f"member_{i}.nc")
 
 
@@ -93,8 +103,21 @@ def test_read_quarter_hour_decodes_real_sample_values_and_start_time(tmp_path):
         zf.extractall(tmp_path)
     quarter = read_quarter_hour(tmp_path / "71_20220103_000000.prcp-m15.nc")
     assert quarter.start == pd.Timestamp("2022-01-02 23:45:00", tz="UTC")
+    assert quarter.valid_time == pd.Timestamp("2022-01-03 00:00:00", tz="UTC")
     assert quarter.precipitation[336, 427] == pytest.approx(1.0)
     assert quarter.precipitation[13, 503] == pytest.approx(0.05)
+
+
+def test_read_quarter_hour_extracts_contributing_gauges_from_real_sample(tmp_path):
+    """TEST06: a hand count on the committed real sample -- 145 gauges,
+    confirmed present: 568165, 561117; confirmed absent: 999999."""
+    with zipfile.ZipFile(REAL_SAMPLE_ZIP) as zf:
+        zf.extractall(tmp_path)
+    quarter = read_quarter_hour(tmp_path / "71_20220103_000000.prcp-m15.nc")
+    assert len(quarter.contributing_gauges) == 145
+    assert 568165 in quarter.contributing_gauges
+    assert 561117 in quarter.contributing_gauges
+    assert 999999 not in quarter.contributing_gauges
 
 
 def test_read_daily_zip_reads_both_real_members_in_time_order():
@@ -288,3 +311,154 @@ def test_grids_build_wires_radar_archive_and_report_node_count_matches_table(
     np.testing.assert_allclose(by_node.loc[[1, 2, 3], "rain_rate"], 1.0)
     assert (by_node.loc[[1, 2, 3], "valid"] == 1).all()
     assert "Missing rain payloads: 1." in report
+
+
+# ---- TEST06 (D13.4): provenance and the contributing-gauges count ---------
+
+
+def test_hourly_contributing_gauges_unions_a_complete_hour():
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    quarters = [
+        QuarterHour(
+            hour + pd.Timedelta(minutes=15 * i),
+            np.zeros((1, 1)),
+            contributing_gauges=gauges,
+        )
+        for i, gauges in enumerate(
+            [frozenset({1, 2}), frozenset({2, 3}), frozenset({3}), frozenset({4})]
+        )
+    ]
+    result = hourly_contributing_gauges(quarters)
+    assert result == {hour: frozenset({1, 2, 3, 4})}
+
+
+def test_hourly_contributing_gauges_skips_an_incomplete_hour():
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    quarters = [
+        QuarterHour(
+            hour + pd.Timedelta(minutes=15 * i),
+            np.zeros((1, 1)),
+            contributing_gauges={1},
+        )
+        for i in range(3)
+    ]
+    assert hourly_contributing_gauges(quarters) == {}
+
+
+def test_grid_report_states_coordinate_system_and_time_step(tmp_path):
+    raw_dir = tmp_path / "raw"
+    (raw_dir / "index").mkdir(parents=True)
+    pd.DataFrame(columns=["path", "status"]).to_csv(
+        raw_dir / "index" / "dummy.csv", index=False
+    )
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir()
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    raws = [np.full((4, 4), 6, dtype=np.uint16) for _ in range(4)]
+    _write_hour_zip(archive_root / "71_20220105.prcp-m15.zip", hour, raws)
+
+    output_dir = tmp_path / "standard"
+    config_path = tmp_path / "grids.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "raw_dir": str(raw_dir),
+                "output_dir": str(output_dir),
+                "start": date(2022, 1, 5),
+                "end": date(2022, 1, 5),
+                "layers": {
+                    "radar": {
+                        "root": str(archive_root),
+                        "subsample_stride": 2,
+                        "product": "prcp-m15",
+                        "units": "mm accumulated per hour",
+                        "timestamp_convention": "hour beginning, UTC",
+                        "gauge_correction": "yes",
+                        "evidence": "synthetic test fixture",
+                    }
+                },
+            }
+        )
+    )
+
+    build(config_path)
+    report = (output_dir / "grid_report.md").read_text()
+
+    assert "Coordinate system: albers_conical_equal_area." in report
+    assert "Native time step: 15 minutes." in report
+    # A one-day period with one written hour: 24 possible, 1 present, 23 missing.
+    assert "Configured period 2022-01-05 to 2022-01-05: 24 hours possible" in report
+    assert "1 present, 23 missing." in report
+    assert (
+        "Contributing-gauges cross-reference: not computed" in report
+    )  # no stations.csv
+
+
+def test_grid_report_cross_references_contributing_gauges_against_study_stations(
+    tmp_path,
+):
+    raw_dir = tmp_path / "raw"
+    (raw_dir / "index").mkdir(parents=True)
+    pd.DataFrame(columns=["path", "status"]).to_csv(
+        raw_dir / "index" / "dummy.csv", index=False
+    )
+
+    output_dir = tmp_path / "standard"
+    output_dir.mkdir()
+    # A: a contributing gauge, used in the study -> should match.
+    # B: not a contributing gauge, used in the study -> should not match.
+    # C: a contributing gauge, but excluded from the study -> should not
+    #    match, since an excluded station can never be a held-out test
+    #    station and its leakage doesn't matter for this caveat.
+    pd.DataFrame(
+        {
+            "station_id": ["1", "2", "3"],
+            "station_no": ["111", "222", "333"],
+            "use_in_study": [True, True, False],
+        }
+    ).to_csv(output_dir / "stations.csv", index=False)
+
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir()
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    raws = [np.full((4, 4), 6, dtype=np.uint16) for _ in range(4)]
+    _write_hour_zip(
+        archive_root / "71_20220105.prcp-m15.zip",
+        hour,
+        raws,
+        contributing_gauges=(111, 333, 999),
+    )
+
+    config_path = tmp_path / "grids.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "raw_dir": str(raw_dir),
+                "output_dir": str(output_dir),
+                "start": date(2022, 1, 5),
+                "end": date(2022, 1, 5),
+                "layers": {
+                    "radar": {
+                        "root": str(archive_root),
+                        "subsample_stride": 2,
+                        "product": "prcp-m15",
+                        "units": "mm accumulated per hour",
+                        "timestamp_convention": "hour beginning, UTC",
+                        "gauge_correction": "yes",
+                        "evidence": "synthetic test fixture",
+                    }
+                },
+            }
+        )
+    )
+
+    build(config_path)
+    report = (output_dir / "grid_report.md").read_text()
+
+    # Only station 1 (station_no 111) matches: used in the study and a
+    # contributing gauge; station 2 isn't a contributing gauge, station 3
+    # is excluded from the study.
+    assert (
+        "1 of 2 study stations appear in at least one written hour's "
+        "contributing_gauges, in 1 of 1 written hours." in report
+    )
