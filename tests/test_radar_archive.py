@@ -218,9 +218,14 @@ def test_build_radar_grid_data_end_to_end_subsamples_and_sums(tmp_path):
     assert grid.layer == "radar"
     assert list(grid.timestamps) == [hour]
     assert len(grid.coordinates) == 4  # stride 2 over a 4x4 grid
-    values = grid.values[0, :, 0]
-    assert np.isnan(values[0])  # node (0, 0): fill in one of the four files
-    np.testing.assert_allclose(values[1:], [1.0, 1.0, 1.0])
+    assert grid.values.shape == (1, 4, 2)  # [rain_rate, valid], same as satellite
+    rain, valid = grid.values[0, :, 0], grid.values[0, :, 1]
+    # Node (0, 0): fill in one of the four files -> the model cannot accept a
+    # null, so rain_rate is 0 and valid is False, not NaN.
+    assert rain[0] == 0.0
+    assert valid[0] == 0.0
+    np.testing.assert_allclose(rain[1:], [1.0, 1.0, 1.0])
+    assert (valid[1:] == 1.0).all()
 
 
 def test_grids_build_wires_radar_archive_and_report_node_count_matches_table(
@@ -235,7 +240,10 @@ def test_grids_build_wires_radar_archive_and_report_node_count_matches_table(
     archive_root = tmp_path / "archive"
     archive_root.mkdir()
     hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
-    raws = [np.full((4, 4), 6, dtype=np.uint16) for _ in range(4)]
+    full = np.full((4, 4), 6, dtype=np.uint16)
+    first_file_with_a_gap = full.copy()
+    first_file_with_a_gap[0, 0] = 0  # fill: node (0, 0) invalid this hour
+    raws = [first_file_with_a_gap, full, full, full]
     _write_hour_zip(archive_root / "71_20220105.prcp-m15.zip", hour, raws)
 
     output_dir = tmp_path / "standard"
@@ -265,7 +273,18 @@ def test_grids_build_wires_radar_archive_and_report_node_count_matches_table(
     build(config_path)
 
     nodes = pd.read_csv(output_dir / "radar_nodes.csv")
+    hourly = pd.read_csv(output_dir / "radar_hourly.csv").sort_values("node_id")
     report = (output_dir / "grid_report.md").read_text()
+
     assert len(nodes) == 4
     assert "Nodes: 4;" in report
     assert "UNKNOWN" not in report
+    # radar_hourly.csv carries a valid column, same as satellite_hourly.csv;
+    # the invalid node (0, 0) is rain_rate 0 with valid False, not a null.
+    assert list(hourly.columns) == ["node_id", "timestamp", "rain_rate", "valid"]
+    by_node = hourly.set_index("node_id")
+    assert by_node.loc[0, "rain_rate"] == pytest.approx(0.0)
+    assert by_node.loc[0, "valid"] == 0
+    np.testing.assert_allclose(by_node.loc[[1, 2, 3], "rain_rate"], 1.0)
+    assert (by_node.loc[[1, 2, 3], "valid"] == 1).all()
+    assert "Missing rain payloads: 1." in report
