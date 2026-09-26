@@ -6,6 +6,7 @@ Nothing is downloaded; coordinates and measurements are synthetic test values.
 import argparse
 import gzip
 import json
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -122,6 +123,10 @@ def make_fixture(directory):
     configs["grids"] = {
         "raw_dir": str(raw),
         "output_dir": str(standard),
+        # D13.4: build() reports days/hours against the configured period;
+        # matches the fixture's own `hours` range above.
+        "start": date(2022, 1, 4),
+        "end": date(2022, 1, 5),
         "layers": layers,
     }
     split_file = directory / "split.json"
