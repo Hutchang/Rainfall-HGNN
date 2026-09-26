@@ -22,9 +22,11 @@ code is reused here. Its download path is not the production path.
 ## 2. System position
 
 ```text
-Gadi filesystem (paths TO CONFIRM; layout as on THREDDS)
-  /g/data/rq0/rainfields3/<site>/<year>/prcp-m15/<site>_<date>.prcp-m15.zip   radar
-  /g/data/rv74/...                                                              satellite
+Gadi filesystem (confirmed via the public THREDDS catalog; not yet cross-checked
+against a Gadi shell listing)
+  /g/data/rq0/rainfields3/<site>/<year>/prcp-m15/<site>_<date>.prcp-m15.zip        radar
+  /g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1/
+    <year>/<month>/<day>/S_NWC_CRRPh_HIMA08_HIMA-N-NR_<date>T<time>Z.nc            satellite
       |
       v
   D13 readers  --declare product, units, time step, correction from the files' own attributes
@@ -51,7 +53,7 @@ becomes a rule we write down and can change.
 | Input | Where | State today |
 |---|---|---|
 | Rainfields3 `prcp-m15` — merged gauge/radar accumulation, 15-minute, 512 × 512 cells of 0.5 km, one zip per day of 96 NetCDF files, site 71 (Terrey Hills), 2021–2022 | NCI project `rq0`; on Gadi under `/g/data/rq0/rainfields3/…` (TO CONFIRM — the THREDDS catalog shows the layout, the mount path is the standard NCI one) | product, units, time step and `contributing_gauges` confirmed from real files by the fetcher work; nothing reads them downstream |
-| Himawari CRRPH — convective rain rate, physically based, 2 km grid (the paper's satellite source) | NCI project `rv74` (TO CONFIRM: exact product name, file layout, time step, and that the team has access) | never read by this project; the inherited 726-node pickle is all that existed |
+| Himawari CRRPH — `crrph_intensity`, convective rain rate, physically based, full-disk 5500 × 5500 cells of 2 km, one file per 10 minutes, HIMA08 (Himawari-8/9), 2015–2026 (2021–2022 present) | NCI project `rv74`; on Gadi under `/g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1/…` (confirmed via the public THREDDS catalog and OPeNDAP metadata, access confirmed 2026-09-26 — not yet cross-checked against a Gadi shell) | product, grid, time step and the `intensity`-vs-`accum` choice confirmed from real files and data; see [grids/SATELLITE_SOURCE.md](../grids/SATELLITE_SOURCE.md); nothing reads them downstream |
 | `tests/data/ingestion/radar/71_20220103.prcp-m15.zip` | committed; two real 15-minute files | exists |
 | `config/canonical/grids.yaml` | Component 02 | today points at pickle files and declares `product`, `units`, `gauge_correction` as `UNKNOWN` |
 
@@ -102,11 +104,31 @@ adapter reads (format, time step, node count, declarations).
 
 ### FR03 [D13.3] — Satellite: from archive files to hourly tables.
 
-**Must do:** the same shape as FR02 for the Himawari product: read the files, take
-latitude and longitude for every cell from the file itself, align to hours by a rule
-that matches the product's time step (TO CONFIRM once the files are seen), subsample by
-a recorded rule, write `satellite_hourly.csv` with its `valid` flag and
-`satellite_nodes.csv`, declare product, units, time convention and correction.
+**Must do:** the same shape as FR02 for the Himawari product, confirmed against the
+real archive on 2026-09-26 (see [grids/SATELLITE_SOURCE.md](../grids/SATELLITE_SOURCE.md)):
+
+- Read `crrph` (not `crr`, which is a 12-class categorical index, not a continuous
+  value) from `rv74`, product `crrph_intensity` specifically — the instantaneous
+  convective rain rate — not `crrph_accum`, which is the algorithm's own undocumented
+  smoothed/rolling estimate and cannot presently be declared from the file the way
+  D13's other provenance fields are. Derive coordinates for every cell from the file's
+  own geostationary CF grid mapping (`pyproj`, the same method
+  `src/ingestion/radar/coords.py` uses for radar's Albers grid, a different
+  projection).
+- The product's time step is 10 minutes, confirmed from real files (six files per
+  hour, not radar's four): align to hours by a rule this project writes down — a
+  completeness threshold (how many of the six 10-minute files must be present) and an
+  integration rule (e.g. time-weighted average) turning six instantaneous samples into
+  one hourly value — the satellite equivalent of FR02's subsample-stride rule, and a
+  genuine choice, not a default.
+- The native grid is the full 5500x5500 Himawari disk (2 km cells, confirmed via the
+  file's own metadata), not pre-cropped to any region the way radar's 512x512 already
+  is. A crop-to-study-area step is needed before subsampling by a recorded rule; the
+  paper used the native 2 km spacing, so this may be crop-only with no further
+  subsampling, TO CONFIRM once implemented.
+- Write `satellite_hourly.csv` with its `valid` flag and `satellite_nodes.csv`,
+  declare product, units, time convention and correction.
+
 **Why:** ISS-03 disappears the moment coordinates come from the file rather than from a
 lost export.
 **Done when:** TEST05.
@@ -199,8 +221,9 @@ needing five separate merges into the integration branch first.
 
 ## 9. Dependencies and blockers
 
-Gadi access for whoever runs it ([../nci/README.md](../nci/README.md)); confirmation of
-the `rv74` product and access (D13.1). D09 owns the gauge-correction caveat (build on the gauge-corrected
+Gadi access for whoever runs it ([../nci/README.md](../nci/README.md)) — `rv74`
+product and access confirmed 2026-09-26, not yet cross-checked against an actual Gadi
+shell listing. D09 owns the gauge-correction caveat (build on the gauge-corrected
 product; report the caveat). Issues: ISS-02, ISS-03, ISS-04, ISS-30. D07 is not required
 — the readers can be run with a chosen output directory — but runs should go through it
 once it lands so the archive files read are fingerprinted in the provenance record.
