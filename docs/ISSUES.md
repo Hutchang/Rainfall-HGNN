@@ -33,7 +33,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-03](#iss-03) | Satellite node coordinates do not exist | Blocking | D13 | Open |
 | [ISS-07](#iss-07) | Methods are allowed to read different gauges when predicting | Blocking | Components 04 + 06 | Open |
 | [ISS-11](#iss-11) | Ingestion config claims Sydney but fetches Australia-wide | Blocking | Component 01 | Closed |
-| [ISS-30](#iss-30) | Fetched radar files cannot be read by the grid adapter | Blocking | D13 | Open |
+| [ISS-30](#iss-30) | Fetched radar files cannot be read by the grid adapter | Blocking | D13 | Closed |
 | [ISS-04](#iss-04) | Radar and satellite cover 2022 only; radar missing 120 hours | Material | D13 | Open |
 | [ISS-05](#iss-05) | Within-day timestamp fidelity is assumed, not verified | Material | Component 02 | Blocked |
 | [ISS-06](#iss-06) | Unexplained April–May 2021 gap in BoM daily totals | Material | Component 02 | Open |
@@ -114,6 +114,12 @@ conversion — new scientific work, not a parsing change. `rainfields3`'s `prcp-
 remains the only ready rainfall product available, and D13.2 stays targeting it, carrying
 this issue's caveat. See [grids/RADAR_SOURCE.md](grids/RADAR_SOURCE.md) for the full
 comparison.
+
+D13.2 (2026-09-26) closes the radar half of this issue's "Closes when" line: `grids.yaml`
+now declares `product`, `units`, `timestamp_convention` and `gauge_correction` for radar
+from the archive files' own attributes, with no `UNKNOWN` remaining (see ISS-30, closed).
+The satellite half — product, units and correction status for the Himawari source — is
+still open, tracked as D13.3.
 
 <a id="iss-03"></a>
 
@@ -580,7 +586,7 @@ from those recorded beside it, and the index never drops a row for a file still 
 <a id="iss-30"></a>
 
 ### ISS-30 — Fetched radar files cannot be read by the grid adapter
-**Severity:** Blocking · **Owner:** D13 · **Status:** Open
+**Severity:** Blocking · **Owner:** D13 · **Status:** Closed 2026-09-26 (D13.2)
 
 The radar fetcher (`src/ingestion/radar/`) writes one zip per day holding 96 NetCDF files
 of 15-minute accumulations on a 512 × 512 grid of 0.5 km cells (262,144 cells). The grid
@@ -597,6 +603,15 @@ work is unaffected.
 
 **Closes when:** D13.2 lands: a reader for the archive's daily zips, hourly sums, a
 recorded subsample rule, and a `grids.yaml` with no `UNKNOWN`.
+
+**Closed 2026-09-26.** `src/canonical/radar_archive.py` reads the archive's daily
+zips in place, sums complete four-file hours (a cell missing in any one of the four
+propagates as NaN, not a partial value), and subsamples the native grid by a
+recorded, deterministic rule (`layers.radar.subsample_stride`). `grids.yaml`'s radar
+block declares `product`, `units`, `timestamp_convention` and `gauge_correction` from
+the archive files' own attributes, no `UNKNOWN` remaining. Wired behind
+`src.canonical.grids.build()`, so validation, CSV shapes and the report are
+unchanged. Satellite is untouched and stays on D13.3.
 
 <a id="iss-31"></a>
 
