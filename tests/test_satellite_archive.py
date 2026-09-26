@@ -1,9 +1,12 @@
-"""TEST05 (D13.3): Himawari CRRPh 10-minute files -> hourly node tables.
+"""TEST05 (D13.3, D13.5): Himawari CRRPh 10-minute files -> hourly node tables.
 
-No committed real satellite sample exists yet (that is D13.5, backlog), so
-every fixture here is synthetic -- built with the archive's real, confirmed
-encoding (uint16 CRRPh scale/offset/fill, the geostationary CF grid mapping)
-so it exercises the same decode path a real file would.
+`tests/data/ingestion/satellite/` (D13.5) holds a real, complete hour: six
+consecutive files cropped from the real archive to the Sydney window (see
+that directory's README for how and why). Most tests here still use
+synthetic fixtures for cases the real sample can't isolate on its own (an
+incomplete hour, a specific fill cell) -- built with the archive's real,
+confirmed encoding (uint16 CRRPh scale/offset/fill, the geostationary CF grid
+mapping) so they exercise the same decode path a real file would.
 """
 
 from datetime import date
@@ -28,6 +31,17 @@ from src.canonical.satellite_archive import (
     read_ten_minute_file,
     subsampled_flat_indices,
 )
+
+REAL_SAMPLE_DIR = Path("tests/data/ingestion/satellite")
+# The real Sydney crop box from config/canonical/grids.yaml, matching how the
+# committed sample was cropped -- see tests/data/ingestion/README.md.
+REAL_SAMPLE_BOX = {
+    "min_lat": -34.3,
+    "max_lat": -33.4,
+    "min_lon": 150.4,
+    "max_lon": 151.4,
+    "pad_degrees": 0.25,
+}
 
 # The real archive's own CF grid-mapping attributes (confirmed via the public
 # THREDDS/OPeNDAP metadata against a real crrph file), reused so synthetic
@@ -101,6 +115,50 @@ def _write_hour_files(directory: Path, start: pd.Timestamp, raws, x_m, y_m) -> N
             x_m,
             y_m,
         )
+
+
+# ---- TEST05 (D13.5): the real committed sample ------------------------------
+
+
+def test_files_in_range_finds_all_six_real_sample_files():
+    found = _files_in_range(REAL_SAMPLE_DIR, date(2022, 1, 3), date(2022, 1, 3))
+    assert len(found) == 6
+
+
+def test_read_ten_minute_file_decodes_the_real_sample():
+    found = _files_in_range(REAL_SAMPLE_DIR, date(2022, 1, 3), date(2022, 1, 3))
+    grid_def = read_geostationary_grid(found[0])
+    row_slice, col_slice = crop_window(
+        grid_def,
+        REAL_SAMPLE_BOX["min_lat"] - REAL_SAMPLE_BOX["pad_degrees"],
+        REAL_SAMPLE_BOX["max_lat"] + REAL_SAMPLE_BOX["pad_degrees"],
+        REAL_SAMPLE_BOX["min_lon"] - REAL_SAMPLE_BOX["pad_degrees"],
+        REAL_SAMPLE_BOX["max_lon"] + REAL_SAMPLE_BOX["pad_degrees"],
+    )
+    frame = read_ten_minute_file(found[0], row_slice, col_slice)
+    assert frame.start == pd.Timestamp("2022-01-03 00:00:00", tz="UTC")
+    # A real, mostly-dry hour: some cells are valid (finite), some are the
+    # file's own fill value -- both are real, neither is invented.
+    assert np.isfinite(frame.intensity).any()
+    assert not np.isfinite(frame.intensity).all()
+    assert np.nanmax(frame.intensity) < 1000  # sanity: not a raw/undecoded value
+
+
+def test_build_satellite_grid_data_succeeds_end_to_end_on_the_real_sample():
+    """Six real files is a complete hour, unlike radar's two-of-four sample,
+    so the full crop/average/subsample pipeline runs successfully here."""
+    grid = build_satellite_grid_data(
+        REAL_SAMPLE_DIR, date(2022, 1, 3), date(2022, 1, 3), REAL_SAMPLE_BOX, 1
+    )
+    assert grid.layer == "satellite"
+    assert list(grid.timestamps) == [pd.Timestamp("2022-01-03 00:00:00", tz="UTC")]
+    assert len(grid.coordinates) > 0
+    assert grid.values.shape == (1, len(grid.coordinates), 2)
+    # A real hour has both valid and invalid cells (day/night terminator
+    # crosses this box), and no rain recorded at this particular hour.
+    valid = grid.values[0, :, 1]
+    assert 0 < valid.mean() < 1
+    np.testing.assert_allclose(grid.values[0, :, 0], 0.0)
 
 
 # ---- coordinate derivation --------------------------------------------------
