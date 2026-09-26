@@ -35,6 +35,7 @@ interface are that adapter's existing, unchanged machinery.
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -263,4 +264,19 @@ def build_satellite_grid_data(
     # agreed, dry) stays 0 with valid True.
     valid = np.isfinite(rain)
     values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
-    return GridData("satellite", pd.DatetimeIndex(ordered_hours), values, coordinates)
+
+    starts = sorted(frame.start for frame in frames)
+    native_time_step_minutes = None
+    if len(starts) > 1:
+        gaps = [b - a for a, b in pairwise(starts)]
+        native_time_step_minutes = round(min(gaps).total_seconds() / 60)
+    provenance = {
+        # D13.4: taken from the files' own attributes, not assumed -- see
+        # docs/requirements/D13_SOURCE_GRIDS_REQUIREMENTS.md, FR04. No
+        # contributing-gauges entry: satellite is not gauge-corrected.
+        "coordinate_system": grid_def["proj_attrs"]["grid_mapping_name"],
+        "native_time_step_minutes": native_time_step_minutes,
+    }
+    return GridData(
+        "satellite", pd.DatetimeIndex(ordered_hours), values, coordinates, provenance
+    )
