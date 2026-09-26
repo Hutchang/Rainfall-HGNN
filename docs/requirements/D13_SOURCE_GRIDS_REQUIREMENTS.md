@@ -91,6 +91,11 @@ the only ones written down.
   04 already accept; declare in `grids.yaml` and the report: product `prcp-m15`, units
   "mm accumulated per hour", time convention "hour beginning, UTC", gauge correction
   "yes — see contributing gauges".
+- `radar_hourly.csv` carries a `valid` column, the same shape satellite already has: the
+  model cannot accept a null, so a cell missing in one of its four contributing files is
+  `rain_rate` 0 with `valid` false, not NaN; an hour where all four files agree on zero
+  stays `rain_rate` 0 with `valid` true. The missing/dry distinction lives in `valid`,
+  not in the value.
 **Why:** this is ISS-30 — the four-part gap between what the archive holds and what the
 adapter reads (format, time step, node count, declarations).
 **Done when:** TEST02, TEST03, TEST04.
@@ -130,7 +135,10 @@ offline.
 ## 5. Non-negotiable rules
 
 - Source-faithful: no unit change, no smoothing, no gap-filling; a missing hour stays
-  absent.
+  absent. A missing *cell* within a written hour is the one deliberate exception the
+  `valid` column exists for: `rain_rate` 0 with `valid` false is a flagged placeholder
+  for the model boundary, not an estimate of what the rain was — the distinction stays
+  recorded, never silently lost the way an unflagged 0 or a dropped row would lose it.
 - Every declaration in the report comes from a file attribute or a computed count, never
   from an assumption typed into config. `UNKNOWN` is allowed only where the file truly
   says nothing, and then it is named as such.
@@ -147,7 +155,7 @@ chosen directory otherwise:
 
 | File | Columns |
 |---|---|
-| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate` |
+| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` |
 | `radar_nodes.csv` | `node_id`, `latitude`, `longitude` |
 | `satellite_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` |
 | `satellite_nodes.csv` | `node_id`, `latitude`, `longitude` |
