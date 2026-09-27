@@ -61,3 +61,33 @@ def test_smoke_rejects_unbounded_or_invalid_epochs_before_gpu_use(epochs):
     assert result.returncode == 1
     assert "must be 1 or 2" in result.stderr
     assert "PBS job:" not in result.stdout
+
+
+def test_training_job_refuses_execution_without_pbs():
+    result = subprocess.run(
+        ["bash", "scripts/nci/train.pbs"],
+        cwd=ROOT,
+        env=environment_without_pbs(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "submit this script through PBS" in result.stderr
+    assert "PBS job:" not in result.stdout
+
+
+def test_training_job_refuses_to_run_without_config_and_output_paths():
+    environment = environment_without_pbs()
+    environment.update(PBS_JOBID="guard-test", PBS_O_WORKDIR=str(ROOT), PBS_NGPUS="1")
+    result = subprocess.run(
+        ["bash", "scripts/nci/train.pbs"],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "NCI_MODEL_CONFIG and NCI_OUTPUT_DIR" in result.stderr
+    assert "PBS job:" not in result.stdout

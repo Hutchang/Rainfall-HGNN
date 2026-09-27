@@ -1,0 +1,25 @@
+# Settings for scripts/nci/remote.py. Your NCI username is not stored here: put it in
+# ~/.ssh/config (see docs/nci/README.md) so `ssh gadi.nci.org.au` logs in without a
+# password prompt.
+project: no50
+login_host: gadi.nci.org.au      # commands and job submission
+transfer_host: gadi-dm.nci.org.au  # uploads and downloads (NCI's data movers)
+# BatchMode makes a missing key fail at once instead of waiting for a password.
+ssh: [ssh, -o, BatchMode=yes]
+
+# {project} and {user} are filled in; {user} is your NCI username as Gadi reports it.
+scratch_root: /scratch/{project}/{user}/rainflow           # code, environment, runs
+inputs_root: /g/data/{project}/{user}/rainflow-inputs      # uploaded inputs, reused
+
+job:
+  queue: dgxa100
+  ncpus: 16
+  ngpus: 1
+  mem: 48GB
+  jobfs: 10GB
+  walltime: "01:00:00"
+# Charge rate for the queue above, from NCI's published rules (docs/nci/README.md).
+# The plan multiplies it by ncpus and walltime to show the most a job can cost.
+su_per_cpu_hour: 4.5
+
+poll_seconds: 300

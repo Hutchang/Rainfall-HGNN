@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Production training job submitted by scripts/nci/remote.py. Project, queue,
+# resources and storage come from the qsub command line (config/nci/remote.yaml).
+#PBS -N rainflow-train
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+if [[ -z ${NCI_MODEL_CONFIG:-} || -z ${NCI_OUTPUT_DIR:-} ]]; then
+    printf 'BLOCKED: NCI_MODEL_CONFIG and NCI_OUTPUT_DIR must be passed with qsub -v.\n' >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+if [[ ${PBS_NGPUS:-0} != 1 ]]; then
+    printf 'BLOCKED: training requires exactly one allocated GPU.\n' >&2
+    exit 1
+fi
+
+# The Linux environment must already exist. Compute nodes do not install/download.
+export PYTHONDONTWRITEBYTECODE=1
+export OMP_NUM_THREADS=${PBS_NCPUS:-1}
+export MPLBACKEND=Agg
+
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+git status --short
+nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+exec .venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device cuda \
+    --output-dir "$NCI_OUTPUT_DIR"
