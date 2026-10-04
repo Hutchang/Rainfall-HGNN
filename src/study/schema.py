@@ -1,7 +1,7 @@
 """Validated domain records for Component 03 study splitting."""
 
 from dataclasses import dataclass
-from typing import Annotated, ClassVar, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -13,6 +13,11 @@ PositiveInt = Annotated[int, Field(gt=0)]
 # Strictly positive: a fold with no validation stations leaves Component 06 with
 # nothing to select on, and train_fused.py refuses it.
 PositiveFraction = Annotated[float, Field(gt=0.0, lt=1.0)]
+# How clusters become test folds. ``round_robin`` deals each cluster's stations one
+# at a time across the folds (inherited; every fold hides a fifth of every cluster).
+# ``whole_clusters`` deals whole clusters, so a fold hides entire areas (paper §4.2;
+# D08.1, ISS-10).
+FoldAssignment = Literal["round_robin", "whole_clusters"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +73,8 @@ class SplitConfig(BaseModel):
     validation_fraction: PositiveFraction
     n_clusters: PositiveInt
     output: NonEmptyString
+    # Defaults to the inherited rule so config/splits/sydney_5fold.yaml is unchanged.
+    fold_assignment: FoldAssignment = "round_robin"
 
 
 class SeedConfig(BaseModel):

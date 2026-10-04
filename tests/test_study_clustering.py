@@ -117,6 +117,93 @@ def test_clustered_stations_are_spread_across_test_folds_exactly_once():
         assert sum(station_id.startswith("east-") for station_id in fold) == 1
 
 
+def test_whole_clusters_are_never_divided_between_test_folds():
+    cluster_assignments = {
+        cluster: [f"area{cluster}-{index}" for index in range(size)]
+        for cluster, size in enumerate([3, 7, 2, 5, 4, 6])
+    }
+
+    folds = create_test_folds(
+        cluster_assignments, n_folds=3, seed=123, assignment="whole_clusters"
+    )
+    repeated = create_test_folds(
+        cluster_assignments, n_folds=3, seed=123, assignment="whole_clusters"
+    )
+    round_robin = create_test_folds(cluster_assignments, n_folds=3, seed=123)
+
+    assert folds == repeated
+    assert folds != round_robin
+    assert sorted(chain.from_iterable(folds)) == sorted(
+        chain.from_iterable(cluster_assignments.values())
+    )
+    for fold in folds:
+        hidden = set(fold)
+        clusters_in_fold = [
+            cluster
+            for cluster, station_ids in cluster_assignments.items()
+            if hidden & set(station_ids)
+        ]
+        # Two whole clusters per fold: every station of each one, and nothing else.
+        assert len(clusters_in_fold) == 2
+        assert hidden == {
+            station_id
+            for cluster in clusters_in_fold
+            for station_id in cluster_assignments[cluster]
+        }
+
+
+def test_whole_clusters_refuses_a_cluster_count_the_folds_cannot_share_evenly():
+    cluster_assignments = {cluster: [f"station-{cluster}"] for cluster in range(10)}
+
+    with pytest.raises(ValueError, match="10 clusters cannot be dealt evenly to 4"):
+        create_test_folds(
+            cluster_assignments, n_folds=4, seed=123, assignment="whole_clusters"
+        )
+
+
+def test_blocked_config_hides_no_station_beside_a_visible_clustermate():
+    config = load_split_config(
+        REPOSITORY_ROOT / "config" / "splits" / "sydney_5fold_blocked.yaml"
+    )
+    seeds = load_seed_config(REPOSITORY_ROOT / "config" / "seeds.yaml")
+    stations = read_station_records(STUDY_DATA / "stations_sydney.csv")
+    clusters = assign_spatial_clusters(stations, config.n_clusters, seeds.split_seed)
+    cluster_of = {
+        station_id: cluster
+        for cluster, station_ids in clusters.items()
+        for station_id in station_ids
+    }
+
+    output = build_study_split(stations, config, seeds, created="2026-10-05")
+
+    assert config.fold_assignment == "whole_clusters"
+    assert output.name == "sydney_5fold_blocked"
+    for fold in output.folds:
+        hidden_clusters = {cluster_of[station_id] for station_id in fold.ml.test}
+        visible_clusters = {
+            cluster_of[station_id]
+            for station_id in fold.ml.train + fold.ml.validation
+        }
+        assert len(hidden_clusters) == config.n_clusters // config.n_folds
+        assert hidden_clusters.isdisjoint(visible_clusters)
+
+    # The inherited rule on the same stations fails the same check in every fold,
+    # which is the gap D08.1 closes.
+    inherited = build_study_split(
+        stations,
+        config.model_copy(update={"fold_assignment": "round_robin"}),
+        seeds,
+        created="2026-10-05",
+    )
+    for fold in inherited.folds:
+        hidden_clusters = {cluster_of[station_id] for station_id in fold.ml.test}
+        visible_clusters = {
+            cluster_of[station_id]
+            for station_id in fold.ml.train + fold.ml.validation
+        }
+        assert hidden_clusters & visible_clusters
+
+
 def test_non_test_stations_are_partitioned_into_train_and_validation():
     clusters = {
         0: [f"west-{index}" for index in range(5)],

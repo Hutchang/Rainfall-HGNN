@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from sklearn.cluster import KMeans
 
 from .schema import (
+    FoldAssignment,
     SeedConfig,
     SplitConfig,
     StationExclusion,
@@ -160,22 +161,47 @@ def assign_spatial_clusters(
 
 
 def create_test_folds(
-    cluster_assignments: Mapping[int, Sequence[str]], n_folds: int, seed: int
+    cluster_assignments: Mapping[int, Sequence[str]],
+    n_folds: int,
+    seed: int,
+    assignment: FoldAssignment = "round_robin",
 ) -> tuple[tuple[str, ...], ...]:
-    """Spread clustered stations across test folds exactly once."""
+    """Spread clustered stations across test folds exactly once.
+
+    ``round_robin`` deals each cluster's stations one at a time to folds 0, 1, 2 ...
+    so every fold hides a fifth of every cluster and a hidden station keeps its own
+    cluster's stations visible nearby. ``whole_clusters`` shuffles the cluster order
+    with the seed and deals ``n_clusters / n_folds`` whole clusters to each fold, so a
+    fold hides entire areas and no hidden station has a clustermate in train or
+    validation (paper §4.2; D08.1).
+    """
     all_station_ids = list(chain.from_iterable(cluster_assignments.values()))
     if len(all_station_ids) != len(set(all_station_ids)):
         raise ValueError("a station_id cannot appear in more than one cluster")
 
     rng = Random(seed)
     test_folds: list[list[str]] = [[] for _ in range(n_folds)]
-    next_fold = 0
-    for cluster in sorted(cluster_assignments):
-        station_ids = sorted(cluster_assignments[cluster])
-        rng.shuffle(station_ids)
-        for station_id in station_ids:
-            test_folds[next_fold].append(station_id)
-            next_fold = (next_fold + 1) % n_folds
+    if assignment == "whole_clusters":
+        clusters = sorted(cluster_assignments)
+        if len(clusters) % n_folds != 0:
+            raise ValueError(
+                f"{len(clusters)} clusters cannot be dealt evenly to {n_folds} folds "
+                "as whole clusters; choose n_clusters divisible by n_folds"
+            )
+        rng.shuffle(clusters)
+        per_fold = len(clusters) // n_folds
+        for fold_index, fold in enumerate(test_folds):
+            start = fold_index * per_fold
+            for cluster in clusters[start : start + per_fold]:
+                fold.extend(cluster_assignments[cluster])
+    else:
+        next_fold = 0
+        for cluster in sorted(cluster_assignments):
+            station_ids = sorted(cluster_assignments[cluster])
+            rng.shuffle(station_ids)
+            for station_id in station_ids:
+                test_folds[next_fold].append(station_id)
+                next_fold = (next_fold + 1) % n_folds
 
     folds = tuple(tuple(sorted(fold)) for fold in test_folds)
     assigned_counts = Counter(station_id for fold in folds for station_id in fold)
@@ -282,7 +308,9 @@ def build_study_split(
     """Run the configured Component 03 splitting pipeline in memory."""
     records = validate_station_records(stations)
     clusters = assign_spatial_clusters(records, config.n_clusters, seeds.split_seed)
-    test_folds = create_test_folds(clusters, config.n_folds, seeds.split_seed)
+    test_folds = create_test_folds(
+        clusters, config.n_folds, seeds.split_seed, config.fold_assignment
+    )
     folds = assign_fold_roles(
         test_folds,
         config.validation_fraction,
