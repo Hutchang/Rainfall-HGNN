@@ -185,11 +185,12 @@ used here. Their end-to-end path is tested with synthetic inputs.
 
 ## Baselines and model behaviour
 
-`network_mean` averages only observed **training** gauges at the target hour. `idw`
+`network_mean` averages the observed **visible** gauges at the target hour: the fold's
+training and validation gauges, the same ones the HGNN's test graph holds (D08.2). `idw`
 reads those same gauges, WGS84 haversine distances, and the explicitly configured
 `idw_power` (the example is 2.0). A gauge at the same location as the target, if it is
 observed, takes precedence over the rest; several such gauges are averaged. No hour is
-gap-filled. If no training gauge is observed at that hour, the run fails with the
+gap-filled. If no visible gauge is observed at that hour, the run fails with the
 fold/hour instead of dropping targets or inventing rainfall.
 
 The model adapter keeps the inherited `GNNInductiveHetero` and leave-one-gauge-out

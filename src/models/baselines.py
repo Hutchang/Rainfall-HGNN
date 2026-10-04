@@ -1,4 +1,8 @@
-"""Baselines read only the supplied fold's training gauges."""
+"""Baselines read every gauge a fold leaves visible: training and validation.
+
+The validation gauges only decide when HGNN training stops; they are not hidden, so
+every method may read them when predicting the test gauges (paper §4.2; D08.2, ISS-07).
+"""
 
 import numpy as np
 import pandas as pd
@@ -63,7 +67,8 @@ def predict_at_targets(
             continue
         if not set(fold_targets.station_id).issubset(fold["ml"]["test"]):
             raise ValueError("baseline targets must belong to the fold test stations")
-        visible = observations.loc[observations.station_id.isin(fold["ml"]["train"])]
+        visible_ids = [*fold["ml"]["train"], *fold["ml"]["validation"]]
+        visible = observations.loc[observations.station_id.isin(visible_ids)]
         if method == "network_mean":
             # One mean per fold-hour avoids repeating the gauge matrix for every target.
             hourly = visible.groupby("timestamp").rainfall_mm.mean()
@@ -72,7 +77,7 @@ def predict_at_targets(
             if part.predicted_mm.isna().any():
                 bad_hour = part.loc[part.predicted_mm.isna(), "timestamp"].iloc[0]
                 raise ValueError(
-                    f"BLOCKED: fold {fold['fold_index']} has no observed training gauge at {bad_hour}"
+                    f"BLOCKED: fold {fold['fold_index']} has no observed visible gauge at {bad_hour}"
                 )
             part["method"] = method
             parts.append(part[PREDICTION_COLUMNS])
@@ -80,7 +85,7 @@ def predict_at_targets(
         wide = visible.pivot(
             index="timestamp", columns="station_id", values="rainfall_mm"
         )
-        wide = wide.reindex(columns=fold["ml"]["train"])
+        wide = wide.reindex(columns=visible_ids)
         for station_id, station_targets in fold_targets.groupby(
             "station_id", sort=True
         ):
@@ -93,7 +98,7 @@ def predict_at_targets(
                     np.flatnonzero(~observed.any(axis=1))[0]
                 ]
                 raise ValueError(
-                    f"BLOCKED: fold {fold['fold_index']} has no observed training gauge at {bad_hour}"
+                    f"BLOCKED: fold {fold['fold_index']} has no observed visible gauge at {bad_hour}"
                 )
             distances = haversine_km(
                 coordinates.loc[station_id], coordinates.loc[wide.columns]

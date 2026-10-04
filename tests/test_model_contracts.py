@@ -74,8 +74,9 @@ def test_deleting_target_observations_cannot_change_predictions(inputs, method):
     actual = predict_at_targets(method, visible_only, stations, split, targets)
     pd.testing.assert_frame_equal(actual, expected)
     mutated = gauges.copy()
-    mutated.loc[mutated.station_id.eq("002"), "rainfall_mm"] = 10000
-    # Validation gauges are also excluded from what the baselines can read.
+    mutated.loc[mutated.station_id.eq("001"), "rainfall_mm"] = 10000
+    # The hidden gauge's own readings never reach the baselines. Validation gauges
+    # do (D08.2): test_baselines_read_the_validation_gauges covers that.
     pd.testing.assert_frame_equal(
         predict_at_targets(method, mutated, stations, split, targets), expected
     )
@@ -130,15 +131,41 @@ def test_idw_collocated_station_uses_only_the_observed_colocated_gauge(inputs):
 def test_missing_gauges_fail_instead_of_fabricating_rainfall(inputs):
     gauges, stations, split = inputs
     targets = target_rows(gauges, split)
-    visible_ids = split["folds"][0]["ml"]["train"]
+    roles = split["folds"][0]["ml"]
+    visible_ids = roles["train"] + roles["validation"]
     gauges = gauges.loc[
         ~(
             gauges.station_id.isin(visible_ids)
             & gauges.timestamp.eq(gauges.timestamp.min())
         )
     ]
-    with pytest.raises(ValueError, match="no observed training gauge"):
+    with pytest.raises(ValueError, match="no observed visible gauge"):
         predict_at_targets("network_mean", gauges, stations, split, targets)
+
+
+def test_network_mean_averages_training_and_validation_gauges(inputs):
+    gauges, stations, split = inputs
+    result = predict_baseline("network_mean", gauges, stations, split)
+    # Fold 0 hides 001. Visible: 002 (validation) and 003, 004, 005 (train), which
+    # read 1, 2, 3, 4 mm in the first hour and one more each hour after.
+    assert result.loc[result.fold.eq(0), "predicted_mm"].tolist() == [2.5, 3.5, 4.5]
+
+
+@pytest.mark.parametrize("method", ["network_mean", "idw"])
+def test_baselines_read_the_validation_gauges(inputs, method):
+    gauges, stations, split = inputs
+    validation_id = split["folds"][0]["ml"]["validation"][0]
+    wetter = gauges.copy()
+    wetter.loc[wetter.station_id.eq(validation_id), "rainfall_mm"] += 10.0
+
+    before = predict_baseline(method, gauges, stations, split)
+    after = predict_baseline(method, wetter, stations, split)
+
+    # More rain at fold 0's validation gauge must raise fold 0's predictions.
+    assert (
+        after.loc[after.fold.eq(0), "predicted_mm"].to_numpy()
+        > before.loc[before.fold.eq(0), "predicted_mm"].to_numpy()
+    ).all()
 
 
 def test_scoring_uses_identical_rows_and_known_errors(inputs):
