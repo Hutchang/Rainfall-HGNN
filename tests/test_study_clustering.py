@@ -24,6 +24,7 @@ from src.study.split import (
     read_station_records,
     validate_station_records,
 )
+from src.study.summary import write_split_summary
 
 REPOSITORY_ROOT = Path(__file__).parent.parent
 STUDY_DATA = REPOSITORY_ROOT / "tests" / "data" / "study"
@@ -230,6 +231,34 @@ def test_non_test_stations_are_partitioned_into_train_and_validation():
         assert train.isdisjoint(validation)
         assert train.isdisjoint(test)
         assert validation.isdisjoint(test)
+
+
+def test_split_summary_reports_fold_sizes_and_draws_the_fold_map(tmp_path: Path):
+    config = load_split_config(
+        REPOSITORY_ROOT / "config" / "splits" / "sydney_5fold_blocked.yaml"
+    )
+    seeds = load_seed_config(REPOSITORY_ROOT / "config" / "seeds.yaml")
+    stations = read_station_records(STUDY_DATA / "stations_sydney.csv")
+    output = build_study_split(stations, config, seeds, created="2026-10-05")
+
+    summary_path, figure_path = write_split_summary(
+        output, stations, config, tmp_path / "sydney_5fold_blocked.json"
+    )
+
+    assert summary_path == tmp_path / "sydney_5fold_blocked.md"
+    assert figure_path == tmp_path / "sydney_5fold_blocked.png"
+    # A real PNG, not an empty file: the format's fixed eight-byte signature.
+    assert figure_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    summary = summary_path.read_text(encoding="utf-8")
+    assert "eligible stations: 148; excluded: 14" in summary
+    assert "fold assignment: `whole_clusters`" in summary
+    assert "(sydney_5fold_blocked.png)" in summary
+    for fold in output.folds:
+        row = (
+            f"| {fold.fold_index} | {len(fold.ml.train)} "
+            f"| {len(fold.ml.validation)} | {len(fold.ml.test)} |"
+        )
+        assert row in summary
 
 
 def test_config_wires_the_complete_in_memory_split_pipeline():

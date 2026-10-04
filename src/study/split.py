@@ -29,6 +29,7 @@ from .schema import (
     StudyFold,
     StudySplitOutput,
 )
+from .summary import write_split_summary
 
 EARTH_RADIUS_KM = 6371.0088
 REQUIRED_STATION_COLUMNS = frozenset(
@@ -366,6 +367,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_path = Path(config.output)
     write_study_split(output, output_path)
     print(output_path)
+    for written in write_split_summary(output, stations, config, output_path):
+        print(written)
     return 0
 
 
