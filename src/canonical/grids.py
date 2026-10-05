@@ -184,6 +184,62 @@ def indexed_path(raw_dir, index, relative_path):
     return path
 
 
+def _period_hours(start, end) -> pd.DatetimeIndex:
+    """Every UTC hour from `start` 00:00 to `end` 23:00, both days included."""
+    return pd.date_range(
+        pd.Timestamp(start, tz="UTC"),
+        pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1),
+        freq="h",
+        inclusive="left",
+    )
+
+
+def _hour_ranges(hours) -> list[str]:
+    """One list line per run of consecutive hours, so an outage is one line."""
+    lines, run = [], []
+    for hour in sorted(hours):
+        if run and hour - run[-1] != pd.Timedelta(hours=1):
+            lines.append(_range_line(run))
+            run = []
+        run.append(hour)
+    if run:
+        lines.append(_range_line(run))
+    return lines
+
+
+def _range_line(run) -> str:
+    if len(run) == 1:
+        return f"  - {run[0].isoformat()}"
+    return f"  - {run[0].isoformat()} to {run[-1].isoformat()} ({len(run)} hours)"
+
+
+def _hours_not_written(grid: GridData, start, end) -> list[str]:
+    """Every configured-period hour an archive reader did not write, grouped
+    by cause: no files at all, or how many of the hour's files were present.
+    No hour disappears without its cause (rule 7)."""
+    expected = _period_hours(start, end)
+    short = grid.provenance["short_hours"]
+    no_files = [
+        hour for hour in expected.difference(grid.timestamps) if hour not in short
+    ]
+    groups = [("no files in the archive", no_files)] + [
+        (
+            f"{count} of {grid.provenance['files_per_hour']} files present",
+            [hour for hour, n in short.items() if n == count],
+        )
+        for count in sorted(set(short.values()), reverse=True)
+    ]
+    lines = ["### Hours not written", ""]
+    for cause, hours in groups:
+        if hours:
+            noun = "hour" if len(hours) == 1 else "hours"
+            lines.append(f"- {cause}: {len(hours)} {noun}")
+            lines.extend(_hour_ranges(hours))
+    if len(lines) == 2:
+        lines.append("- none")
+    return lines
+
+
 def _period_coverage_line(grid: GridData, start, end) -> str:
     """D13.4: days and hours present/missing against the *configured* period,
     not just the span of hours the run actually found -- a source that is
@@ -194,12 +250,7 @@ def _period_coverage_line(grid: GridData, start, end) -> str:
     Also how ISS-04's "120 missing hours" gets answered: compare this
     archive's missing count against that hand-export number.
     """
-    expected = pd.date_range(
-        pd.Timestamp(start, tz="UTC"),
-        pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1),
-        freq="h",
-        inclusive="left",
-    )
+    expected = _period_hours(start, end)
     present = len(expected.intersection(grid.timestamps))
     return (
         f"Configured period {start} to {end}: {len(expected)} hours possible, "
@@ -397,7 +448,10 @@ def build(config_path, check_only=False, sample=False):
                 "",
             ]
         )
-        report.extend(f"- Absent hour: {stamp.isoformat()}" for stamp in missing)
+        if archive_root:
+            report.extend(_hours_not_written(grid, config["start"], config["end"]))
+        else:
+            report.extend(f"- Absent hour: {stamp.isoformat()}" for stamp in missing)
         report.append("")
     if check_only:
         print("Inputs valid: " + ", ".join(grid.layer for grid in grids))

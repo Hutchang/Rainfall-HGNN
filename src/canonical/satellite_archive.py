@@ -33,6 +33,7 @@ interface are that adapter's existing, unchanged machinery.
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import pairwise
@@ -290,6 +291,7 @@ def build_satellite_grid_data(
     valid = np.isfinite(rain)
     values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
 
+    files_per_hour = Counter(frame.start.floor("h") for frame in frames)
     starts = sorted(frame.start for frame in frames)
     native_time_step_minutes = None
     if len(starts) > 1:
@@ -309,6 +311,12 @@ def build_satellite_grid_data(
             "files read"
         ),
         "hourly_rule": "mean of six 10-minute samples",
+        "files_per_hour": FILES_PER_HOUR,
+        "short_hours": {
+            hour: count
+            for hour, count in files_per_hour.items()
+            if count < FILES_PER_HOUR
+        },
         "crop": (
             f"configured box lat {crop['min_lat']} to {crop['max_lat']}, lon "
             f"{crop['min_lon']} to {crop['max_lon']}, padded by {pad} degrees: "

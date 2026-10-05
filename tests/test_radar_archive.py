@@ -670,3 +670,47 @@ def test_files_that_disagree_on_their_product_stop_the_build(tmp_path):
         )
     with pytest.raises(ValueError, match="disagree on title"):
         build_radar_grid_data(root, date(2022, 1, 5), date(2022, 1, 6), 1)
+
+
+def test_grid_report_lists_every_unwritten_hour_with_its_cause(tmp_path):
+    """Rule 7: an hour that is not written is listed under its cause -- no
+    files at all, or how many of its four were present -- with consecutive
+    hours as one range."""
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir()
+    day = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    quarter = pd.Timedelta(minutes=15)
+    five_am = day + pd.Timedelta(hours=5)
+    midnight_hour = [day + i * quarter for i in range(4)]
+    five_am_hour = [five_am + i * quarter for i in range(3)]  # one file short
+    _write_day_zip(
+        archive_root / "71_20220105.prcp-m15.zip", midnight_hour + five_am_hour
+    )
+    output_dir = tmp_path / "standard"
+    config_path = tmp_path / "grids.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "raw_dir": str(tmp_path / "raw"),
+                "output_dir": str(output_dir),
+                "start": date(2022, 1, 5),
+                "end": date(2022, 1, 5),
+                "layers": {"radar": {"root": str(archive_root), "subsample_stride": 1}},
+            }
+        )
+    )
+
+    build(config_path)
+    report = (output_dir / "grid_report.md").read_text()
+
+    assert "### Hours not written" in report
+    assert "- no files in the archive: 22 hours" in report
+    assert (
+        "  - 2022-01-05T01:00:00+00:00 to 2022-01-05T04:00:00+00:00 (4 hours)" in report
+    )
+    assert (
+        "  - 2022-01-05T06:00:00+00:00 to 2022-01-05T23:00:00+00:00 (18 hours)"
+        in report
+    )
+    assert "- 3 of 4 files present: 1 hour\n  - 2022-01-05T05:00:00+00:00" in report
+    assert "- Absent hour" not in report

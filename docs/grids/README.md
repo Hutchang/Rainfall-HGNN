@@ -96,12 +96,15 @@ config:
   within one file (15 minutes); satellite from the smallest gap between consecutive
   files' `nominal_product_time` (10 minutes).
 - **Configured period coverage** — hours possible/present/missing against the config's
-  own `start`/`end`, not just the span of hours the run happened to find. This is
-  deliberately a single count, not an itemised list, so a real multi-year run doesn't
-  flood the report; the existing "Absent hours within that range" line above it stays
-  scoped to what was actually read and keeps its itemised list. This is also how
-  ISS-04's "120 missing hours" question gets answered: compare this count, from a run
-  against the real archive, against that hand-export number.
+  own `start`/`end`, not just the span of hours the run happened to find. This is a
+  single count; "Hours not written" below gives each missing hour's cause. This is also
+  how ISS-04's "120 missing hours" question gets answered: compare this count, from a
+  run against the real archive, against that hand-export number.
+- **Hours not written** (archive inputs) — every hour of the configured period with no
+  row, grouped by cause: "no files in the archive", or how many of the hour's files were
+  present ("3 of 4 files present" for radar, "5 of 6" for satellite). Consecutive hours
+  are one range, so a week-long outage is one line. Pickle inputs keep the plain
+  "Absent hour" list, since a pickle records no cause.
 - **Contributing-gauges cross-reference** (radar only) — how many *study* stations (from
   Component 02's `stations.csv`, `use_in_study` rows only, since an excluded station can
   never be a held-out test station) appear in at least one written hour's

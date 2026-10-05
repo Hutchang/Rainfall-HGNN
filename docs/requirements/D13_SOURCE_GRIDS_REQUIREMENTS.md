@@ -85,7 +85,8 @@ the only ones written down.
   `xarray`, `netCDF4` and `pyproj` (already dependencies); reuse `src/ingestion/radar/`'s
   reader and its coordinate derivation from the file's CF grid mapping.
 - Sum four consecutive 15-minute files into one hourly value with an hour-beginning
-  UTC timestamp. An hour with fewer than four files is missing, not partial.
+  UTC timestamp. An hour with fewer than four files is missing, not partial, and the
+  report lists it with how many of its files were present.
 - Subsample the 512 × 512 grid to nodes by a rule written in the config and explained
   in one paragraph (for example the cell nearest each point of a 5 km grid), giving on
   the order of a thousand nodes; record the rule and the node count in the grid report.

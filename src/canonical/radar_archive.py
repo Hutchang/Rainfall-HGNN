@@ -209,17 +209,21 @@ def build_radar_grid_data(
     hours: dict[pd.Timestamp, np.ndarray] = {}
     gauges_by_hour: dict[pd.Timestamp, frozenset[int]] = {}
     pending: dict[pd.Timestamp, list[QuarterHour]] = {}
+    short_hours: dict[pd.Timestamp, int] = {}
 
     def close(closing: list[pd.Timestamp]) -> None:
-        """Sum hours no later zip can add to; drop those outside the period
-        (the first zip's 23:45 file of the day before `start`, and the extra
-        zip's own hours after `end`)."""
-        quarters = [
-            quarter
-            for hour in closing
-            for quarter in pending.pop(hour)
-            if period_start <= hour < period_end
-        ]
+        """Sum hours no later zip can add to, and record how many files each
+        short hour had; drop hours outside the period (the first zip's 23:45
+        file of the day before `start`, and the extra zip's own hours after
+        `end`)."""
+        quarters = []
+        for hour in closing:
+            files = pending.pop(hour)
+            if not period_start <= hour < period_end:
+                continue
+            quarters.extend(files)
+            if len(files) < FILES_PER_HOUR:
+                short_hours[hour] = len(files)
         hours.update(hourly_grids(quarters))
         gauges_by_hour.update(hourly_contributing_gauges(quarters))
 
@@ -300,6 +304,8 @@ def build_radar_grid_data(
             f"{files_read} files read"
         ),
         "hourly_rule": "sum of four 15-minute files",
+        "files_per_hour": FILES_PER_HOUR,
+        "short_hours": short_hours,
         "subsample_rule": (
             f"rows and columns 0, {subsample_stride}, {2 * subsample_stride}, ... "
             f"of the native {size} x {size} grid (stride {subsample_stride})"

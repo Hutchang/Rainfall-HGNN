@@ -371,6 +371,23 @@ def test_build_satellite_grid_data_end_to_end_subsamples_and_averages(tmp_path):
     assert (valid[1:] == 1.0).all()
 
 
+def test_a_satellite_hour_with_five_of_six_files_is_recorded_as_short(tmp_path):
+    """Rule 7: the report lists a short hour with how many files it had."""
+    x_m, y_m, box = _tiny_grid_and_matching_box()
+    full = np.full((8, 8), 6, dtype=np.uint16)
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    _write_hour_files(tmp_path, hour, [full] * 6, x_m, y_m)
+    _write_hour_files(tmp_path, hour + pd.Timedelta(hours=1), [full] * 5, x_m, y_m)
+
+    grid = build_satellite_grid_data(
+        tmp_path, date(2022, 1, 5), date(2022, 1, 5), box, 2
+    )
+
+    assert list(grid.timestamps) == [hour]
+    assert grid.provenance["files_per_hour"] == 6
+    assert grid.provenance["short_hours"] == {hour + pd.Timedelta(hours=1): 5}
+
+
 def test_grids_build_wires_satellite_archive_and_report_node_count_matches_table(
     tmp_path,
 ):
