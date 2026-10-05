@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `1b786a2` · **Sprint:** 2 · **Updated:** 2026-10-05
+**Latest commit:** `c51ad8b` · **Sprint:** 2 · **Updated:** 2026-10-05
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
@@ -37,19 +37,20 @@ implemented, tested and connected on `main`: raw BoM responses → standard tabl
 released split → graph samples → one prediction table covering HGNN, IDW and network
 mean. The [pipeline guide](graphs/README.md) is the runnable description of that chain.
 
-This is software-integration evidence. It is not a scientific result. Radar and satellite
-provenance, units and coverage are unanswered (ISS-02, ISS-03, ISS-04), held-out-gauge
-independence is not established, and the inherited hand export still may not be quoted in
-millimetres. The top data risk in the standard tables is ISS-01.
+This is software-integration evidence. It is not a scientific result. The radar and
+satellite tables have only been built from the committed offline samples, so real-archive
+coverage is unmeasured (ISS-03, ISS-04), held-out-gauge independence is not established,
+and the inherited hand export still may not be quoted in millimetres. The top data risk in
+the standard tables is ISS-01.
 
 The radar fetcher landed at `45c8dbb` (`src/ingestion/radar/`, NCI Rainfields3
 `prcp-m15`, site 71). It answers the product, units and gauge-correction questions for
 radar. Production will not download the archive: on Gadi it is a mounted directory and
 D13 reads it in place, reusing the fetcher's reader and coordinate code; the fetcher's
 download path serves samples and local tries. `src/canonical/radar_archive.py` (D13.2)
-now reads the archive's daily zips into hourly node tables, closing ISS-30; a radar
-result still needs Gadi access to run against real data, and D09's edges (D09.2) and
-runs (D09.4) to actually produce one.
+now reads site 71's daily zips into hourly node tables (ISS-30); a radar result still
+needs Gadi access to run against real data, and D09's edges (D09.2) and runs (D09.4) to
+actually produce one.
 
 Researchers run the pipeline from a terminal app, `src/experiments/tui.py`, without
 editing code. It creates or clones an experiment folder with its own copy of the configs,
@@ -87,7 +88,7 @@ each deliverable's document. State per deliverable:
 | D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |
-| D13 | Source grids from NCI | All five subtasks landed for both sources: `config/canonical/grids.yaml`'s `layers.{radar,satellite}.root` point at the confirmed Gadi paths; `src.canonical.grids.build()` reads both archives in place (radar: four 15-minute files summed per hour; satellite: six 10-minute `crrph_intensity` samples averaged per hour, cropped from the full disk) and writes the standard tables with a `valid` column on both, no `UNKNOWN` declarations remaining. `grid_report.md` states coordinate system, native time step and configured-period coverage for both sources, plus radar's contributing-gauges cross-reference against Component 02's `stations.csv` — closes ISS-30 and ISS-02 fully. `tests/data/ingestion/{radar,satellite}/` now hold real, complete-hour samples for both sources, and `python -m src.canonical.grids config/canonical/grids.yaml --sample` runs both readers successfully with no Gadi access. Chained on five branches per the deliverable's own working agreement (its section 8a); one pull request for the whole of D13 is next. Gadi mount access is still needed to verify this against the real archive at scale — only offline samples and synthetic fixtures have been exercised |
+| D13 | Source grids from NCI | All five subtasks merged, with the integration review's fixes on top. `config/canonical/grids.yaml` points `layers.radar.root` at site 71's folder and `layers.satellite.root` at the CRRPh archive; `src.canonical.grids.build()` reads both in place. Radar: four 15-minute `prcp-m15` files summed per hour across daily zips, one value per cell-hour as in the paper (ISS-36). Satellite: six 10-minute `crrph_intensity` samples averaged per hour, cropped from the full disk, with a `valid` column. `grid_report.md` states product, units, site, gauge correction, coordinate system and time step from the files themselves, the hourly, crop and subsample rules, every unwritten hour with its cause, and radar's contributing-gauges cross-reference against Component 02's `stations.csv` (ISS-02, ISS-04). `tests/data/ingestion/{radar,satellite}/` hold real, complete-hour samples, and `python -m src.canonical.grids config/canonical/grids.yaml --sample` runs both readers with no Gadi access. Nothing has been run against the real archive yet |
 
 Open work that belongs to a component rather than a deliverable:
 
@@ -125,24 +126,23 @@ outputs. See [LEGACY_CODE.md](LEGACY_CODE.md).
 
 ## Verification
 
-Run on 2026-10-05 on `1b786a2` plus the uncommitted Results-tab and training-history
-changes, macOS, Python 3.14.6:
+Run on 2026-10-05 at `c51ad8b`, Windows 11, Python 3.14.2, after `uv sync --locked`:
 
 ```console
-uv run --locked python -m pytest tests -q -rx
+uv run --locked python -m pytest tests -q -rx --cov=src --cov-report=term-missing
 uv run --locked ruff check .
 ```
 
-- `tests/`: **182 passed, 3 skipped, 7 xfailed**. The skips are the live-API acceptance
-  checks; set `BOM_NETWORK=1` (two gauge checks) or `NCI_NETWORK=1` (one radar check) to
-  run them. A checkout without `database/sydney_gauge_legacy/` skips the legacy-data
-  tests as well, which is expected.
-- Repository-wide Ruff: **684** findings (ISS-17). The files changed for the Results tab
-  add none; the findings in `src/models/run.py` are long lines that were there before.
-- Coverage, with `--cov=src`: **50 %** over all of `src/`, which includes the inherited
-  review-only code. Modules changed most recently: `src/experiments/results.py` 98 %,
-  `workspace.py` 94 %, `chart.py` 96 %, `tui.py` 87 %, `src/models/trainer.py` 94 %,
-  `src/models/run.py` 79 %. The floors are not enforced yet (ISS-33).
+- `tests/`: **212 passed, 30 skipped, 3 failed**. The skips are the live-API acceptance
+  checks (`BOM_NETWORK=1`, `NCI_NETWORK=1`) and the legacy-data tests, which skip in a
+  checkout without `database/sydney_gauge_legacy/`. The three failures are all in
+  `tests/test_experiment_tui.py` and fail the same way on `main` before the D13 merge on
+  this Windows machine; the earlier macOS run of `main` passed them.
+- Repository-wide Ruff: **684** findings (ISS-17), the same as before the D13 merge.
+- Coverage, with `--cov=src`: **51 %** over all of `src/`, which includes the inherited
+  review-only code. D13's modules: `src/canonical/grids.py` 92 %, `radar_archive.py`
+  95 %, `satellite_archive.py` 94 %, `grid_inputs.py` 96 %, `grid_tables.py` 87 %. The
+  floors are not enforced yet (ISS-33).
 - PyTorch and PyG emit Python 3.14 deprecation warnings.
 - `scripts/nci/test_guards.py` is excluded from `tests/` and fails on a Windows checkout
   for a line-ending reason (ISS-15). It passes on Linux and macOS.
