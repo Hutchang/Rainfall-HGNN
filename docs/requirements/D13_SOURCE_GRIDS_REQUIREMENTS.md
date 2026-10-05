@@ -22,9 +22,11 @@ code is reused here. Its download path is not the production path.
 ## 2. System position
 
 ```text
-Gadi filesystem (paths TO CONFIRM; layout as on THREDDS)
-  /g/data/rq0/rainfields3/<site>/<year>/prcp-m15/<site>_<date>.prcp-m15.zip   radar
-  /g/data/rv74/...                                                              satellite
+Gadi filesystem (confirmed via the public THREDDS catalog; not yet cross-checked
+against a Gadi shell listing)
+  /g/data/rq0/rainfields3/<site>/<year>/prcp-m15/<site>_<date>.prcp-m15.zip        radar
+  /g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1/
+    <year>/<month>/<day>/S_NWC_CRRPh_HIMA08_HIMA-N-NR_<date>T<time>Z.nc            satellite
       |
       v
   D13 readers  --declare product, units, time step, correction from the files' own attributes
@@ -51,7 +53,7 @@ becomes a rule we write down and can change.
 | Input | Where | State today |
 |---|---|---|
 | Rainfields3 `prcp-m15` — merged gauge/radar accumulation, 15-minute, 512 × 512 cells of 0.5 km, one zip per day of 96 NetCDF files, site 71 (Terrey Hills), 2021–2022 | NCI project `rq0`; on Gadi under `/g/data/rq0/rainfields3/…` (TO CONFIRM — the THREDDS catalog shows the layout, the mount path is the standard NCI one) | product, units, time step and `contributing_gauges` confirmed from real files by the fetcher work; nothing reads them downstream |
-| Himawari CRRPH — convective rain rate, physically based, 2 km grid (the paper's satellite source) | NCI project `rv74` (TO CONFIRM: exact product name, file layout, time step, and that the team has access) | never read by this project; the inherited 726-node pickle is all that existed |
+| Himawari CRRPH — `crrph_intensity`, convective rain rate, physically based, full-disk 5500 × 5500 cells of 2 km, one file per 10 minutes, HIMA08 (Himawari-8/9), 2015–2026 (2021–2022 present) | NCI project `rv74`; on Gadi under `/g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1/…` (confirmed via the public THREDDS catalog and OPeNDAP metadata, access confirmed 2026-09-26 — not yet cross-checked against a Gadi shell) | product, grid, time step and the `intensity`-vs-`accum` choice confirmed from real files and data; see [grids/SATELLITE_SOURCE.md](../grids/SATELLITE_SOURCE.md); nothing reads them downstream |
 | `tests/data/ingestion/radar/71_20220103.prcp-m15.zip` | committed; two real 15-minute files | exists |
 | `config/canonical/grids.yaml` | Component 02 | today points at pickle files and declares `product`, `units`, `gauge_correction` as `UNKNOWN` |
 
@@ -91,17 +93,42 @@ the only ones written down.
   04 already accept; declare in `grids.yaml` and the report: product `prcp-m15`, units
   "mm accumulated per hour", time convention "hour beginning, UTC", gauge correction
   "yes — see contributing gauges".
+- `radar_hourly.csv` carries a `valid` column, the same shape satellite already has: the
+  model cannot accept a null, so a cell missing in one of its four contributing files is
+  `rain_rate` 0 with `valid` false, not NaN; an hour where all four files agree on zero
+  stays `rain_rate` 0 with `valid` true. The missing/dry distinction lives in `valid`,
+  not in the value.
 **Why:** this is ISS-30 — the four-part gap between what the archive holds and what the
 adapter reads (format, time step, node count, declarations).
 **Done when:** TEST02, TEST03, TEST04.
 
 ### FR03 [D13.3] — Satellite: from archive files to hourly tables.
 
-**Must do:** the same shape as FR02 for the Himawari product: read the files, take
-latitude and longitude for every cell from the file itself, align to hours by a rule
-that matches the product's time step (TO CONFIRM once the files are seen), subsample by
-a recorded rule, write `satellite_hourly.csv` with its `valid` flag and
-`satellite_nodes.csv`, declare product, units, time convention and correction.
+**Must do:** the same shape as FR02 for the Himawari product, confirmed against the
+real archive on 2026-09-26 (see [grids/SATELLITE_SOURCE.md](../grids/SATELLITE_SOURCE.md)):
+
+- Read `crrph` (not `crr`, which is a 12-class categorical index, not a continuous
+  value) from `rv74`, product `crrph_intensity` specifically — the instantaneous
+  convective rain rate — not `crrph_accum`, which is the algorithm's own undocumented
+  smoothed/rolling estimate and cannot presently be declared from the file the way
+  D13's other provenance fields are. Derive coordinates for every cell from the file's
+  own geostationary CF grid mapping (`pyproj`, the same method
+  `src/ingestion/radar/coords.py` uses for radar's Albers grid, a different
+  projection).
+- The product's time step is 10 minutes, confirmed from real files (six files per
+  hour, not radar's four): align to hours by a rule this project writes down — a
+  completeness threshold (how many of the six 10-minute files must be present) and an
+  integration rule (e.g. time-weighted average) turning six instantaneous samples into
+  one hourly value — the satellite equivalent of FR02's subsample-stride rule, and a
+  genuine choice, not a default.
+- The native grid is the full 5500x5500 Himawari disk (2 km cells, confirmed via the
+  file's own metadata), not pre-cropped to any region the way radar's 512x512 already
+  is. A crop-to-study-area step is needed before subsampling by a recorded rule; the
+  paper used the native 2 km spacing, so this may be crop-only with no further
+  subsampling, TO CONFIRM once implemented.
+- Write `satellite_hourly.csv` with its `valid` flag and `satellite_nodes.csv`,
+  declare product, units, time convention and correction.
+
 **Why:** ISS-03 disappears the moment coordinates come from the file rather than from a
 lost export.
 **Done when:** TEST05.
@@ -118,6 +145,15 @@ hours of ISS-04 exist in the archive.
 archive checked rather than the export.
 **Done when:** TEST06.
 
+Landed 2026-09-26: coordinate system and native time step (computed from the files, not
+assumed) for both sources; days/hours present and missing against the *configured*
+period, not just the span found; and, for radar, the contributing-gauges cross-reference
+against Component 02's `stations.csv` (`use_in_study` rows, matched on `station_no`,
+graceful when `stations.csv` doesn't exist yet). Closes ISS-02 fully. ISS-04's 120-hour
+question is now answerable by the report; nobody has run it against the real archive yet,
+so it stays open pending that. See [grids/README.md](../grids/README.md), "Reading
+grid_report.md".
+
 ### FR05 [D13.5] — Offline samples so the tests run without Gadi.
 
 **Must do:** a committed real satellite sample of a few files (as the radar sample is),
@@ -127,10 +163,26 @@ samples. The NCI guard tests (`scripts/nci/`) cover the Gadi-only parts.
 offline.
 **Done when:** the suite passes on a laptop with no archive mounted.
 
+Landed 2026-09-27: `tests/data/ingestion/satellite/` holds six real, consecutive
+10-minute Himawari files (one complete hour), each cropped from a real downloaded file
+to the Sydney window and reduced to the three variables the reader uses — real,
+unmodified values in that window, ~25 KB/file, since a full file is the whole 5500x5500
+disk across six variables (~18.6 MB) and can't be committed as-is. The radar sample
+(`tests/data/ingestion/radar/71_20220103.prcp-m15.zip`) gained three more real,
+byte-identical files from the same archive day, completing one real hour there too — it
+previously supported only per-file checks (TEST02), not a full build. `src.canonical
+.grids`'s CLI gained `--sample`, pointing every archive-mode layer at its committed
+sample and writing to `local/grid-sample/`; running it against the real committed
+`grids.yaml` now succeeds end-to-end for both sources with no Gadi access. See
+`tests/data/ingestion/README.md` and [grids/README.md](../grids/README.md).
+
 ## 5. Non-negotiable rules
 
 - Source-faithful: no unit change, no smoothing, no gap-filling; a missing hour stays
-  absent.
+  absent. A missing *cell* within a written hour is the one deliberate exception the
+  `valid` column exists for: `rain_rate` 0 with `valid` false is a flagged placeholder
+  for the model boundary, not an estimate of what the rain was — the distinction stays
+  recorded, never silently lost the way an unflagged 0 or a dropped row would lose it.
 - Every declaration in the report comes from a file attribute or a computed count, never
   from an assumption typed into config. `UNKNOWN` is allowed only where the file truly
   says nothing, and then it is named as such.
@@ -147,7 +199,7 @@ chosen directory otherwise:
 
 | File | Columns |
 |---|---|
-| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate` |
+| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` |
 | `radar_nodes.csv` | `node_id`, `latitude`, `longitude` |
 | `satellite_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` |
 | `satellite_nodes.csv` | `node_id`, `latitude`, `longitude` |
@@ -163,7 +215,7 @@ Read by Component 04 (D09.2 edges, then the graph builder) and, through it, Comp
 | TEST02 | The radar reader on the committed sample gives the expected values and the expected coordinates for known cells. | D13.2 |
 | TEST03 | Four synthetic 15-minute files sum to the right hourly value; three give a missing hour. | D13.2 |
 | TEST04 | The subsample rule is deterministic — same input, same node list — and the node count in the report matches the table. | D13.2 |
-| TEST05 | The satellite reader on the committed sample gives expected values, coordinates and `valid` flags. | D13.3 |
+| TEST05 | The satellite reader gives expected values, coordinates and `valid` flags. Against synthetic fixtures until D13.5 commits a real sample (the same gap radar had between D13.2 and D13.5, closed there by the already-committed `71_20220103.prcp-m15.zip`). | D13.3 |
 | TEST06 | `grid_report.md` carries no `UNKNOWN` for radar, and the contributing-gauges count equals a hand count on the sample. | D13.4 |
 
 Coverage: both readers and `src/canonical/grids.py` sit in the 90 % class (rule 10) —
@@ -176,10 +228,24 @@ they write the standard tables.
 - `docs/ingestion/README.md`: one paragraph making clear the radar fetcher's download is
   for samples and local tries, and production reads the archive in place.
 
+## 8a. Branching for this deliverable
+
+D13 departs from the general working agreement's one-PR-per-subtask branch (see
+[README.md](README.md)) by deliberate choice, recorded here rather than left to
+rediscover: each subtask (`feature/D13.1-...`, `feature/D13.2-...`, ...) still gets its
+own branch, but they chain onto one another (`D13.2` branches from `D13.1`, `D13.3` from
+`D13.2`, and so on) rather than each branching independently from
+`integration/sydney-gauge-baseline`. Only one pull request is opened for the whole
+deliverable, from the final subtask's branch (renamed `feature/D13`) into
+`integration/sydney-gauge-baseline`, once all five subtasks land. This keeps every
+subtask's commits individually labelled and reviewable inside that one PR without
+needing five separate merges into the integration branch first.
+
 ## 9. Dependencies and blockers
 
-Gadi access for whoever runs it ([../nci/README.md](../nci/README.md)); confirmation of
-the `rv74` product and access (D13.1). D09 owns the gauge-correction caveat (build on the gauge-corrected
+Gadi access for whoever runs it ([../nci/README.md](../nci/README.md)) — `rv74`
+product and access confirmed 2026-09-26, not yet cross-checked against an actual Gadi
+shell listing. D09 owns the gauge-correction caveat (build on the gauge-corrected
 product; report the caveat). Issues: ISS-02, ISS-03, ISS-04, ISS-30. D07 is not required
 — the readers can be run with a chosen output directory — but runs should go through it
 once it lands so the archive files read are fingerprinted in the provenance record.
@@ -202,3 +268,7 @@ once it lands so the archive files read are fingerprinted in the provenance reco
 
 **This week:** D13.1, D13.2.
 **Backlog (week 7+):** D13.3, D13.4, D13.5.
+
+All five subtasks landed 2026-09-27, chained on the branches described in section 8a;
+one pull request for the whole deliverable is next. Real-archive verification (an actual
+run on Gadi) is not part of any subtask here and remains open.

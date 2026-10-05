@@ -46,8 +46,10 @@ The radar fetcher landed at `45c8dbb` (`src/ingestion/radar/`, NCI Rainfields3
 `prcp-m15`, site 71). It answers the product, units and gauge-correction questions for
 radar. Production will not download the archive: on Gadi it is a mounted directory and
 D13 reads it in place, reusing the fetcher's reader and coordinate code; the fetcher's
-download path serves samples and local tries. Nothing downstream can read the archive
-files yet (ISS-30), so no radar result is possible until D13.2 lands.
+download path serves samples and local tries. `src/canonical/radar_archive.py` (D13.2)
+now reads the archive's daily zips into hourly node tables, closing ISS-30; a radar
+result still needs Gadi access to run against real data, and D09's edges (D09.2) and
+runs (D09.4) to actually produce one.
 
 Researchers run the pipeline from a terminal app, `src/experiments/tui.py`, without
 editing code. It creates or clones an experiment folder with its own copy of the configs,
@@ -85,7 +87,7 @@ each deliverable's document. State per deliverable:
 | D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |
-| D13 | Source grids from NCI | Not started. Reads radar and satellite in place on Gadi and writes the grid tables; resolves ISS-02, ISS-03, ISS-04, ISS-30. Gadi paths and the satellite product are TO CONFIRM |
+| D13 | Source grids from NCI | All five subtasks landed for both sources: `config/canonical/grids.yaml`'s `layers.{radar,satellite}.root` point at the confirmed Gadi paths; `src.canonical.grids.build()` reads both archives in place (radar: four 15-minute files summed per hour; satellite: six 10-minute `crrph_intensity` samples averaged per hour, cropped from the full disk) and writes the standard tables with a `valid` column on both, no `UNKNOWN` declarations remaining. `grid_report.md` states coordinate system, native time step and configured-period coverage for both sources, plus radar's contributing-gauges cross-reference against Component 02's `stations.csv` — closes ISS-30 and ISS-02 fully. `tests/data/ingestion/{radar,satellite}/` now hold real, complete-hour samples for both sources, and `python -m src.canonical.grids config/canonical/grids.yaml --sample` runs both readers successfully with no Gadi access. Chained on five branches per the deliverable's own working agreement (its section 8a); one pull request for the whole of D13 is next. Gadi mount access is still needed to verify this against the real archive at scale — only offline samples and synthetic fixtures have been exercised |
 
 Open work that belongs to a component rather than a deliverable:
 

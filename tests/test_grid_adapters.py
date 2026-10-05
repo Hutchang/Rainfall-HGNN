@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -38,6 +39,9 @@ def bundle(tmp_path):
     settings = {
         "raw_dir": str(raw),
         "output_dir": str(tmp_path / "standard"),
+        # D13.4: build() reports days/hours against the configured period.
+        "start": date(2022, 1, 1),
+        "end": date(2022, 1, 1),
         "layers": layers,
     }
     config.write_text(yaml.safe_dump(settings))

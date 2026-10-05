@@ -14,9 +14,9 @@ def load_standard_grid(directory, layer):
     directory = Path(directory)
     coords = pd.read_csv(directory / f"{layer}_nodes.csv")
     table = pd.read_csv(directory / f"{layer}_hourly.csv")
+    has_valid = "valid" in table.columns
     columns = {"node_id", "timestamp", "rain_rate"}
-    if layer == "satellite":
-        columns.add("valid")
+    columns |= {"valid"} if has_valid else set()
     if set(table.columns) != columns or set(coords.columns) != {
         "node_id",
         "latitude",
@@ -39,16 +39,16 @@ def load_standard_grid(directory, layer):
         raise ValueError(
             f"{layer}: each present hour needs exactly one row per coordinate node"
         )
-    features = ["rain_rate", "valid"] if layer == "satellite" else ["rain_rate"]
+    features = ["rain_rate", "valid"] if has_valid else ["rain_rate"]
     values = (
         indexed[features]
         .to_numpy(dtype=float)
         .reshape(len(hours), count, len(features))
     )
     observed = np.ones((len(hours), count), dtype=bool)
-    if layer == "satellite":
+    if has_valid:
         if not np.isin(values[:, :, 1], [0, 1]).all():
-            raise ValueError("satellite: availability must be exactly 0 or 1")
+            raise ValueError(f"{layer}: availability must be exactly 0 or 1")
         observed = values[:, :, 1].astype(bool)
     rain = values[:, :, 0][observed]
     if not np.isfinite(rain).all() or (rain < 0).any():

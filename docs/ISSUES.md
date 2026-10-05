@@ -29,11 +29,12 @@ somewhere else, move it here and leave the id behind.
 | ID | Title | Severity | Owner | Status |
 |---|---|---|---|---|
 | [ISS-01](#iss-01) | Short gauge blockages produce confident false zeros | Blocking | Component 02 | Open |
-| [ISS-02](#iss-02) | Radar and satellite provenance unknown | Blocking | D13 | Open |
+| [ISS-02](#iss-02) | Radar and satellite provenance unknown | Blocking | D13 | Closed |
 | [ISS-03](#iss-03) | Satellite node coordinates do not exist | Blocking | D13 | Open |
 | [ISS-07](#iss-07) | Methods are allowed to read different gauges when predicting | Blocking | Components 04 + 06 | Open |
 | [ISS-11](#iss-11) | Ingestion config claims Sydney but fetches Australia-wide | Blocking | Component 01 | Closed |
-| [ISS-30](#iss-30) | Fetched radar files cannot be read by the grid adapter | Blocking | D13 | Open |
+| [ISS-30](#iss-30) | Fetched radar files cannot be read by the grid adapter | Blocking | D13 | Closed |
+| [ISS-35](#iss-35) | Component 06 rejects two-feature radar graphs | Blocking | Component 06 | Open |
 | [ISS-04](#iss-04) | Radar and satellite cover 2022 only; radar missing 120 hours | Material | D13 | Open |
 | [ISS-05](#iss-05) | Within-day timestamp fidelity is assumed, not verified | Material | Component 02 | Blocked |
 | [ISS-06](#iss-06) | Unexplained April–May 2021 gap in BoM daily totals | Material | Component 02 | Open |
@@ -87,7 +88,7 @@ Source: [canonical/README.md](canonical/README.md).
 <a id="iss-02"></a>
 
 ### ISS-02 — Radar and satellite provenance unknown
-**Severity:** Blocking · **Owner:** D13 · **Status:** Open
+**Severity:** Blocking · **Owner:** D13 · **Status:** Closed 2026-09-26 (D13.4)
 
 Which product, which units, and whether the radar is gauge-corrected are all unknown. If it
 was corrected using gauges that include our test stations, every radar result leaks and is
@@ -107,6 +108,26 @@ accepted for now and stated on every result by D09; D13.4 reports its size.
 status for both radar and satellite into the grid report, taken from the files' own
 attributes.
 
+Checked 2026-09-26 whether an uncorrected radar alternative exists in the same NCI
+project (`rq0`): it does not. `rq0/level_2/` holds reflectivity and derived products, but
+none is a rainfall accumulation, so using it would mean designing and validating a Z-R
+conversion — new scientific work, not a parsing change. `rainfields3`'s `prcp-m15`
+remains the only ready rainfall product available, and D13.2 stays targeting it, carrying
+this issue's caveat. See [grids/RADAR_SOURCE.md](grids/RADAR_SOURCE.md) for the full
+comparison.
+
+D13.2 (2026-09-26) closes the radar half of this issue's "Closes when" line: `grids.yaml`
+now declares `product`, `units`, `timestamp_convention` and `gauge_correction` for radar
+from the archive files' own attributes, with no `UNKNOWN` remaining (see ISS-30, closed).
+D13.3 does the same for satellite.
+
+**Closed 2026-09-26 (D13.4).** `grid_report.md` now states coordinate system and native
+time step for both sources too, computed from the files themselves
+(`grid_mapping_name`, and `valid_time - start_time` for radar / the gap between
+consecutive `nominal_product_time` values for satellite) — the last two fields this
+issue's "Closes when" line named. Confirmed against synthetic fixtures for both sources;
+real-archive verification still needs Gadi access, tracked separately.
+
 <a id="iss-03"></a>
 
 ### ISS-03 — Satellite node coordinates do not exist
@@ -120,9 +141,20 @@ recreated. Without it the nodes cannot be placed on the map or connected to gaug
 satellite fusion cannot run.
 
 The way out is not to find the file but to stop using the export: the archive product
-itself (Himawari CRRPH on NCI, project `rv74` — TO CONFIRM) carries latitude and
-longitude for every cell, so coordinates come from the source and the subsample becomes a
-rule we write down.
+itself (Himawari CRRPH on NCI, project `rv74`) lets coordinates be derived for every
+cell from the file's own projection metadata, so coordinates come from the source and
+the subsample becomes a rule we write down.
+
+Checked 2026-09-26, project `rv74` access confirmed and the archive browsed via the
+public THREDDS catalog and OPeNDAP metadata (no Gadi shell needed): the file does not
+carry a stored `lat`/`lon` array — the correction to the line above — but its CF grid
+mapping (`+proj=geos`, the geostationary projection) is exactly the same situation as
+radar's Albers grid, decodable with `pyproj` the same way
+`src/ingestion/radar/coords.py` already does. The grid is the full 5500x5500 Himawari
+disk, not pre-cropped to Sydney the way radar's 512x512 already was, so D13.3 needs a
+crop-to-study-area step radar didn't. See
+[grids/SATELLITE_SOURCE.md](grids/SATELLITE_SOURCE.md) for the full investigation,
+including the `crr`-vs-`crrph` and `intensity`-vs-`accum` decisions.
 
 **Closes when:** D13.3 reads the satellite product from the archive and writes
 `satellite_nodes.csv` with coordinates taken from the files.
@@ -143,6 +175,12 @@ are missing in the archive too is not yet known.
 
 **Closes when:** D13.4's grid report states, per source, the days and hours present and
 missing in the archive for 2021–2022, and any remaining gap is excluded by a written rule.
+
+D13.4 (2026-09-26) lands the mechanism: `grid_report.md` now states, per source, hours
+possible/present/missing against the configured period, so the 120-hour question is
+answerable by comparison once a run reads the real archive. Not yet closed: nobody has
+run this against Gadi, so whether the 120 hours are actually present or absent in the
+archive is still unmeasured.
 
 <a id="iss-05"></a>
 
@@ -572,7 +610,7 @@ from those recorded beside it, and the index never drops a row for a file still 
 <a id="iss-30"></a>
 
 ### ISS-30 — Fetched radar files cannot be read by the grid adapter
-**Severity:** Blocking · **Owner:** D13 · **Status:** Open
+**Severity:** Blocking · **Owner:** D13 · **Status:** Closed 2026-09-26 (D13.2)
 
 The radar fetcher (`src/ingestion/radar/`) writes one zip per day holding 96 NetCDF files
 of 15-minute accumulations on a 512 × 512 grid of 0.5 km cells (262,144 cells). The grid
@@ -589,6 +627,15 @@ work is unaffected.
 
 **Closes when:** D13.2 lands: a reader for the archive's daily zips, hourly sums, a
 recorded subsample rule, and a `grids.yaml` with no `UNKNOWN`.
+
+**Closed 2026-09-26.** `src/canonical/radar_archive.py` reads the archive's daily
+zips in place, sums complete four-file hours (a cell missing in any one of the four
+propagates as NaN, not a partial value), and subsamples the native grid by a
+recorded, deterministic rule (`layers.radar.subsample_stride`). `grids.yaml`'s radar
+block declares `product`, `units`, `timestamp_convention` and `gauge_correction` from
+the archive files' own attributes, no `UNKNOWN` remaining. Wired behind
+`src.canonical.grids.build()`, so validation, CSV shapes and the report are
+unchanged. Satellite is untouched and stays on D13.3.
 
 <a id="iss-31"></a>
 
@@ -642,6 +689,36 @@ measurement must be scoped to the production packages.
 **Closes when:** D07.7 lands — `pytest-cov` installed, measurement scoped, both floors
 failing the run, and the baseline recorded in `CURRENT_STATE.md`.
 
+<a id="iss-35"></a>
+
+### ISS-35 — Component 06 rejects two-feature radar graphs
+**Severity:** Blocking · **Owner:** Component 06 · **Status:** Open
+
+`src/models/modalities.py:30` hardcodes radar's feature width as 1 in
+`prepare_modalities()`, which `validate_graph()` (`src/models/graphs.py`) calls before
+every training run. D13.2 changed radar's contract to `[value, valid]` (2 features),
+matching satellite, so a missing cell can be represented instead of failing the whole
+graph on any missing pixel (see ISS-30, closed). Component 04's actual production path
+(`src/graph/builder_new.py:114`, `GridData.to_heterodata`) now legitimately produces
+2-feature radar, which this check rejects outright with "radar.x must be floating
+[nodes,time,1]" — gauge+radar and gauge+radar+satellite training would fail the moment a
+real archive-built radar graph reaches Component 06.
+
+Found 2026-09-27 while confirming D13's work doesn't quietly break the gauge-only /
+gauge+radar / gauge+radar+satellite combinations it exists to enable — it does, but only
+downstream of D13, in code D13 does not own. The existing test suite does not catch it:
+`tests/data/models/make_fixture.py` still builds synthetic radar as 1-feature, predating
+D13.2, so `test_model_modalities.py`'s multimodal parametrization (`radar`, `satellite`,
+`radar`+`satellite`) never exercises the real, current shape — including its own
+`radar_width` damage case, which asserts that *expanding* radar to 2 features is invalid,
+the opposite of what D13.2 established. `src/models/run.py`'s own run-report text ("Radar
+missingness is rejected because its prescribed single feature has no validity channel")
+is stale for the same reason.
+
+**Closes when:** `prepare_modalities` accepts either one or two features for radar,
+masking invalid cells the same way satellite's are whenever a validity channel is
+present; the fixture and its damage case are updated to the real current shape; and the
+stale report text in `src/models/run.py` is corrected.
 
 ## Documentation gaps
 

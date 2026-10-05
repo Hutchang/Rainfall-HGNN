@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from src.canonical.gauge.build import load_stations
 from src.canonical.raw_index import read_index
 
 
@@ -27,19 +28,30 @@ def utc_hours(values, label):
 
 @dataclass
 class GridData:
-    """Values are [time,node,feature]; coordinates retain the source array order."""
+    """Values are [time,node,feature]; coordinates retain the source array order.
+
+    `provenance` (D13.4) carries extra facts an archive reader took from its
+    own files -- coordinate system, native time step and, for radar, each
+    written hour's `contributing_gauges` union -- for the report to state.
+    `None` for a legacy pickle-mode grid, which has no file attributes to
+    take these from.
+    """
 
     layer: str
     timestamps: pd.DatetimeIndex
     values: np.ndarray
     coordinates: pd.DataFrame
+    provenance: dict | None = None
 
     def to_heterodata(self, target_timestamps):
         """Return a node layer for 04; topology remains the graph builder's job.
 
-        The caller supplies its approved graph timeline. Missing radar frames fail
-        rather than silently becoming observed zero rainfall. Satellite's source
-        availability remains a feature, with invalid payloads masked only in x.
+        The caller supplies its approved graph timeline. A layer with a validity
+        feature (satellite always; radar since the archive reader, D13.2) masks
+        invalid payloads only in the model tensor `x`, so the missing/dry
+        distinction survives as `observed`. A one-feature layer (a legacy radar
+        pickle) has no way to flag a missing pixel, so it fails hard instead of
+        silently becoming observed zero rainfall.
         """
         import torch
         from torch_geometric.data import HeteroData
@@ -55,13 +67,14 @@ class GridData:
             )
         values = self.values[positions].copy()
         observed = np.isfinite(values[:, :, 0])
-        if self.layer == "satellite":
+        if values.shape[2] == 2:
             observed = values[:, :, 1].astype(bool)
             values[:, :, 0][~observed] = 0.0
         elif not observed.all():
             raise ValueError(
-                "radar: missing pixel values cannot enter the one-feature graph "
-                "contract; Component 04 needs an agreed validity-mask interface"
+                f"{self.layer}: missing pixel values cannot enter the "
+                "one-feature graph contract; Component 04 needs an agreed "
+                "validity-mask interface"
             )
         graph = HeteroData()
         graph[self.layer].x = torch.from_numpy(
@@ -85,7 +98,7 @@ class GridData:
                     "timestamp": timestamp.isoformat(),
                     "rain_rate": self.values[position, :, 0],
                 }
-                if self.layer == "satellite":
+                if self.values.shape[2] == 2:
                     data["valid"] = self.values[position, :, 1].astype(int)
                 pd.DataFrame(data).to_csv(
                     stream, index=False, header=position == 0, lineterminator="\n"
@@ -164,18 +177,103 @@ def indexed_path(raw_dir, index, relative_path):
     return path
 
 
-def build(config_path, check_only=False):
+def _period_coverage_line(grid: GridData, start, end) -> str:
+    """D13.4: days and hours present/missing against the *configured* period,
+    not just the span of hours the run actually found -- a source that is
+    entirely absent for a leading or trailing stretch doesn't hide inside
+    "absent hours within the observed range" the way it would above. A
+    single count, not an itemised list: the itemised list below stays scoped
+    to the observed range so a real multi-year run doesn't flood the report.
+    Also how ISS-04's "120 missing hours" gets answered: compare this
+    archive's missing count against that hand-export number.
+    """
+    expected = pd.date_range(
+        pd.Timestamp(start, tz="UTC"),
+        pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1),
+        freq="h",
+        inclusive="left",
+    )
+    present = len(expected.intersection(grid.timestamps))
+    return (
+        f"Configured period {start} to {end}: {len(expected)} hours possible, "
+        f"{present} present, {len(expected) - present} missing."
+    )
+
+
+def _contributing_gauges_report(
+    gauges_by_hour: dict, output_dir: Path
+) -> list[str]:
+    """D13.4: how many *study* stations appear in radar's `contributing_gauges`
+    and in how many written hours -- the actual size of D09's leakage caveat,
+    not just "yes, it's gauge-corrected". Matches on `station_no`, the only
+    key the archive gives us; `station_no` is not a unique key project-wide
+    (docs/ingestion/README.md), so this count is named as a `station_no`
+    match, not a `station_id` one. Graceful, not a hard failure, when
+    Component 02 hasn't run yet: this is a soft cross-component dependency.
+    """
+    stations_path = output_dir / "stations.csv"
+    if not stations_path.is_file():
+        return [
+            f"Contributing-gauges cross-reference: not computed -- "
+            f"{stations_path} not found; run Component 02 first."
+        ]
+    stations = load_stations(stations_path)
+    use_in_study = stations["use_in_study"]
+    if use_in_study.dtype != bool:
+        use_in_study = use_in_study.astype(str).str.strip().str.lower() == "true"
+    usable = stations[use_in_study]
+    station_nos = pd.to_numeric(usable["station_no"], errors="coerce").dropna()
+    study_station_nos = set(station_nos.astype(int))
+    all_gauges = (
+        frozenset().union(*gauges_by_hour.values()) if gauges_by_hour else frozenset()
+    )
+    matched = study_station_nos & all_gauges
+    hours_with_a_match = sum(
+        1 for gauges in gauges_by_hour.values() if gauges & study_station_nos
+    )
+    return [
+        f"Contributing-gauges cross-reference (by station_no, not a unique "
+        f"key project-wide): {len(matched)} of {len(study_station_nos)} study "
+        f"stations appear in at least one written hour's contributing_gauges, "
+        f"in {hours_with_a_match} of {len(gauges_by_hour)} written hours.",
+    ]
+
+
+# D13.5: the committed offline samples --sample points archive-mode layers
+# at, so the readers can be tried with no Gadi access. Real, complete for
+# satellite (one hour, six 10-minute files); real but incomplete for radar
+# (two of the four 15-minute files a complete hour needs) -- see
+# tests/data/ingestion/README.md.
+SAMPLE_ROOTS = {
+    "radar": "tests/data/ingestion/radar",
+    "satellite": "tests/data/ingestion/satellite",
+}
+DEFAULT_SAMPLE_OUTPUT_DIR = "local/grid-sample"
+
+
+def build(config_path, check_only=False, sample=False):
     """Validate all enabled layers before writing; never modify gauge outputs/raw."""
     config = yaml.safe_load(Path(config_path).read_text())
-    raw_dir, output_dir = Path(config["raw_dir"]), Path(config["output_dir"])
-    if output_dir.resolve().is_relative_to(raw_dir.resolve()):
-        raise ValueError("output_dir must not be inside immutable raw_dir")
-    index = read_index(raw_dir, dtype=str, keep_default_na=False)
-    if not {"path", "status"}.issubset(index.columns):
-        raise ValueError("raw index needs path and status columns")
+    if sample:
+        for layer, settings in config.get("layers", {}).items():
+            if settings.get("root") and layer in SAMPLE_ROOTS:
+                settings["root"] = SAMPLE_ROOTS[layer]
+        config["output_dir"] = DEFAULT_SAMPLE_OUTPUT_DIR
     layers = config["layers"]
     if not layers or set(layers) - {"radar", "satellite"}:
         raise ValueError("configure at least one of radar or satellite")
+    raw_dir, output_dir = Path(config["raw_dir"]), Path(config["output_dir"])
+    if output_dir.resolve().is_relative_to(raw_dir.resolve()):
+        raise ValueError("output_dir must not be inside immutable raw_dir")
+    # A config where every layer reads the archive in place (D13.2/D13.3) has
+    # no pickle input, so Component 01's index -- which only that path needs
+    # -- is not required either. Reading it unconditionally would block
+    # --sample (and any all-archive config) on a raw_dir that never exists.
+    index = None
+    if any(not settings.get("root") for settings in layers.values()):
+        index = read_index(raw_dir, dtype=str, keep_default_na=False)
+        if not {"path", "status"}.issubset(index.columns):
+            raise ValueError("raw index needs path and status columns")
     grids = []
     report = [
         "# Radar and satellite adapter",
@@ -185,34 +283,78 @@ def build(config_path, check_only=False):
         "",
     ]
     for layer, settings in layers.items():
-        data_file = indexed_path(raw_dir, index, settings["data_file"])
-        coordinates_file = indexed_path(raw_dir, index, settings["coordinates_file"])
-        grid = load_grid(
-            data_file,
-            coordinates_file,
-            layer,
-        )
+        archive_root = settings.get("root")
+        if archive_root and layer == "radar":
+            # D13.2: read the archive in place rather than a team-produced
+            # pickle. Local import avoids a circular import with
+            # radar_archive, which needs GridData from this module.
+            from src.canonical.radar_archive import build_radar_grid_data
+
+            grid = build_radar_grid_data(
+                Path(archive_root),
+                config["start"],
+                config["end"],
+                settings.get("subsample_stride", 10),
+            )
+        elif archive_root and layer == "satellite":
+            # D13.3: same idea, a different archive shape -- see
+            # docs/grids/SATELLITE_SOURCE.md for why crop/subsample_stride
+            # default the way they do.
+            from src.canonical.satellite_archive import build_satellite_grid_data
+
+            grid = build_satellite_grid_data(
+                Path(archive_root),
+                config["start"],
+                config["end"],
+                settings["crop"],
+                settings.get("subsample_stride", 1),
+            )
+        else:
+            data_file = indexed_path(raw_dir, index, settings["data_file"])
+            coordinates_file = indexed_path(
+                raw_dir, index, settings["coordinates_file"]
+            )
+            grid = load_grid(data_file, coordinates_file, layer)
         grids.append(grid)
         expected = pd.date_range(grid.timestamps[0], grid.timestamps[-1], freq="h")
         missing = expected.difference(grid.timestamps)
+        provenance = grid.provenance or {}
         report.extend(
             [
                 f"## {layer}",
                 "",
                 f"Nodes: {len(grid.coordinates)}; source hours: {len(grid.timestamps)}; rows: {len(grid.coordinates) * len(grid.timestamps)}.",
+                f"Coordinate system: {provenance.get('coordinate_system', 'UNKNOWN')}.",
+                "Native time step: "
+                f"{provenance.get('native_time_step_minutes', 'UNKNOWN')} minutes.",
                 f"Range: {grid.timestamps[0].isoformat()} to {grid.timestamps[-1].isoformat()}.",
                 f"Absent hours within that range: {len(missing)}. Boundaries outside the source range are not inferred.",
-                f"Missing rain payloads: {np.isnan(grid.values[:, :, 0]).sum()}.",
+                _period_coverage_line(grid, config["start"], config["end"]),
+                "Missing rain payloads: "
+                + (
+                    f"{(grid.values[:, :, 1] == 0).sum()}."
+                    if grid.values.shape[2] == 2
+                    else f"{np.isnan(grid.values[:, :, 0]).sum()}."
+                ),
             ]
         )
         if layer == "satellite":
             report.append(
                 f"Source unavailable node-hours: {(grid.values[:, :, 1] == 0).sum()}."
             )
-        for path in (data_file, coordinates_file):
-            with path.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            report.append(f"Input: {path}; SHA256: {digest}.")
+        if layer == "radar" and "contributing_gauges_by_hour" in provenance:
+            report.extend(
+                _contributing_gauges_report(
+                    provenance["contributing_gauges_by_hour"], output_dir
+                )
+            )
+        if archive_root:
+            report.append(f"Input root: {archive_root} (read in place, not hashed).")
+        else:
+            for path in (data_file, coordinates_file):
+                with path.open("rb") as stream:
+                    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                report.append(f"Input: {path}; SHA256: {digest}.")
         for field in (
             "product",
             "units",
@@ -253,9 +395,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", type=Path)
     parser.add_argument("--check-inputs", action="store_true")
+    parser.add_argument(
+        "--sample",
+        action="store_true",
+        help=(
+            "D13.5: point every archive-mode layer (root already set) at its "
+            "committed offline sample under tests/data/ingestion/ instead of "
+            f"the configured root, and write to {DEFAULT_SAMPLE_OUTPUT_DIR}/ "
+            "instead of the real output_dir -- try the readers with no Gadi "
+            "access"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
-        build(args.config, args.check_inputs)
+        build(args.config, args.check_inputs, args.sample)
     except (ValueError, OSError, KeyError, TypeError) as error:
         parser.exit(1, f"BLOCKED: {error}\n")
 

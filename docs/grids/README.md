@@ -11,6 +11,102 @@ coordinates and times, and writes the existing standard grid tables. It does not
 source data, infer satellite coordinates, change rainfall units, build graph edges,
 select evaluation splits or train the model.
 
+## Where the data is (D13.1)
+
+The archive is not downloaded for production use; on Gadi it is a mounted directory
+and D13's readers point at it in place. This is separate from `src/ingestion/radar/`,
+whose download path exists only to produce the committed offline sample and to let
+someone try the fetcher without Gadi access.
+
+| Source | NCI project | Layout | Years present | Access |
+|---|---|---|---|---|
+| Radar (Rainfields3 `prcp-m15`) | `rq0` | `/g/data/rq0/rainfields3/<site_id>/<year>/<product>/<site_id>_<YYYYMMDD>.<product>.zip` — path confirmed via the public THREDDS catalog, not yet cross-checked against a Gadi shell listing | 2021 and 2022 confirmed present for site 71 (T_Hills) — see `src/ingestion/radar/fetch.py` and CURRENT_STATE.md | [Gadi access](../nci/README.md), project `rq0` membership |
+| Satellite (Himawari CRRPH `crrph_intensity`, the paper's source) | `rv74` (access confirmed 2026-09-26) | `/g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1/<year>/<month>/<day>/S_NWC_CRRPh_HIMA08_HIMA-N-NR_<date>T<time>Z.nc` — confirmed via the public THREDDS catalog and OPeNDAP metadata, not yet cross-checked against a Gadi shell listing | 2021 and 2022 confirmed present (site data spans 2015–2026) | project `rv74` membership confirmed |
+
+`rq0` also holds a second, uncorrected radar tree (`level_2/`) considered and set aside
+for D13.2 — see [RADAR_SOURCE.md](RADAR_SOURCE.md) for why. `rv74` also holds `crr`
+(a categorical rain-class product, not used) and unrelated `cloud`/`solar` product
+families under the same `himawari-ahi` tree — see
+[SATELLITE_SOURCE.md](SATELLITE_SOURCE.md) for the full investigation and the
+`intensity`-vs-`accum` decision.
+
+Point `layers.<name>.root` in `config/canonical/grids.yaml` at the mount path (or a
+local sample directory holding files named the same way) and run:
+
+```console
+uv run --locked python -m src.canonical.grid_inputs config/canonical/grids.yaml --check-inputs
+```
+
+This confirms each configured root exists and reports how many archive days, within
+the config's `start`/`end` period, have a file whose name embeds that date — nothing
+is opened or read yet. A `root` of `null` (both sources ship this way on `main`,
+since neither location is confirmed) is not checked. A missing root refuses to
+continue and names it; this is a separate, earlier check from the pickle-input
+`--check-inputs` below, which validates the current hand-exported files.
+
+## Radar: from daily zips to hourly tables (D13.2)
+
+When `layers.radar.root` is set, `build()` (below) reads the archive in place instead
+of the pickle: it opens every daily zip under the root that falls in the config's
+`start`/`end` period, decodes each 15-minute NetCDF member's `precipitation` (CF
+scale/offset applied, `_FillValue` masked to NaN) and `start_time`, and sums each
+complete run of four consecutive quarter-hours into one hour-beginning UTC value.
+Filenames embed each file's *end* time, not its start, so hours are grouped by each
+file's own `start_time` floored to the hour — not by the filename — to avoid
+misassigning every file to the wrong hour. An hour with fewer than four files is
+missing, not written; a cell that is missing in even one of an hour's four files makes
+that cell invalid too. The model cannot accept a null, so an invalid cell is written as
+`rain_rate` 0 with `valid` false rather than NaN — the same `[value, valid]` shape
+satellite already has, so `radar_hourly.csv` gains a `valid` column. An hour's own
+genuine zero (all four files agree, observed dry) stays `rain_rate` 0 with `valid`
+true; the missing/dry distinction lives entirely in `valid`, never in the value. See
+`src/canonical/radar_archive.py`.
+
+The native 512x512, 0.5 km grid is far too large to carry densely (~36 TB for
+Sydney), so it is subsampled to the cell nearest each point of a `subsample_stride`
+grid — stride 10 gives ~5 km spacing, matching the paper's radar spacing, and about
+2,700 nodes for one site. This is a recorded scientific choice
+(`layers.radar.subsample_stride` in `config/canonical/grids.yaml`), not an
+incidental default; see [RADAR_SOURCE.md](RADAR_SOURCE.md) for the fuller picture of
+why `rainfields3` is the source at all. `product`, `units`, `timestamp_convention`
+and `gauge_correction` are declared in the same config block, read off the archive
+files' own attributes (confirmed against the committed sample and the fetcher's
+earlier work), not assumed.
+
+Coordinates and the report's per-source declarations are otherwise unchanged: the
+archive reader produces the same `GridData` the pickle path does, so everything from
+validation onward — CSV shapes, `to_heterodata`, the report — is the adapter's
+existing, unchanged machinery.
+
+## Reading grid_report.md (D13.4)
+
+Each source's section states, taken from the files themselves rather than typed into
+config:
+
+- **Coordinate system** — the file's own `grid_mapping_name` (`albers_conical_equal_area`
+  for radar, `geostationary` for satellite).
+- **Native time step** — computed, not assumed: radar from `valid_time - start_time`
+  within one file (15 minutes); satellite from the smallest gap between consecutive
+  files' `nominal_product_time` (10 minutes).
+- **Configured period coverage** — hours possible/present/missing against the config's
+  own `start`/`end`, not just the span of hours the run happened to find. This is
+  deliberately a single count, not an itemised list, so a real multi-year run doesn't
+  flood the report; the existing "Absent hours within that range" line above it stays
+  scoped to what was actually read and keeps its itemised list. This is also how
+  ISS-04's "120 missing hours" question gets answered: compare this count, from a run
+  against the real archive, against that hand-export number.
+- **Contributing-gauges cross-reference** (radar only) — how many *study* stations (from
+  Component 02's `stations.csv`, `use_in_study` rows only, since an excluded station can
+  never be a held-out test station) appear in at least one written hour's
+  `contributing_gauges`, and in how many of the written hours. This is the actual size
+  of D09's leakage caveat, not just "yes, it's gauge-corrected" — see
+  [RADAR_SOURCE.md](RADAR_SOURCE.md) and ISS-02. The match is on `station_no`, the only
+  key the archive gives us; `station_no` is not a unique key project-wide
+  (docs/ingestion/README.md), so the report names this explicitly rather than implying
+  more precision than the key supports. If `stations.csv` doesn't exist yet under
+  `output_dir` (Component 02 hasn't run), this line says so instead of failing the
+  build — a soft cross-component dependency, not a hard one.
+
 ## Relationship to Component 06
 
 The grid reshaping here feeds the radar/satellite model support in Component 06. See the
@@ -31,7 +127,28 @@ uv run --locked python -m src.canonical.grids config/canonical/grids.yaml
 
 Input paths resolve beneath `raw_dir`. Each configured input must have exactly one
 `status=ok` row in `raw_dir/index.csv`, using a relative `path`. Pickle can execute
-code: use only the team's trusted files, never an arbitrary downloaded pickle.
+code: use only the team's trusted files, never an arbitrary downloaded pickle. A
+layer with `root` set (radar, since D13.2) skips this entirely and reads the archive
+in place instead — see "Radar: from daily zips to hourly tables" above. A config where
+every layer is archive-mode has no pickle input at all, so `raw_dir/index.csv` isn't
+required either.
+
+### Try it without Gadi (D13.5)
+
+```console
+uv run --locked python -m src.canonical.grids config/canonical/grids.yaml --sample
+```
+
+Points every archive-mode layer (`root` already set) at its committed offline sample
+under `tests/data/ingestion/` instead of the configured Gadi root, and writes to
+`local/grid-sample/` instead of the real `output_dir`, so it never touches
+`database/standard/` or needs a mounted archive. Against the committed `grids.yaml`
+this runs both readers successfully end to end: radar's sample is five real files (one
+complete hour plus a fragment of the previous one); satellite's is six real files (one
+complete hour, cropped to the Sydney window — see
+`tests/data/ingestion/README.md` for why it's cropped and radar's isn't). Delete
+`local/grid-sample/` before running it again; the existing-output refusal above applies
+here too.
 
 The default config requires both modalities. A missing satellite coordinate file
 blocks it explicitly. A radar-only config contains only `layers.radar`; it produces
@@ -43,7 +160,7 @@ Outputs:
 
 | File | Columns |
 |---|---|
-| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate` |
+| `radar_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` (via the archive reader, D13.2; a legacy pickle-mode radar table has no `valid` column) |
 | `radar_nodes.csv` | `node_id`, `latitude`, `longitude` |
 | `satellite_hourly.csv` | `node_id`, `timestamp`, `rain_rate`, `valid` |
 | `satellite_nodes.csv` | `node_id`, `latitude`, `longitude` |
@@ -55,13 +172,16 @@ coordinate file includes `node_id`, the adapter verifies that it is `0..N-1` in 
 Without IDs, positional ordering is an upstream assertion; matching counts alone
 cannot prove that the coordinates correspond to the values.
 
-The input radar shape is `[nodes]` per hour; satellite is `[nodes,2]`, with source
-availability in column 1. Node counts are validated against coordinates rather than
-hard-coded, allowing the documented 952/726-node inputs and small offline fixtures.
-Times must be timezone-aware, sorted, unique and exactly on hourly boundaries. UTC
-conversion preserves instants; it does not guess whether an hour label marks its
-start or end. Missing hours remain absent. Radar NaNs remain missing values in CSV;
-satellite invalid payloads and flags are preserved exactly. Observed dry zeros remain
+A legacy pickle input's radar shape is `[nodes]` per hour, one feature; satellite's
+pickle is `[nodes,2]`, with source availability in column 1. Node counts are validated
+against coordinates rather than hard-coded, allowing the documented 952/726-node
+inputs and small offline fixtures. Times must be timezone-aware, sorted, unique and
+exactly on hourly boundaries. UTC conversion preserves instants; it does not guess
+whether an hour label marks its start or end. Missing hours remain absent. A legacy
+one-feature radar pickle's NaNs remain missing values in CSV, since it has no column
+to flag them in; satellite's (and the archive reader's radar, D13.2) invalid payloads
+and flags are preserved exactly instead — the model cannot accept a null, so an
+invalid cell is `rain_rate` 0 with `valid` false, not NaN. Observed dry zeros remain
 valid zeros. No resampling, smoothing, gap filling, regridding or unit scaling occurs.
 
 `rain_rate` is the existing contract's column name, **not proof of source units**.
@@ -77,10 +197,12 @@ radar = load_grid(radar_pickle, radar_coordinates, "radar")
 layer, coordinates = radar.to_heterodata(approved_graph_timestamps)
 ```
 
-The result has `layer['radar'].x` shaped `[N,T,1]`, or satellite `[N,T,2]`, plus
-`observed` and node IDs. The returned coordinates have `latitude, longitude` in tensor
-node order. `layer.timestamps` records the exact requested UTC sequence. The graph
-builder owns edges, distances, neighbour counts and attachment to each fold/role.
+The result has `layer['radar'].x` shaped `[N,T,2]` (via the archive reader, D13.2) or
+`[N,T,1]` (a legacy pickle-mode radar table, no validity feature), and satellite always
+`[N,T,2]`; plus `observed` and node IDs. The returned coordinates have `latitude,
+longitude` in tensor node order. `layer.timestamps` records the exact requested UTC
+sequence. The graph builder owns edges, distances, neighbour counts and attachment to
+each fold/role.
 
 The caller must provide the approved timeline. The adapter never intersects or drops
 target hours automatically. If a requested source hour is missing, it fails with the

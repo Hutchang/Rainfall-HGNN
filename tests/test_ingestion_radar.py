@@ -94,7 +94,7 @@ def test_run_writes_layout_index_and_coords(tmp_path):
         r["source"] == "radar_precip"
         and r["station_id"] == ""
         and r["status"] == "ok"
-        and r["n_records"] == "2"  # the committed sample has 2 .nc members
+        and r["n_records"] == "5"  # the committed sample has 5 .nc members
         and len(r["sha256"]) == 64
         for r in rows
     )
@@ -237,6 +237,9 @@ def test_committed_sample_is_an_unmodified_api_response():
         assert names == [
             "71_20220103_000000.prcp-m15.nc",
             "71_20220103_001500.prcp-m15.nc",
+            "71_20220103_003000.prcp-m15.nc",
+            "71_20220103_004500.prcp-m15.nc",
+            "71_20220103_010000.prcp-m15.nc",
         ]
         raw = zf.read(names[0])
     tmp = SAMPLE_ZIP.parent / "_tmp_check.nc"
