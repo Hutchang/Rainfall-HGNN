@@ -59,6 +59,7 @@ PROJ_ATTRS = {
     "longitude_of_projection_origin": 140.7,
 }
 NATIVE_SPACING_M = 2000.0
+REAL_TITLE = "NWC GEO Convective Rainfall Rate from Cloud Physical Properties"
 
 
 def _grid(x_m, y_m):
@@ -98,7 +99,13 @@ def _write_ten_minute_nc(
             "nx": ("nx", np.asarray(x_m, dtype=np.float64), {"units": "m"}),
             "ny": ("ny", np.asarray(y_m, dtype=np.float64), {"units": "m"}),
         },
-        attrs={"nominal_product_time": nominal_time},
+        attrs={
+            "nominal_product_time": nominal_time,
+            # The real archive's global attributes.
+            "product_name": "CRRPh",
+            "title": REAL_TITLE,
+            "source": "NWC/GEO version v2021.2",
+        },
     ).to_netcdf(path)
 
 
@@ -159,6 +166,21 @@ def test_build_satellite_grid_data_succeeds_end_to_end_on_the_real_sample():
     valid = grid.values[0, :, 1]
     assert 0 < valid.mean() < 1
     np.testing.assert_allclose(grid.values[0, :, 0], 0.0)
+
+
+def test_real_satellite_files_supply_the_reports_declarations():
+    """FR04: product, units and correction come from the files' attributes."""
+    grid = build_satellite_grid_data(
+        REAL_SAMPLE_DIR, date(2022, 1, 3), date(2022, 1, 3), REAL_SAMPLE_BOX, 1
+    )
+    provenance = grid.provenance
+    assert provenance["product"] == f"CRRPh -- {REAL_TITLE} (NWC/GEO version v2021.2)"
+    assert provenance["units"] == "mm/h"
+    assert provenance["gauge_correction"] == (
+        "contributing_gauges listed in 0 of 6 files read"
+    )
+    assert "padded by 0.25 degrees" in provenance["crop"]
+    assert provenance["subsample_rule"].endswith("crop (stride 1)")
 
 
 # ---- coordinate derivation --------------------------------------------------

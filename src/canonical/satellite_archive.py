@@ -43,7 +43,7 @@ import pandas as pd
 import pyproj
 import xarray as xr
 
-from src.canonical.grids import GridData
+from src.canonical.grids import GridData, single_declaration
 
 FILES_PER_HOUR = 6
 _DATETIME_RE = re.compile(r"(\d{8}T\d{6})")
@@ -54,10 +54,17 @@ _EXPECTED_AXIS_UNITS = "m"
 @dataclass
 class TenMinuteFrame:
     """One 10-minute file's cropped intensity grid (mm/h, NaN for missing
-    cells) and the UTC start of the window it covers."""
+    cells) and the UTC start of the window it covers. The remaining fields
+    are the file's own declarations, for the report (FR04); None where the
+    file has none."""
 
     start: pd.Timestamp
     intensity: np.ndarray
+    product_name: str | None = None
+    title: str | None = None
+    source: str | None = None
+    units: str | None = None
+    lists_gauges: bool = False
 
 
 def read_geostationary_grid(nc_path: Path) -> dict:
@@ -160,7 +167,15 @@ def read_ten_minute_file(
             .isel(ny=row_slice, nx=col_slice)
             .values.astype(np.float64)
         )
-    return TenMinuteFrame(start=start, intensity=intensity)
+        return TenMinuteFrame(
+            start=start,
+            intensity=intensity,
+            product_name=ds.attrs.get("product_name"),
+            title=ds.attrs.get("title"),
+            source=ds.attrs.get("source"),
+            units=ds["crrph_intensity"].attrs.get("units"),
+            lists_gauges="contributing_gauges" in ds.attrs,
+        )
 
 
 def hourly_means(frames: list[TenMinuteFrame]) -> dict[pd.Timestamp, np.ndarray]:
@@ -239,6 +254,17 @@ def build_satellite_grid_data(
     )
 
     frames = [read_ten_minute_file(p, row_slice, col_slice) for p in nc_paths]
+    # FR04: the report's product, units and correction lines come from every
+    # file read, not from grids.yaml.
+    product_name, title, source, units = (
+        single_declaration({getattr(frame, name) for frame in frames}, label, root)
+        for name, label in (
+            ("product_name", "product_name"),
+            ("title", "title"),
+            ("source", "source"),
+            ("units", "crrph_intensity units"),
+        )
+    )
     hours = hourly_means(frames)
     if not hours:
         raise ValueError(f"no complete hours found under {root} in {start} to {end}")
@@ -275,6 +301,25 @@ def build_satellite_grid_data(
         # contributing-gauges entry: satellite is not gauge-corrected.
         "coordinate_system": grid_def["proj_attrs"]["grid_mapping_name"],
         "native_time_step_minutes": native_time_step_minutes,
+        "product": f"{product_name} -- {title} ({source})",
+        "units": units,
+        "gauge_correction": (
+            f"contributing_gauges listed in "
+            f"{sum(frame.lists_gauges for frame in frames)} of {len(frames)} "
+            "files read"
+        ),
+        "hourly_rule": "mean of six 10-minute samples",
+        "crop": (
+            f"configured box lat {crop['min_lat']} to {crop['max_lat']}, lon "
+            f"{crop['min_lon']} to {crop['max_lon']}, padded by {pad} degrees: "
+            f"rows {row_slice.start}-{row_slice.stop - 1}, columns "
+            f"{col_slice.start}-{col_slice.stop - 1} of the files' "
+            f"{len(grid_def['y_m'])} x {len(grid_def['x_m'])} grid"
+        ),
+        "subsample_rule": (
+            f"rows and columns 0, {subsample_stride}, {2 * subsample_stride}, ... "
+            f"of the {n_rows} x {n_cols} crop (stride {subsample_stride})"
+        ),
     }
     return GridData(
         "satellite", pd.DatetimeIndex(ordered_hours), values, coordinates, provenance

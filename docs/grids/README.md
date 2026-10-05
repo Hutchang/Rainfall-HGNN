@@ -69,10 +69,10 @@ grid — stride 10 gives ~5 km spacing, matching the paper's radar spacing, and 
 2,700 nodes for one site. This is a recorded scientific choice
 (`layers.radar.subsample_stride` in `config/canonical/grids.yaml`), not an
 incidental default; see [RADAR_SOURCE.md](RADAR_SOURCE.md) for the fuller picture of
-why `rainfields3` is the source at all. `product`, `units`, `timestamp_convention`
-and `gauge_correction` are declared in the same config block, read off the archive
-files' own attributes (confirmed against the committed sample and the fetcher's
-earlier work), not assumed.
+why `rainfields3` is the source at all. The report states product, units, site and
+gauge correction from every file's own attributes, and the build stops if two files
+disagree. The same fields in `grids.yaml` are notes for readers; the report uses them
+only for pickle inputs.
 
 Coordinates and the report's per-source declarations are otherwise unchanged: the
 archive reader produces the same `GridData` the pickle path does, so everything from
@@ -84,6 +84,12 @@ existing, unchanged machinery.
 Each source's section states, taken from the files themselves rather than typed into
 config:
 
+- **Product, units, site and gauge correction** — "(from the files)": radar's `title`,
+  `precipitation` units (`kg m-2` per 15-minute file; 1 kg m-2 of water is 1 mm) and
+  `station_id`/`station_name`; satellite's `product_name`, `title`, `source` and
+  `crrph_intensity` units; and, for both, how many files read list
+  `contributing_gauges`. Every file must agree, or the build stops. The hourly rule
+  (sum of four, mean of six), the satellite crop and the subsample rule follow.
 - **Coordinate system** — the file's own `grid_mapping_name` (`albers_conical_equal_area`
   for radar, `geostationary` for satellite).
 - **Native time step** — computed, not assumed: radar from `valid_time - start_time`
@@ -183,8 +189,9 @@ satellite invalid payloads and flags are preserved exactly. Observed dry zeros r
 valid zeros. No resampling, smoothing, gap filling, regridding or unit scaling occurs.
 
 `rain_rate` is the existing contract's column name, **not proof of source units**.
-Record product, units, timestamp convention, gauge-correction status and supporting
-evidence in the config. These are declarations for review, not automatic certification.
+For pickle inputs, record product, units, timestamp convention, gauge-correction status
+and supporting evidence in the config. These are declarations for review, not automatic
+certification. Archive inputs take them from the files (see "Reading grid_report.md").
 
 ## Feed Component 04
 

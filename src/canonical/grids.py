@@ -26,6 +26,17 @@ def utc_hours(values, label):
     return result
 
 
+def single_declaration(values, name, root):
+    """The one value every archive file read gives for `name`, or "UNKNOWN
+    (...)" naming the gap when no file gives one (FR04). Files that disagree
+    are mixed products or sites, so they stop the build rather than pick one.
+    """
+    given = {value for value in values if value is not None}
+    if len(given) > 1:
+        raise ValueError(f"files under {root} disagree on {name}: {sorted(given)}")
+    return given.pop() if given else f"UNKNOWN (no file gives {name})"
+
+
 @dataclass
 class GridData:
     """Values are [time,node,feature]; coordinates retain the source array order.
@@ -196,6 +207,25 @@ def _period_coverage_line(grid: GridData, start, end) -> str:
     )
 
 
+def _archive_declarations(provenance: dict) -> list[str]:
+    """FR04: what an archive reader took from the files themselves, and the
+    rules it applied to them. grids.yaml's own declarations are not used."""
+    lines = [
+        f"product (from the files): {provenance['product']}.",
+        f"units (from the files): {provenance['units']}; hourly value: "
+        f"{provenance['hourly_rule']}.",
+        "time convention: hour beginning, UTC; each hour is labelled by the start "
+        "of its first file.",
+        f"gauge correction (from the files): {provenance['gauge_correction']}.",
+    ]
+    if "site" in provenance:
+        lines.append(f"site (from the files): {provenance['site']}.")
+    if "crop" in provenance:
+        lines.append(f"crop: {provenance['crop']}.")
+    lines.append(f"subsample rule: {provenance['subsample_rule']}.")
+    return lines
+
+
 def _contributing_gauges_report(
     gauges_by_hour: dict, output_dir: Path
 ) -> list[str]:
@@ -274,7 +304,9 @@ def build(config_path, check_only=False, sample=False):
     report = [
         "# Radar and satellite adapter",
         "",
-        "Values are reshaped without unit conversion, resampling or gap filling.",
+        "Pickle inputs are reshaped without unit conversion or resampling.",
+        "Archive inputs are summed or averaged to hours and subsampled by the",
+        "rules stated under each layer. No layer is gap-filled.",
         "The contract's rain_rate column retains the source values; its name is not evidence of units.",
         "",
     ]
@@ -341,19 +373,23 @@ def build(config_path, check_only=False, sample=False):
             )
         if archive_root:
             report.append(f"Input root: {archive_root} (read in place, not hashed).")
+            report.extend(_archive_declarations(provenance))
+            report.append(
+                f"evidence (grids.yaml): {settings.get('evidence', 'UNKNOWN')}."
+            )
         else:
             for path in (data_file, coordinates_file):
                 with path.open("rb") as stream:
                     digest = hashlib.file_digest(stream, "sha256").hexdigest()
                 report.append(f"Input: {path}; SHA256: {digest}.")
-        for field in (
-            "product",
-            "units",
-            "timestamp_convention",
-            "gauge_correction",
-            "evidence",
-        ):
-            report.append(f"{field}: {settings.get(field, 'UNKNOWN')}.")
+            for field in (
+                "product",
+                "units",
+                "timestamp_convention",
+                "gauge_correction",
+                "evidence",
+            ):
+                report.append(f"{field}: {settings.get(field, 'UNKNOWN')}.")
         report.extend(
             [
                 "",

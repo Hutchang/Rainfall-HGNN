@@ -29,9 +29,9 @@ layers:
     # docs/grids/README.md.
     subsample_stride: 10
 
-    # Declared from the archive files themselves (D13.2), not assumed:
+    # Notes for readers, matching the archive files (D13.2):
     # title="Merged Gauge/Radar Accumulation (15 min)" and the presence of
-    # contributing_gauges are read directly off the NetCDF global attributes.
+    # contributing_gauges. grid_report.md reads these from every file itself.
     product: prcp-m15
     units: mm accumulated per hour (native files are mm per 15-minute window; summed here)
     timestamp_convention: hour beginning, UTC
@@ -62,9 +62,9 @@ layers:
     # not an incidental default; see docs/grids/SATELLITE_SOURCE.md.
     subsample_stride: 1
 
-    # Declared from the archive files themselves (D13.3), not assumed: title
-    # and product_name="CRRPh" are read directly off the NetCDF global
-    # attributes; crrph_intensity is chosen over crrph_accum and crr -- see
+    # Notes for readers, matching the archive files (D13.3): title and
+    # product_name="CRRPh"; grid_report.md reads these from every file itself.
+    # crrph_intensity is chosen over crrph_accum and crr -- see
     # docs/grids/SATELLITE_SOURCE.md for why.
     product: "Himawari CRRPh crrph_intensity (NWC/GEO v2021.2)"
     units: "mm/h instantaneous rate; hourly value is the mean of six 10-minute samples"

@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from src.canonical.grids import GridData
+from src.canonical.grids import GridData, single_declaration
 from src.ingestion.radar.coords import (
     assert_consistent_grid,
     node_coordinates,
@@ -47,18 +47,22 @@ class QuarterHour:
     """One 15-minute file's precipitation grid (mm, NaN for missing cells),
     the UTC start and end of the window it covers, and the BoM station_no
     values its `contributing_gauges` attribute lists (D13.4: the size of
-    D09's leakage caveat)."""
+    D09's leakage caveat). `title`, `units` and `site` are the file's own
+    declarations, for the report (FR04); None where the file has none."""
 
     start: pd.Timestamp
     precipitation: np.ndarray
     valid_time: pd.Timestamp | None = None
     contributing_gauges: frozenset[int] = frozenset()
+    title: str | None = None
+    units: str | None = None
+    site: str | None = None
 
 
 def read_quarter_hour(nc_path: Path) -> QuarterHour:
     """Decode one 15-minute file: CF-scaled precipitation in mm (NaN where
     the file's own `_FillValue` marks a cell as no-data), its start/end time,
-    and its contributing gauges.
+    its contributing gauges and its own product, units and site attributes.
     """
     with xr.open_dataset(nc_path) as ds:
         start = pd.Timestamp(ds["start_time"].values.item(), tz="UTC")
@@ -67,11 +71,19 @@ def read_quarter_hour(nc_path: Path) -> QuarterHour:
         contributing_gauges = frozenset(
             int(v) for v in ds.attrs.get("contributing_gauges", [])
         )
+        site = ds.attrs.get("station_id")
+        if site is not None and "station_name" in ds.attrs:
+            site = f"{site} ({ds.attrs['station_name']})"
+        title = ds.attrs.get("title")
+        units = ds["precipitation"].attrs.get("units")
     return QuarterHour(
         start=start,
         precipitation=precipitation,
         valid_time=valid_time,
         contributing_gauges=contributing_gauges,
+        title=title,
+        units=units,
+        site=site,
     )
 
 
@@ -211,10 +223,22 @@ def build_radar_grid_data(
         hours.update(hourly_grids(quarters))
         gauges_by_hour.update(hourly_contributing_gauges(quarters))
 
+    # FR04: the report's product, units, site and correction lines come from
+    # every file read, not from grids.yaml.
+    declared = {"title": set(), "precipitation units": set(), "station_id": set()}
+    files_read = files_listing_gauges = 0
     native_time_step_minutes = None
     grid_def = None
     for zip_path in zip_paths:
         quarters = read_daily_zip(zip_path)
+        for quarter in quarters:
+            declared["title"].add(quarter.title)
+            declared["precipitation units"].add(quarter.units)
+            declared["station_id"].add(quarter.site)
+            files_listing_gauges += bool(quarter.contributing_gauges)
+        files_read += len(quarters)
+        for name, values in declared.items():
+            single_declaration(values, name, root)
         # Each radar site has its own grid (an Albers projection centred on
         # the radar), so a zip whose grid differs is another site's, and its
         # rain must not be stored against the first site's cell positions.
@@ -266,6 +290,20 @@ def build_radar_grid_data(
         # docs/requirements/D13_SOURCE_GRIDS_REQUIREMENTS.md, FR04.
         "coordinate_system": grid_def["proj_attrs"]["grid_mapping_name"],
         "native_time_step_minutes": native_time_step_minutes,
+        "product": single_declaration(declared["title"], "title", root),
+        "units": single_declaration(
+            declared["precipitation units"], "precipitation units", root
+        ),
+        "site": single_declaration(declared["station_id"], "station_id", root),
+        "gauge_correction": (
+            f"contributing_gauges listed in {files_listing_gauges} of "
+            f"{files_read} files read"
+        ),
+        "hourly_rule": "sum of four 15-minute files",
+        "subsample_rule": (
+            f"rows and columns 0, {subsample_stride}, {2 * subsample_stride}, ... "
+            f"of the native {size} x {size} grid (stride {subsample_stride})"
+        ),
         "contributing_gauges_by_hour": {
             hour: gauges_by_hour[hour]
             for hour in ordered_hours

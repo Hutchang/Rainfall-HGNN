@@ -89,7 +89,7 @@ Source: [canonical/README.md](canonical/README.md).
 <a id="iss-02"></a>
 
 ### ISS-02 — Radar and satellite provenance unknown
-**Severity:** Blocking · **Owner:** D13 · **Status:** Closed 2026-09-26 (D13.4)
+**Severity:** Blocking · **Owner:** D13 · **Status:** Closed 2026-10-05 (D13 integration review; first marked closed 2026-09-26 at D13.4)
 
 Which product, which units, and whether the radar is gauge-corrected are all unknown. If it
 was corrected using gauges that include our test stations, every radar result leaks and is
@@ -128,6 +128,14 @@ time step for both sources too, computed from the files themselves
 consecutive `nominal_product_time` values for satellite) — the last two fields this
 issue's "Closes when" line named. Confirmed against synthetic fixtures for both sources;
 real-archive verification still needs Gadi access, tracked separately.
+
+**Closure corrected 2026-10-05** by `fix(D13.4): state product, units and correction
+from the files`. At D13.4 the report's product, units and gauge-correction lines were
+still copied from `grids.yaml` text, which this issue's "Closes when" line rules out.
+They are now read from every archive file read (radar `title`, `precipitation` units,
+`station_id`, `contributing_gauges`; satellite `product_name`, `title`, `source`,
+`crrph_intensity` units), and the build stops if files disagree. The report also states
+the hourly rule, the satellite crop and the subsample rule (FR02, Outputs).
 
 <a id="iss-03"></a>
 

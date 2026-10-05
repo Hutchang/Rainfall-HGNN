@@ -39,6 +39,7 @@ PROJ_ATTRS = {
     "semi_minor_axis": np.float64(6356752.31414),
 }
 TIME_ATTRS = {"units": "seconds since 1970-01-01 00:00:00 UTC", "standard_name": "time"}
+REAL_TITLE = "Merged Gauge/Radar Accumulation (15 min)"
 
 
 def _write_quarter_hour_nc(
@@ -47,6 +48,7 @@ def _write_quarter_hour_nc(
     raw_grid: np.ndarray,
     contributing_gauges: tuple[int, ...] = (),
     proj_attrs: dict | None = None,
+    title: str = REAL_TITLE,
 ) -> None:
     """A minimal but faithful synthetic 15-minute file: the same uint16 /
     scale_factor / add_offset / _FillValue encoding and CF grid mapping the
@@ -74,7 +76,13 @@ def _write_quarter_hour_nc(
             "x": ("x", np.arange(size, dtype=np.float64), {"units": "km"}),
             "y": ("y", np.arange(size, dtype=np.float64), {"units": "km"}),
         },
-        attrs={"contributing_gauges": np.array(contributing_gauges, dtype=np.int32)},
+        attrs={
+            "contributing_gauges": np.array(contributing_gauges, dtype=np.int32),
+            # The real archive's global attributes for site 71.
+            "station_id": "71",
+            "station_name": "T_Hills",
+            "title": title,
+        },
     ).to_netcdf(path)
 
 
@@ -84,6 +92,7 @@ def _write_hour_zip(
     raws: list[np.ndarray],
     contributing_gauges: tuple[int, ...] = (),
     proj_attrs: dict | None = None,
+    title: str = REAL_TITLE,
 ) -> None:
     """One daily zip holding one synthetic 15-minute file per array in `raws`,
     fifteen minutes apart starting at `start`."""
@@ -97,6 +106,7 @@ def _write_hour_zip(
                 raw,
                 contributing_gauges,
                 proj_attrs,
+                title,
             )
             zf.write(nc_path, arcname=f"member_{i}.nc")
 
@@ -567,3 +577,96 @@ def test_grid_report_cross_references_contributing_gauges_against_study_stations
         "1 of 2 study stations appear in at least one written hour's "
         "contributing_gauges, in 1 of 1 written hours." in report
     )
+
+
+def test_real_radar_files_supply_the_reports_declarations(tmp_path):
+    """FR04: product, units, site and correction come from the files'
+    attributes; TEST06's hand count is the five sample files that list
+    contributing gauges."""
+    sample_dir = tmp_path / "sample"
+    sample_dir.mkdir()
+    (sample_dir / REAL_SAMPLE_ZIP.name).write_bytes(REAL_SAMPLE_ZIP.read_bytes())
+    provenance = build_radar_grid_data(
+        sample_dir, date(2022, 1, 1), date(2022, 1, 31), 10
+    ).provenance
+    assert provenance["product"] == REAL_TITLE
+    assert provenance["units"] == "kg m-2"
+    assert provenance["site"] == "71 (T_Hills)"
+    assert provenance["gauge_correction"] == (
+        "contributing_gauges listed in 5 of 5 files read"
+    )
+    assert provenance["subsample_rule"] == (
+        "rows and columns 0, 10, 20, ... of the native 512 x 512 grid (stride 10)"
+    )
+
+
+def test_grid_report_declares_from_the_files_not_from_grids_yaml(tmp_path):
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir()
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    raws = [np.full((4, 4), 6, dtype=np.uint16) for _ in range(4)]
+    _write_hour_zip(
+        archive_root / "71_20220105.prcp-m15.zip",
+        hour,
+        raws,
+        contributing_gauges=(1, 2),
+    )
+    output_dir = tmp_path / "standard"
+    config_path = tmp_path / "grids.yaml"
+    wrong = "TYPED INTO CONFIG"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "raw_dir": str(tmp_path / "raw"),
+                "output_dir": str(output_dir),
+                "start": date(2022, 1, 5),
+                "end": date(2022, 1, 5),
+                "layers": {
+                    "radar": {
+                        "root": str(archive_root),
+                        "subsample_stride": 2,
+                        "product": wrong,
+                        "units": wrong,
+                        "timestamp_convention": wrong,
+                        "gauge_correction": wrong,
+                        "evidence": "synthetic test fixture",
+                    }
+                },
+            }
+        )
+    )
+
+    build(config_path)
+    report = (output_dir / "grid_report.md").read_text()
+
+    assert wrong not in report
+    assert f"product (from the files): {REAL_TITLE}." in report
+    assert (
+        "units (from the files): kg m-2; hourly value: sum of four 15-minute files."
+        in report
+    )
+    assert "site (from the files): 71 (T_Hills)." in report
+    assert (
+        "gauge correction (from the files): contributing_gauges listed in 4 of 4 "
+        "files read." in report
+    )
+    assert (
+        "subsample rule: rows and columns 0, 2, 4, ... of the native 4 x 4 grid "
+        "(stride 2)." in report
+    )
+    assert "Values are reshaped without" not in report
+
+
+def test_files_that_disagree_on_their_product_stop_the_build(tmp_path):
+    root = tmp_path / "archive"
+    root.mkdir()
+    raws = [np.full((2, 2), 6, dtype=np.uint16) for _ in range(4)]
+    for day, title in ((5, REAL_TITLE), (6, "Instantaneous rain rate")):
+        _write_hour_zip(
+            root / f"71_202201{day:02d}.prcp-m15.zip",
+            pd.Timestamp(f"2022-01-{day:02d} 00:00", tz="UTC"),
+            raws,
+            title=title,
+        )
+    with pytest.raises(ValueError, match="disagree on title"):
+        build_radar_grid_data(root, date(2022, 1, 5), date(2022, 1, 6), 1)
