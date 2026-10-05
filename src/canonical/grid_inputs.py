@@ -34,7 +34,7 @@ def _gadi_hint(root: Path) -> str:
     """For a root under /g/data/<project>/, the reason it's likely missing and
     how to fix it; empty for any other path, where nothing this specific can
     be said."""
-    match = _GDATA_PROJECT.match(str(root))
+    match = _GDATA_PROJECT.match(root.as_posix())
     if not match:
         return ""
     project = match.group(1)
