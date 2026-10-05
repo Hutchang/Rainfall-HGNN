@@ -24,7 +24,7 @@ import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -137,6 +137,17 @@ def subsampled_flat_indices(size: int, stride: int) -> list[int]:
     return [row * size + col for row in picked for col in picked]
 
 
+def _zip_day(path: Path) -> date | None:
+    """The date a daily zip's filename embeds, or None if it embeds none."""
+    match = _DATE_RE.search(path.stem)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
 def _daily_zips_in_range(root: Path, start: date, end: date) -> list[Path]:
     """Every zip under `root` whose filename embeds one date in [start, end],
     sorted by that date. Recurses through whatever layout the archive uses,
@@ -144,14 +155,8 @@ def _daily_zips_in_range(root: Path, start: date, end: date) -> list[Path]:
     """
     found = []
     for path in root.rglob("*.zip"):
-        match = _DATE_RE.search(path.stem)
-        if not match:
-            continue
-        try:
-            day = datetime.strptime(match.group(1), "%Y%m%d").date()
-        except ValueError:
-            continue
-        if start <= day <= end:
+        day = _zip_day(path)
+        if day is not None and start <= day <= end:
             found.append((day, path))
     return [path for _, path in sorted(found)]
 
@@ -159,17 +164,39 @@ def _daily_zips_in_range(root: Path, start: date, end: date) -> list[Path]:
 def build_radar_grid_data(
     root: Path, start: date, end: date, subsample_stride: int
 ) -> GridData:
-    """Read every daily zip under `root` in [start, end], sum complete hours,
+    """Read every daily zip under `root` for [start, end], sum complete hours,
     subsample to the stride grid, and return a radar `GridData`.
+
+    The archive zips each file under the day its window *ends* (see the
+    module docstring), so the 23:00 hour's last file, 23:45-00:00, is in the
+    next day's zip. Hours are therefore summed across zips, and the zip for
+    the day after `end` is read too, so the period's last hour is complete.
     """
-    zip_paths = _daily_zips_in_range(root, start, end)
+    zip_paths = _daily_zips_in_range(root, start, end + timedelta(days=1))
     if not zip_paths:
         raise ValueError(
             f"no radar archive zips found under {root} in {start} to {end}"
         )
+    period_start = pd.Timestamp(start, tz="UTC")
+    period_end = pd.Timestamp(end + timedelta(days=1), tz="UTC")
 
     hours: dict[pd.Timestamp, np.ndarray] = {}
     gauges_by_hour: dict[pd.Timestamp, frozenset[int]] = {}
+    pending: dict[pd.Timestamp, list[QuarterHour]] = {}
+
+    def close(closing: list[pd.Timestamp]) -> None:
+        """Sum hours no later zip can add to; drop those outside the period
+        (the first zip's 23:45 file of the day before `start`, and the extra
+        zip's own hours after `end`)."""
+        quarters = [
+            quarter
+            for hour in closing
+            for quarter in pending.pop(hour)
+            if period_start <= hour < period_end
+        ]
+        hours.update(hourly_grids(quarters))
+        gauges_by_hour.update(hourly_contributing_gauges(quarters))
+
     native_time_step_minutes = None
     grid_def = None
     for zip_path in zip_paths:
@@ -182,8 +209,15 @@ def build_radar_grid_data(
         if native_time_step_minutes is None and quarters:
             delta = quarters[0].valid_time - quarters[0].start
             native_time_step_minutes = round(delta.total_seconds() / 60)
-        hours.update(hourly_grids(quarters))
-        gauges_by_hour.update(hourly_contributing_gauges(quarters))
+        for quarter in quarters:
+            pending.setdefault(quarter.start.floor("h"), []).append(quarter)
+        # An hour's four files end 15 to 60 minutes after it starts, so once
+        # the zip for the day its last file ends on has been read, no later
+        # zip can hold any of them.
+        day = _zip_day(zip_path)
+        one_hour = pd.Timedelta(hours=1)
+        close([hour for hour in pending if (hour + one_hour).date() <= day])
+    close(list(pending))
 
     if not hours:
         raise ValueError(f"no complete hours found under {root} in {start} to {end}")

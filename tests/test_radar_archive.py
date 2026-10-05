@@ -95,6 +95,18 @@ def _write_hour_zip(
             zf.write(nc_path, arcname=f"member_{i}.nc")
 
 
+def _write_day_zip(zip_path: Path, starts: list[pd.Timestamp]) -> None:
+    """One daily zip of 0.25 mm 15-minute files starting at each of `starts`,
+    each named by its window's end time, as the real archive names them."""
+    raw = np.full((1, 1), 6, dtype=np.uint16)
+    with tempfile.TemporaryDirectory() as tmp, zipfile.ZipFile(zip_path, "w") as zf:
+        for start in starts:
+            end = start + pd.Timedelta(minutes=15)
+            nc_path = Path(tmp) / f"71_{end:%Y%m%d_%H%M%S}.prcp-m15.nc"
+            _write_quarter_hour_nc(nc_path, int(start.timestamp()), raw)
+            zf.write(nc_path, arcname=nc_path.name)
+
+
 # ---- TEST02: the real committed sample -------------------------------------
 
 
@@ -213,6 +225,43 @@ def test_read_daily_zip_and_hourly_grids_miss_an_incomplete_synthetic_hour(tmp_p
     _write_hour_zip(zip_path, hour, raws)
 
     assert hourly_grids(read_daily_zip(zip_path)) == {}
+
+
+def test_the_23_00_hour_is_completed_from_the_next_days_zip(tmp_path):
+    """A file is zipped under the day its window ends, so the 23:00 hour's
+    last file (23:45-00:00) sits in the next day's zip. Reading one zip at a
+    time would see three files in one and one in the other, and drop the
+    hour both times."""
+    root = tmp_path / "archive"
+    root.mkdir()
+    quarter = pd.Timedelta(minutes=15)
+    jan5 = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    jan6 = pd.Timestamp("2022-01-06 00:00", tz="UTC")
+    ten_pm = jan5 + pd.Timedelta(hours=22)
+    _write_day_zip(
+        root / "71_20220105.prcp-m15.zip",
+        # 4 Jan 23:45-00:00 opens the zip, then 22:00-23:45 on 5 Jan.
+        [jan5 - quarter] + [ten_pm + i * quarter for i in range(7)],
+    )
+    _write_day_zip(
+        root / "71_20220106.prcp-m15.zip",
+        [jan6 - quarter] + [jan6 + i * quarter for i in range(4)],
+    )
+
+    one_day = build_radar_grid_data(root, date(2022, 1, 5), date(2022, 1, 5), 1)
+    # 23:00 is complete; 4 Jan 23:00 and 6 Jan 00:00 lie outside the period.
+    assert list(one_day.timestamps) == [
+        jan5 + pd.Timedelta(hours=22),
+        jan5 + pd.Timedelta(hours=23),
+    ]
+    np.testing.assert_allclose(one_day.values[:, 0, 0], [1.0, 1.0])
+
+    two_days = build_radar_grid_data(root, date(2022, 1, 5), date(2022, 1, 6), 1)
+    assert list(two_days.timestamps) == [
+        jan5 + pd.Timedelta(hours=22),
+        jan5 + pd.Timedelta(hours=23),
+        jan6,
+    ]
 
 
 # ---- TEST04: deterministic subsample; report node count matches the table -
