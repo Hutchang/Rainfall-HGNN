@@ -163,8 +163,15 @@ incoming relation so the stacked HGNN can keep updating that type; 04 supplies t
 edges. The adapter does not import the inherited graph attachment's known coordinate
 ordering defect.
 
-No feature rescaling is performed. Do not infer scales from the data or change labels to
-fit a model; agree any transform with Component 04 first. Component 01/02 must establish
+Rescaling is one setting, `input_rainfall_scale`. `physical_mm` feeds the model raw
+millimetres. `zscore_train` (D08.2; paper §4.3) subtracts the mean and divides by the
+spread of the observed rainfall in each fold's **training** graph, per node type, and
+applies those two numbers to the validation and test graphs as well. Only the rainfall
+input channel is scaled: validity, positional features, targets and predictions are not,
+so scores stay in millimetres. The numbers used are written to the run's `config.yaml`
+under `input_scaling`, and a checkpoint cannot be replayed under the other setting. Graph
+files stay in physical millimetres either way; do not change labels to fit a model, and
+agree any transform of the files themselves with Component 04 first. Component 01/02 must establish
 product, units, timestamp meaning and gauge correction before physical interpretation. All
 fusion run reports flag that tensor compatibility alone does not establish independent
 held-out gauge evaluation. The supervisor's broader national-run objective does not make
