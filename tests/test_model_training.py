@@ -85,6 +85,17 @@ def test_five_fold_cpu_reproducibility_and_checkpoint_replay(
         "an optimizer step failed to update any parameter"
     )
     history = pd.read_csv(first / "history.csv")
+    assert set(history.columns) == {
+        "fold",
+        "epoch",
+        "train_loss",
+        "val_loss",
+        "best_val_loss",
+        "deteriorations",
+        "patience_remaining",
+        "early_stop_status",
+    }
+    assert history.early_stop_status.isin(["IMPROVED", "WATCHING", "TRIGGERED"]).all()
     assert history.groupby("fold").size().tolist() == [2] * 5
     checkpoint = torch.load(first / "best.pt", weights_only=True)
     repeated_checkpoint = torch.load(second / "best.pt", weights_only=True)
@@ -140,6 +151,32 @@ def test_five_fold_cpu_reproducibility_and_checkpoint_replay(
     with pytest.raises(RuntimeError, match="size mismatch"):
         run(inputs, tmp_path / "bad-shape-replay", bad_shape_path)
     assert not (tmp_path / "bad-shape-replay/predictions.csv").exists()
+
+
+def test_epoch_output_reports_deterioration_and_early_stop(
+    inputs, tmp_path, monkeypatch, capsys
+):
+    settings = dict(inputs)
+    settings["epochs"] = 5
+    settings["early_stop_patience"] = 1
+    validation_losses = iter([1.0, 1.0] * 5)
+    monkeypatch.setattr(
+        "src.models.trainer.validation_loss",
+        lambda _model, _graph, _settings: next(validation_losses),
+    )
+
+    directory = run(settings, tmp_path / "early-stop")
+
+    history = pd.read_csv(directory / "history.csv")
+    assert history.groupby("fold").size().tolist() == [2] * 5
+    assert (
+        history.groupby("fold").early_stop_status.apply(list).tolist()
+        == [["IMPROVED", "TRIGGERED"]] * 5
+    )
+    output = capsys.readouterr().out
+    assert "deteriorations=1/1" in output
+    assert "patience_remaining=0" in output
+    assert "early_stop=TRIGGERED" in output
 
 
 def test_graph_identity_batching_masking_and_missing_targets(inputs):

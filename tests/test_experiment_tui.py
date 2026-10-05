@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 import yaml
-from textual.widgets import Input, TextArea
+from textual.containers import VerticalScroll
+from textual.widgets import Button, Input, Select, TabbedContent, TextArea
 
 from src.experiments.chart import loss_chart
+from src.experiments.results import results_summary, save_loss_plot
 from src.experiments.tui import ExperimentApp
 from src.experiments.workspace import (
     STAGE_BY_KEY,
@@ -285,10 +287,17 @@ def test_history_load_and_loss_chart(project: Path) -> None:
     model = experiment.root / "model"
     model.mkdir()
     (model / "history.csv").write_text(
-        "fold,epoch,train_loss,val_loss\n0,1,1.0,1.4\n0,2,0.7,1.1\n1,1,2.0,2.2\n",
+        "fold,epoch,train_loss,val_loss,best_val_loss,deteriorations,"
+        "patience_remaining,early_stop_status\n"
+        "0,1,1.0,1.4,1.4,0,4,improved\n"
+        "0,2,0.7,1.1,1.1,0,4,improved\n"
+        "1,1,2.0,2.2,2.2,0,4,improved\n",
         encoding="utf-8",
     )
-    chart = loss_chart(load_history(experiment), fold=0, width=72, height=18)
+    history = load_history(experiment)
+    assert history[0]["early_stop_status"] == "improved"
+    assert history[0]["patience_remaining"] == 4
+    chart = loss_chart(history, fold=0, width=72, height=18)
     assert "Fold 0" in chart.plain
     assert "Epoch 2" in chart.plain
     assert "Train" in chart.plain
@@ -301,11 +310,60 @@ def test_history_load_and_loss_chart(project: Path) -> None:
         "bold magenta",
     }
 
+    summary = results_summary(experiment, history, selected_fold=0, state="RUNNING")
+    assert "Run state:** `RUNNING`" in summary
+    assert "1.1 (epoch 2)" in summary
+    assert "0 ← selected" in summary
+    assert "Final RMSE, MAE and correlation" in summary
+
+
+def test_results_summary_and_png_export_are_preserved_in_experiment(
+    project: Path,
+) -> None:
+    experiment = create_experiment("completed-results", project_root=project)
+    model = experiment.root / "model"
+    model.mkdir()
+    history_path = model / "history.csv"
+    history_path.write_text(
+        "fold,epoch,train_loss,val_loss\n"
+        "0,1,1.0,1.3\n0,2,0.75,0.9\n0,3,0.6,0.8\n",
+        encoding="utf-8",
+    )
+    (model / "report.md").write_text(
+        "# Model run\n\n"
+        "| Method | Fold | Rows | RMSE (mm) | MAE (mm) | Correlation |\n"
+        "|---|---|---:|---:|---:|---:|\n"
+        "| hgnn | overall | 120 | 0.42 | 0.31 | 0.8 |\n"
+        "| hgnn | 0 | 24 | 0.4 | 0.3 | 0.81 |\n",
+        encoding="utf-8",
+    )
+
+    summary = results_summary(experiment, selected_fold=0, state="DONE")
+    assert "Final prediction metrics" in summary
+    assert "| hgnn | overall | 120 | 0.42 | 0.31 | 0.8 |" in summary
+
+    before = history_path.read_bytes()
+    first = save_loss_plot(experiment, fold=0)
+    second = save_loss_plot(experiment, fold=0)
+    assert first.parent == experiment.root / "results"
+    assert first.name == "train-validation-loss-fold-0-through-epoch-3.png"
+    assert second.name == "train-validation-loss-fold-0-through-epoch-3-2.png"
+    assert first.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert history_path.read_bytes() == before
+
+    with pytest.raises(ValueError, match="Fold 4"):
+        save_loss_plot(experiment, fold=4)
+
 
 def test_textual_app_supports_create_clone_edit_and_open(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     experiment = create_experiment("visible", project_root=project)
+    (experiment.root / "model").mkdir()
+    (experiment.root / "model/history.csv").write_text(
+        "fold,epoch,train_loss,val_loss\n0,1,1.0,1.2\n",
+        encoding="utf-8",
+    )
     app = ExperimentApp(project_root=project)
 
     async def exercise() -> None:
@@ -313,6 +371,15 @@ def test_textual_app_supports_create_clone_edit_and_open(
             assert app.current == experiment
             assert app.query_one("#config-editor").text
             assert "visible" in str(app.query_one("#workspace-header").render())
+            assert app.query_one("#gadi-experiment-select", Select).disabled
+            assert app.query_one("#local-experiment-select", Select)
+            app.query_one(TabbedContent).active = "results-tab"
+            await pilot.pause()
+            results_scroll = app.query_one("#results-scroll", VerticalScroll)
+            assert results_scroll.max_scroll_y > 0
+            assert not app.query_one("#save-loss-chart", Button).disabled
+            app.save_loss_chart()
+            assert list((experiment.root / "results").glob("*.png"))
 
             app.query_one("#config-file").value = "models/hgnn.yaml"
             await pilot.pause()

@@ -42,7 +42,18 @@ parent used for discovery and new experiments. Press `Ctrl+Q` to leave the app.
    `STOPPED`; partial artifacts are retained for diagnosis and are not called a result.
 6. On **Results**, follow the live, full-pane train and validation loss line chart. Its
    axes are Loss and Epoch, the two series have distinct colours, and the fold selector
-   lets you inspect completed folds while training advances.
+   lets you inspect completed folds while training advances. A compact summary below
+   the graph shows each fold's best and latest losses, early-stopping state when the
+   trainer provides it, and the final overall RMSE, MAE and correlation when available.
+   The complete Results tab scrolls as one page, so the graph keeps a readable height
+   and the summary expands instead of using a second, cramped scroll region.
+   **Save graph PNG** writes the selected fold's Matplotlib chart to the experiment's
+   `results/` directory without overwriting an earlier export.
+
+The **Experiments** page separates local experiments from Gadi experiments. The Gadi
+selector is currently an explicitly disabled stub: it does not connect to NCI or imply
+that remote results have been discovered. It reserves the intended workflow until that
+integration is implemented.
 
 Use **Clone current** to start an ablation from an earlier experiment. It copies the
 editable config snapshot and deliberately does not copy effective configs, logs, status
@@ -64,6 +75,7 @@ Each experiment is a self-contained folder:
   split/                Component 03 output
   graphs/               Component 04 outputs
   model/                Component 06 history, checkpoint, predictions and report
+  results/              researcher-requested PNG graph exports
 ```
 
 The app never reuses an existing experiment folder. Once a pipeline run starts, its

@@ -229,3 +229,5 @@ __marimo__/
 # NCI job output belongs with the private experiment record.
 /rainflow-env.o*
 /rainflow-smoke.o*
+
+report/

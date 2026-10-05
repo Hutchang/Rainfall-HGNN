@@ -127,14 +127,8 @@ def train_fold(graphs, fold_index, settings, on_epoch=None):
     for epoch in range(1, settings["epochs"] + 1):
         train = train_epoch(model, graphs["train"], optimizer, settings)
         validation = validation_loss(model, graphs["validation"], settings)
-        row = {
-            "fold": fold_index,
-            "epoch": epoch,
-            "train_loss": train,
-            "val_loss": validation,
-        }
-        history.append(row)
-        if best is None or validation < best["val_loss"]:
+        improved = best is None or validation < best["val_loss"]
+        if improved:
             best = {
                 "fold": fold_index,
                 "epoch": epoch,
@@ -148,9 +142,24 @@ def train_fold(graphs, fold_index, settings, on_epoch=None):
             stale = 0
         else:
             stale += 1
+        patience = settings["early_stop_patience"]
+        triggered = stale >= patience
+        row = {
+            "fold": fold_index,
+            "epoch": epoch,
+            "train_loss": train,
+            "val_loss": validation,
+            "best_val_loss": best["val_loss"],
+            "deteriorations": stale,
+            "patience_remaining": max(0, patience - stale),
+            "early_stop_status": (
+                "TRIGGERED" if triggered else "IMPROVED" if improved else "WATCHING"
+            ),
+        }
+        history.append(row)
         if on_epoch:
             on_epoch(row, best)
-        if stale >= settings["early_stop_patience"]:
+        if triggered:
             break
     model.load_state_dict(best["state_dict"])
     return model, best, history

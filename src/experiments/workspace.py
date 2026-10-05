@@ -671,7 +671,7 @@ class PipelineRunner:
             await process.wait()
 
 
-def load_history(experiment: Experiment) -> list[dict[str, float | int]]:
+def load_history(experiment: Experiment) -> list[dict[str, float | int | str]]:
     """Load finite training history rows without importing pandas into the UI."""
     import csv
     import math
@@ -679,22 +679,30 @@ def load_history(experiment: Experiment) -> list[dict[str, float | int]]:
     path = experiment.root / "model" / "history.csv"
     if not path.is_file():
         return []
-    rows: list[dict[str, float | int]] = []
+    rows: list[dict[str, float | int | str]] = []
     with path.open(encoding="utf-8", newline="") as stream:
         for record in csv.DictReader(stream):
             try:
-                row: dict[str, float | int] = {
+                row: dict[str, float | int | str] = {
                     "fold": int(record["fold"]),
                     "epoch": int(record["epoch"]),
                     "train_loss": float(record["train_loss"]),
                     "val_loss": float(record["val_loss"]),
                 }
+                for key in ("best_val_loss",):
+                    if record.get(key) not in (None, ""):
+                        row[key] = float(record[key])
+                for key in ("deteriorations", "patience_remaining"):
+                    if record.get(key) not in (None, ""):
+                        row[key] = int(record[key])
+                if record.get("early_stop_status") not in (None, ""):
+                    row["early_stop_status"] = record["early_stop_status"]
             except (KeyError, TypeError, ValueError) as error:
                 raise ExperimentError(
                     f"Invalid training history row in {path}"
                 ) from error
-            if not math.isfinite(row["train_loss"]) or not math.isfinite(
-                row["val_loss"]
+            if not math.isfinite(float(row["train_loss"])) or not math.isfinite(
+                float(row["val_loss"])
             ):
                 raise ExperimentError(f"Non-finite training history value in {path}")
             rows.append(row)

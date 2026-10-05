@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from textual import on
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
@@ -31,6 +31,7 @@ from textual.widgets import (
 )
 
 from .chart import loss_chart
+from .results import results_summary, save_loss_plot
 from .workspace import (
     STAGES,
     Experiment,
@@ -119,10 +120,12 @@ class LossPlot(Static):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._rows: list[dict[str, float | int]] = []
+        self._rows: list[dict[str, float | int | str]] = []
         self._fold: int | None = None
 
-    def set_history(self, rows: list[dict[str, float | int]], fold: int | None) -> None:
+    def set_history(
+        self, rows: list[dict[str, float | int | str]], fold: int | None
+    ) -> None:
         self._rows = rows
         self._fold = fold
         self.refresh(layout=True)
@@ -182,8 +185,15 @@ class ExperimentApp(App[None]):
         color: $text-muted;
     }
 
-    #experiment-select {
+    #local-experiment-select, #gadi-experiment-select {
         width: 2fr;
+    }
+
+    #gadi-note {
+        height: auto;
+        min-height: 2;
+        margin-bottom: 1;
+        color: $text-muted;
     }
 
     #open-path {
@@ -218,12 +228,19 @@ class ExperimentApp(App[None]):
 
     #loss-chart {
         width: 1fr;
-        height: 1fr;
-        min-height: 12;
+        height: 24;
+        min-height: 18;
         padding: 1;
         border: round $accent;
         background: transparent;
         color: $text;
+    }
+
+    #results-scroll {
+        width: 1fr;
+        height: 1fr;
+        background: transparent;
+        overflow-y: auto;
     }
 
     #results-status {
@@ -235,6 +252,14 @@ class ExperimentApp(App[None]):
 
     #results-fold {
         width: 24;
+    }
+
+    #results-summary {
+        height: auto;
+        min-height: 8;
+        padding: 0 1;
+        border-top: solid $panel;
+        background: transparent;
     }
     """
 
@@ -273,15 +298,29 @@ class ExperimentApp(App[None]):
         with TabbedContent(initial="experiments-tab"):
             with TabPane("Experiments", id="experiments-tab"):
                 yield Label("Experiment workspaces", classes="section-title")
+                yield Label("Local experiments")
                 with Horizontal(classes="toolbar"):
                     yield Select(
                         [],
-                        prompt="Choose a saved experiment",
-                        id="experiment-select",
+                        prompt="Choose a saved local experiment",
+                        id="local-experiment-select",
                     )
                     yield Button("Refresh", id="refresh-experiments")
                     yield Button("New", id="new-experiment", variant="primary")
                     yield Button("Clone current", id="clone-experiment")
+                yield Label("Gadi experiments")
+                yield Select(
+                    [("NCI connection not configured", "not-connected")],
+                    value="not-connected",
+                    allow_blank=False,
+                    disabled=True,
+                    id="gadi-experiment-select",
+                )
+                yield Static(
+                    "Stub only: browsing and opening Gadi results will be enabled "
+                    "when the NCI interface is available.",
+                    id="gadi-note",
+                )
                 with Horizontal(classes="toolbar"):
                     yield Input(
                         placeholder="Open any experiment folder or experiment.yaml",
@@ -338,15 +377,28 @@ class ExperimentApp(App[None]):
                     id="run-log",
                 )
             with TabPane("Results", id="results-tab"):
-                yield Label("Live train vs validation loss", classes="section-title")
-                with Horizontal(classes="toolbar"):
-                    yield Static("No experiment open.", id="results-status")
-                    yield Select(
-                        [],
-                        prompt="Fold",
-                        id="results-fold",
+                with VerticalScroll(id="results-scroll"):
+                    yield Label(
+                        "Live train vs validation loss", classes="section-title"
                     )
-                yield LossPlot(id="loss-chart")
+                    with Horizontal(classes="toolbar"):
+                        yield Static("No experiment open.", id="results-status")
+                        yield Select(
+                            [],
+                            prompt="Fold",
+                            id="results-fold",
+                        )
+                        yield Button(
+                            "Save graph PNG",
+                            id="save-loss-chart",
+                            disabled=True,
+                        )
+                    yield LossPlot(id="loss-chart")
+                    yield Markdown(
+                        "### Results summary\n\n"
+                        "Open an experiment to inspect its results.",
+                        id="results-summary",
+                    )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -360,7 +412,7 @@ class ExperimentApp(App[None]):
         self.set_interval(1.0, self._refresh_live_views)
 
     def _refresh_experiment_options(self) -> None:
-        select = self.query_one("#experiment-select", Select)
+        select = self.query_one("#local-experiment-select", Select)
         experiments = discover_experiments(self.experiments_dir)
         select.set_options(
             [
@@ -472,6 +524,15 @@ class ExperimentApp(App[None]):
             selected = None
             self._latest_result_fold = None
         self.query_one("#loss-chart", LossPlot).set_history(history, selected)
+        self.query_one("#save-loss-chart", Button).disabled = not history
+        self.query_one("#results-summary", Markdown).update(
+            results_summary(
+                self.current,
+                history,
+                selected_fold=selected,
+                state=str(status.get("state", "UNKNOWN")),
+            )
+        )
 
     def _show_new_dialog(self, *, cloning: bool) -> None:
         if cloning and not self.current:
@@ -510,7 +571,7 @@ class ExperimentApp(App[None]):
     def action_run_pipeline(self) -> None:
         self._start_pipeline()
 
-    @on(Select.Changed, "#experiment-select")
+    @on(Select.Changed, "#local-experiment-select")
     def select_experiment(self, event: Select.Changed) -> None:
         if event.value is not Select.BLANK:
             self._open(str(event.value))
@@ -528,7 +589,29 @@ class ExperimentApp(App[None]):
             history = load_history(self.current)
         except ExperimentError, OSError:
             return
-        self.query_one("#loss-chart", LossPlot).set_history(history, int(event.value))
+        selected = int(event.value)
+        self.query_one("#loss-chart", LossPlot).set_history(history, selected)
+        self.query_one("#results-summary", Markdown).update(
+            results_summary(self.current, history, selected_fold=selected)
+        )
+
+    @on(Button.Pressed, "#save-loss-chart")
+    def save_loss_chart(self) -> None:
+        if not self.current:
+            self.notify("Open an experiment first", severity="warning")
+            return
+        selected = self.query_one("#results-fold", Select).value
+        fold = None if selected is Select.BLANK else int(selected)
+        try:
+            path = save_loss_plot(self.current, fold=fold)
+        except (ExperimentError, OSError, ValueError) as error:
+            self.notify(str(error), severity="error", timeout=8)
+            return
+        self.notify(
+            f"Saved {path.relative_to(self.current.root)}",
+            severity="information",
+            timeout=8,
+        )
 
     @on(Button.Pressed, "#refresh-experiments")
     def refresh_experiments(self) -> None:

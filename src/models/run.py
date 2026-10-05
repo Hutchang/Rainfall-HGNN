@@ -25,6 +25,16 @@ from src.models.trainer import model_spec, predict_fold, restore_model, train_fo
 
 INPUT_KEYS = ("gauge_file", "stations_file", "split_file", "seeds_file")
 ROLES = ("train", "validation", "test")
+HISTORY_COLUMNS = (
+    "fold",
+    "epoch",
+    "train_loss",
+    "val_loss",
+    "best_val_loss",
+    "deteriorations",
+    "patience_remaining",
+    "early_stop_status",
+)
 
 
 def read_settings(path):
@@ -299,7 +309,9 @@ def run(settings, output_dir=None, predict_from=None):
                 def save_progress(row, best, index=index):
                     history.append(row)
                     checkpoints[index] = best
-                    pd.DataFrame(history).to_csv(directory / "history.csv", index=False)
+                    pd.DataFrame(history, columns=HISTORY_COLUMNS).to_csv(
+                        directory / "history.csv", index=False
+                    )
                     torch.save(
                         {
                             "format": "component06-best-v1",
@@ -308,6 +320,17 @@ def run(settings, output_dir=None, predict_from=None):
                             "inputs": settings["provenance"]["inputs"],
                         },
                         directory / "best.pt",
+                    )
+                    print(
+                        f"fold={index} epoch={row['epoch']}/{settings['epochs']} "
+                        f"train_loss={row['train_loss']:.8g} "
+                        f"val_loss={row['val_loss']:.8g} "
+                        f"best_val_loss={row['best_val_loss']:.8g} "
+                        f"deteriorations={row['deteriorations']}/"
+                        f"{settings['early_stop_patience']} "
+                        f"patience_remaining={row['patience_remaining']} "
+                        f"early_stop={row['early_stop_status']}",
+                        flush=True,
                     )
 
                 if checkpoint_input:
@@ -355,9 +378,9 @@ def run(settings, output_dir=None, predict_from=None):
         )
         validate_predictions(predictions, gauge, split)
         predictions.to_csv(directory / "predictions.csv", index=False)
-        pd.DataFrame(
-            history, columns=["fold", "epoch", "train_loss", "val_loss"]
-        ).to_csv(directory / "history.csv", index=False)
+        pd.DataFrame(history, columns=HISTORY_COLUMNS).to_csv(
+            directory / "history.csv", index=False
+        )
         if checkpoint_input:
             torch.save(checkpoint_input, directory / "best.pt")
         missing_counts = []

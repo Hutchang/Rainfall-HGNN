@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `45c8dbb` · **Sprint:** 2 · **Updated:** 2026-09-19
+**Latest commit:** `1b786a2` · **Sprint:** 2 · **Updated:** 2026-10-05
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
@@ -49,6 +49,19 @@ D13 reads it in place, reusing the fetcher's reader and coordinate code; the fet
 download path serves samples and local tries. Nothing downstream can read the archive
 files yet (ISS-30), so no radar result is possible until D13.2 lands.
 
+Researchers run the pipeline from a terminal app, `src/experiments/tui.py`, without
+editing code. It creates or clones an experiment folder with its own copy of the configs,
+edits those configs, runs any range of stages from 01 to 06, and streams the live output.
+The Results tab shows each fold's train and validation loss as training runs. Below the
+chart, a summary table gives each fold's best and latest losses and its early-stopping
+state, followed by the final RMSE, MAE and correlation once the run finishes. **Save graph
+PNG** writes the selected fold's chart to the experiment's `results/` folder. To support
+this, Component 06's `history.csv` now also records the best validation loss so far, the
+count of epochs without improvement, the remaining patience and an early-stopping status,
+and prints one line per epoch. The Gadi experiment list on the Experiments tab is a
+disabled placeholder; it does not connect to NCI. The
+[workbench guide](experiments/README.md) covers its use.
+
 No real Sydney build output exists in this checkout — `database/raw/`,
 `database/standard/` and `database/graphs/` are gitignored and absent. Everything
 verified below runs against committed offline samples and synthetic fixtures.
@@ -67,7 +80,7 @@ each deliverable's document. State per deliverable:
 
 | Deliverable | Name | State |
 |---|---|---|
-| D07 | Experiment runner | Not started. Today only Component 06 writes one folder per run with the fingerprints of its inputs; every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
+| D07 | Experiment runner | Not started. The terminal app above already gives each experiment its own folder, config copies and results; D07's runner, provenance record and registry are still to come. Today only Component 06 writes one folder per run with the fingerprints of its inputs; every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
 | D08 | Sydney gauge-only baseline | Not started. Model settings already match the paper; the split rule (ISS-10), which gauges each method may read (ISS-07) and input scaling (ISS-09) do not - these are D08's three gaps. Edge direction (ISS-25) is already applied in code behind `both_directions`; it needs only a rebuild on real data. D08 also owns the held-out distance measurement that says whether its own table can be trusted (D08.6, D08.7), and closes ISS-10 with it |
 | D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
@@ -98,6 +111,7 @@ when its owner starts work.
 | 03 | `src/study/`, `src/reproducibility/` | `config/splits/`, `config/seeds.yaml` | — (ISS-19) |
 | 04 | `src/graph/` | `config/graphs/` | `docs/graphs/` |
 | 06 | `src/models/` | `config/models/` | `docs/models/`, `docs/nci/` |
+| D07 | `src/experiments/` | — | `docs/experiments/` |
 
 Two inherited modules have been adopted into a component and are now live code, not
 reference: `src/models/models.py` (the retained architectures, Component 06) and
@@ -109,22 +123,24 @@ outputs. See [LEGACY_CODE.md](LEGACY_CODE.md).
 
 ## Verification
 
-Run on 2026-09-19 at `d337aa6`, Windows, Python 3.14:
+Run on 2026-10-05 on `1b786a2` plus the uncommitted Results-tab and training-history
+changes, macOS, Python 3.14.6:
 
 ```console
 uv run --locked python -m pytest tests -q -rx
 uv run --locked ruff check .
 ```
 
-- `tests/`: **153 passed, 2 skipped, 7 xfailed**. Both skips are the live-API acceptance
-  checks; set `BOM_NETWORK=1` to run them. A checkout without
-  `database/sydney_gauge_legacy/` skips the legacy-data tests as well, which is expected.
-- Repository-wide Ruff: **686** findings (ISS-17), down from 692 when `train_homo.py` and
-  `train_st.py` were deleted. Four of them now sit in `src/models/models.py` — they came
-  with the inherited architectures when that file moved under Component 06 and are not
-  new. Every module a component actually wrote passes focused checks.
-- Coverage: **not measured** — `pytest-cov` is not installed (ISS-33; D07.7 adds it and
-  records the baseline here).
+- `tests/`: **182 passed, 3 skipped, 7 xfailed**. The skips are the live-API acceptance
+  checks; set `BOM_NETWORK=1` (two gauge checks) or `NCI_NETWORK=1` (one radar check) to
+  run them. A checkout without `database/sydney_gauge_legacy/` skips the legacy-data
+  tests as well, which is expected.
+- Repository-wide Ruff: **684** findings (ISS-17). The files changed for the Results tab
+  add none; the findings in `src/models/run.py` are long lines that were there before.
+- Coverage, with `--cov=src`: **50 %** over all of `src/`, which includes the inherited
+  review-only code. Modules changed most recently: `src/experiments/results.py` 98 %,
+  `workspace.py` 94 %, `chart.py` 96 %, `tui.py` 87 %, `src/models/trainer.py` 94 %,
+  `src/models/run.py` 79 %. The floors are not enforced yet (ISS-33).
 - PyTorch and PyG emit Python 3.14 deprecation warnings.
 - `scripts/nci/test_guards.py` is excluded from `tests/` and fails on a Windows checkout
   for a line-ending reason (ISS-15). It passes on Linux and macOS.

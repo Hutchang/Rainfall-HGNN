@@ -7,7 +7,7 @@ from itertools import pairwise
 
 from rich.text import Text
 
-HistoryRow = dict[str, float | int]
+HistoryRow = dict[str, float | int | str]
 
 TRAIN_STYLE = "bold cyan"
 VALIDATION_STYLE = "bold magenta"
