@@ -1,0 +1,26 @@
+# HGNN (gauge-only) under the paper's Sydney protocol (D08).
+# Identical to hgnn.yaml except for three settings: the blocked split, the graphs
+# built from it, and z-scored rainfall input (paper sec 4.3).
+method: hgnn
+gauge_file: database/standard/gauge_hourly.csv
+stations_file: database/standard/stations.csv
+split_file: config/splits/sydney_5fold_blocked.json
+seeds_file: config/seeds.yaml
+graphs_dir: database/graphs/gauge_blocked
+input_layers: [raingauge]
+hidden_channels: 32
+num_layers: 5
+dropout: 0.15
+learning_rate: 0.0003
+weight_decay: 0.0001
+loss: weighted_mse
+weighted_loss_alpha: 0.18
+batch_size: 128
+epochs: 100
+early_stop_patience: 10
+device: cpu
+cpu_threads: 1
+deterministic: true
+input_rainfall_scale: zscore_train
+baselines: [idw, network_mean]
+idw_power: 2.0
