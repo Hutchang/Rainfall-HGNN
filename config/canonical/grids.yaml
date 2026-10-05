@@ -18,7 +18,9 @@ layers:
     # mount 1:1 for this archive) on 2026-09-26; not yet verified against an
     # actual Gadi shell -- see docs/grids/RADAR_SOURCE.md. Only exists on Gadi
     # with project rq0 membership; --check-inputs names that if it's missing.
-    root: /g/data/rq0/rainfields3
+    # One site's folder, not rainfields3/ itself: that holds every radar in
+    # Australia. Site 71 is Terrey Hills (Sydney).
+    root: /g/data/rq0/rainfields3/71
 
     # D13.2: subsample the native 512x512, 0.5 km grid to the cell nearest
     # each point of a stride*0.5 km grid -- stride 10 gives ~5 km spacing,

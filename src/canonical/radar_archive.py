@@ -32,7 +32,11 @@ import pandas as pd
 import xarray as xr
 
 from src.canonical.grids import GridData
-from src.ingestion.radar.coords import node_coordinates, read_grid
+from src.ingestion.radar.coords import (
+    assert_consistent_grid,
+    node_coordinates,
+    read_grid,
+)
 
 FILES_PER_HOUR = 4
 _DATE_RE = re.compile(r"(\d{8})")
@@ -83,6 +87,14 @@ def read_daily_zip(zip_path: Path) -> list[QuarterHour]:
                 read_quarter_hour(Path(zf.extract(member, tmp_dir)))
                 for member in members
             ]
+
+
+def _first_member_grid(zip_path: Path) -> dict:
+    """The grid definition of one daily zip's first NetCDF member."""
+    with zipfile.ZipFile(zip_path) as zf:
+        member = min(name for name in zf.namelist() if name.endswith(".nc"))
+        with tempfile.TemporaryDirectory() as tmp:
+            return read_grid(Path(zf.extract(member, tmp)))
 
 
 def hourly_grids(quarters: list[QuarterHour]) -> dict[pd.Timestamp, np.ndarray]:
@@ -149,12 +161,14 @@ def _zip_day(path: Path) -> date | None:
 
 
 def _daily_zips_in_range(root: Path, start: date, end: date) -> list[Path]:
-    """Every zip under `root` whose filename embeds one date in [start, end],
-    sorted by that date. Recurses through whatever layout the archive uses,
-    the same way `src.canonical.grid_inputs.find_archive_dates` does.
+    """Every `prcp-m15` zip under `root` whose filename embeds one date in
+    [start, end], sorted by that date. Recurses through whatever layout the
+    archive uses, the same way `src.canonical.grid_inputs.find_archive_dates`
+    does. A site's year folders also hold `gndrefl` and `prcp-crate` zips,
+    which are other products and are never read.
     """
     found = []
-    for path in root.rglob("*.zip"):
+    for path in root.rglob("*.prcp-m15.zip"):
         day = _zip_day(path)
         if day is not None and start <= day <= end:
             found.append((day, path))
@@ -200,12 +214,20 @@ def build_radar_grid_data(
     native_time_step_minutes = None
     grid_def = None
     for zip_path in zip_paths:
-        if grid_def is None:
-            with zipfile.ZipFile(zip_path) as zf:
-                member = next(n for n in zf.namelist() if n.endswith(".nc"))
-                with tempfile.TemporaryDirectory() as tmp:
-                    grid_def = read_grid(Path(zf.extract(member, tmp)))
         quarters = read_daily_zip(zip_path)
+        # Each radar site has its own grid (an Albers projection centred on
+        # the radar), so a zip whose grid differs is another site's, and its
+        # rain must not be stored against the first site's cell positions.
+        zip_grid = _first_member_grid(zip_path)
+        if grid_def is None:
+            grid_def = zip_grid
+        try:
+            assert_consistent_grid([grid_def, zip_grid])
+        except ValueError as error:
+            raise ValueError(
+                f"{zip_path}: {error}; every zip under {root} must come from "
+                "the same radar site -- point the root at one site's folder"
+            ) from error
         if native_time_step_minutes is None and quarters:
             delta = quarters[0].valid_time - quarters[0].start
             native_time_step_minutes = round(delta.total_seconds() / 60)

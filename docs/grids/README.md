@@ -31,7 +31,9 @@ families under the same `himawari-ahi` tree — see
 `intensity`-vs-`accum` decision.
 
 Point `layers.<name>.root` in `config/canonical/grids.yaml` at the mount path (or a
-local sample directory holding files named the same way) and run:
+local sample directory holding files named the same way). For radar that is one site's
+folder, `/g/data/rq0/rainfields3/71` for Sydney: `rainfields3/` itself holds every
+radar in Australia. Then run:
 
 ```console
 uv run --locked python -m src.canonical.grid_inputs config/canonical/grids.yaml --check-inputs
@@ -47,8 +49,10 @@ continue and names it; this is a separate, earlier check from the pickle-input
 ## Radar: from daily zips to hourly tables (D13.2)
 
 When `layers.radar.root` is set, `build()` (below) reads the archive in place instead
-of the pickle: it opens every daily zip under the root that falls in the config's
-`start`/`end` period, decodes each 15-minute NetCDF member's `precipitation` (CF
+of the pickle: it opens every `*.prcp-m15.zip` daily zip under the root that falls in
+the config's `start`/`end` period (the site's other products, `gndrefl` and
+`prcp-crate`, are never read), refuses any zip whose grid differs from the first —
+another radar site's — and decodes each 15-minute NetCDF member's `precipitation` (CF
 scale/offset applied, `_FillValue` masked to NaN) and `start_time`, and sums each
 complete run of four consecutive quarter-hours into one hour-beginning UTC value.
 Filenames embed each file's *end* time, not its start, so hours are grouped by each

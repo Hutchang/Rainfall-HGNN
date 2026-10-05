@@ -46,6 +46,7 @@ def _write_quarter_hour_nc(
     start_epoch: float,
     raw_grid: np.ndarray,
     contributing_gauges: tuple[int, ...] = (),
+    proj_attrs: dict | None = None,
 ) -> None:
     """A minimal but faithful synthetic 15-minute file: the same uint16 /
     scale_factor / add_offset / _FillValue encoding and CF grid mapping the
@@ -65,7 +66,7 @@ def _write_quarter_hour_nc(
                     "_FillValue": np.uint16(0),
                 },
             ),
-            "proj": ((), np.int8(0), dict(PROJ_ATTRS)),
+            "proj": ((), np.int8(0), dict(proj_attrs or PROJ_ATTRS)),
             "start_time": ((), np.float64(start_epoch), dict(TIME_ATTRS)),
             "valid_time": ((), np.float64(start_epoch + 900), dict(TIME_ATTRS)),
         },
@@ -82,6 +83,7 @@ def _write_hour_zip(
     start: pd.Timestamp,
     raws: list[np.ndarray],
     contributing_gauges: tuple[int, ...] = (),
+    proj_attrs: dict | None = None,
 ) -> None:
     """One daily zip holding one synthetic 15-minute file per array in `raws`,
     fifteen minutes apart starting at `start`."""
@@ -90,7 +92,11 @@ def _write_hour_zip(
         for i, raw in enumerate(raws):
             nc_path = tmp_dir / f"member_{i}.nc"
             _write_quarter_hour_nc(
-                nc_path, int(start.timestamp()) + i * 900, raw, contributing_gauges
+                nc_path,
+                int(start.timestamp()) + i * 900,
+                raw,
+                contributing_gauges,
+                proj_attrs,
             )
             zf.write(nc_path, arcname=f"member_{i}.nc")
 
@@ -284,6 +290,46 @@ def test_daily_zips_in_range_filters_and_sorts_by_embedded_date(tmp_path):
         "71_20220101.prcp-m15.zip",
         "71_20220102.prcp-m15.zip",
     ]
+
+
+def test_other_products_in_the_site_folder_are_never_read(tmp_path):
+    """A site's year folder holds gndrefl and prcp-crate zips beside
+    prcp-m15; only prcp-m15 is the product D13 reads."""
+    root = tmp_path / "71"
+    year = root / "2022"
+    (year / "prcp-m15").mkdir(parents=True)
+    (year / "prcp-crate").mkdir()
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    raws = [np.full((2, 2), 6, dtype=np.uint16) for _ in range(4)]
+    _write_hour_zip(year / "prcp-m15" / "71_20220105.prcp-m15.zip", hour, raws)
+    # Opening this as a zip would raise, so the build passing shows it was skipped.
+    (year / "prcp-crate" / "71_20220105.prcp-crate.zip").write_bytes(b"not a zip")
+
+    grid = build_radar_grid_data(root, date(2022, 1, 5), date(2022, 1, 5), 1)
+    assert list(grid.timestamps) == [hour]
+
+
+def test_zips_from_a_second_radar_site_are_refused(tmp_path):
+    """A root above the site folders reaches every radar in Australia. Each
+    site's grid is centred on its own radar, so a zip whose grid differs from
+    the first is another site's, and its rain must not be stored against the
+    first site's cell positions. Different days, so nothing else collides."""
+    root = tmp_path / "rainfields3"
+    raws = [np.full((2, 2), 6, dtype=np.uint16) for _ in range(4)]
+    for site, day, meridian in (("2", 5, 144.752), ("71", 6, 151.209)):
+        folder = root / site / "2022" / "prcp-m15"
+        folder.mkdir(parents=True)
+        _write_hour_zip(
+            folder / f"{site}_202201{day:02d}.prcp-m15.zip",
+            pd.Timestamp(f"2022-01-{day:02d} 00:00", tz="UTC"),
+            raws,
+            proj_attrs={
+                **PROJ_ATTRS,
+                "longitude_of_central_meridian": np.float64(meridian),
+            },
+        )
+    with pytest.raises(ValueError, match="same radar site"):
+        build_radar_grid_data(root, date(2022, 1, 5), date(2022, 1, 6), 1)
 
 
 def test_build_radar_grid_data_end_to_end_subsamples_and_sums(tmp_path):
