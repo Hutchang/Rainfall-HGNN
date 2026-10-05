@@ -256,14 +256,11 @@ def build_radar_grid_data(
 
     ordered_hours = sorted(hours)
     rain = np.stack([hours[hour].reshape(-1)[indices] for hour in ordered_hours])
-    # The model cannot accept a null: a cell missing in one of its four
-    # contributing files (NaN, per hourly_grids) becomes rain_rate 0 with
-    # valid False, the same [value, valid] shape satellite already uses,
-    # rather than losing the missing/dry distinction or leaking a NaN into
-    # the table. An hour's own genuine zero (all four files agreed, dry)
-    # stays 0 with valid True.
-    valid = np.isfinite(rain)
-    values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
+    # One value per cell-hour: the paper's gridded nodes carry the cell value
+    # only, with no validity flag (docs/source_paper.md, "Node features"). A
+    # cell missing in any of its four files stays NaN, is counted in the
+    # report and is refused at the graph boundary; adding a flag is ISS-36.
+    values = rain[:, :, None]
     provenance = {
         # D13.4: taken from the files' own attributes, not assumed -- see
         # docs/requirements/D13_SOURCE_GRIDS_REQUIREMENTS.md, FR04.

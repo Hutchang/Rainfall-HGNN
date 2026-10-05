@@ -163,7 +163,8 @@ def test_build_radar_grid_data_succeeds_end_to_end_on_the_real_sample(tmp_path):
     # Real, computed data, not a placeholder: no fill cells this hour (every
     # one of the four contributing files covers the full grid), and the
     # subsampled maximum matches a hand check against the real files.
-    assert (grid.values[0, :, 1] == 1).all()
+    assert grid.values.shape == (1, 2704, 1)
+    assert np.isfinite(grid.values[0, :, 0]).all()
     assert grid.values[0, :, 0].max() == pytest.approx(1.55)
     assert grid.values[0, :, 0].min() == pytest.approx(0.0)
 
@@ -350,14 +351,11 @@ def test_build_radar_grid_data_end_to_end_subsamples_and_sums(tmp_path):
     assert grid.layer == "radar"
     assert list(grid.timestamps) == [hour]
     assert len(grid.coordinates) == 4  # stride 2 over a 4x4 grid
-    assert grid.values.shape == (1, 4, 2)  # [rain_rate, valid], same as satellite
-    rain, valid = grid.values[0, :, 0], grid.values[0, :, 1]
-    # Node (0, 0): fill in one of the four files -> the model cannot accept a
-    # null, so rain_rate is 0 and valid is False, not NaN.
-    assert rain[0] == 0.0
-    assert valid[0] == 0.0
+    assert grid.values.shape == (1, 4, 1)  # one value per cell-hour, as the paper
+    rain = grid.values[0, :, 0]
+    # Node (0, 0): fill in one of the four files -> missing, never a dry zero.
+    assert np.isnan(rain[0])
     np.testing.assert_allclose(rain[1:], [1.0, 1.0, 1.0])
-    assert (valid[1:] == 1.0).all()
 
 
 def test_grids_build_wires_radar_archive_and_report_node_count_matches_table(
@@ -411,14 +409,12 @@ def test_grids_build_wires_radar_archive_and_report_node_count_matches_table(
     assert len(nodes) == 4
     assert "Nodes: 4;" in report
     assert "UNKNOWN" not in report
-    # radar_hourly.csv carries a valid column, same as satellite_hourly.csv;
-    # the invalid node (0, 0) is rain_rate 0 with valid False, not a null.
-    assert list(hourly.columns) == ["node_id", "timestamp", "rain_rate", "valid"]
+    # One value per cell-hour; the missing node (0, 0) is an empty cell in the
+    # CSV, never a dry zero, and is counted in the report.
+    assert list(hourly.columns) == ["node_id", "timestamp", "rain_rate"]
     by_node = hourly.set_index("node_id")
-    assert by_node.loc[0, "rain_rate"] == pytest.approx(0.0)
-    assert by_node.loc[0, "valid"] == 0
+    assert np.isnan(by_node.loc[0, "rain_rate"])
     np.testing.assert_allclose(by_node.loc[[1, 2, 3], "rain_rate"], 1.0)
-    assert (by_node.loc[[1, 2, 3], "valid"] == 1).all()
     assert "Missing rain payloads: 1." in report
 
 

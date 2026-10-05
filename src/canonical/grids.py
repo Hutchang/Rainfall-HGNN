@@ -46,12 +46,9 @@ class GridData:
     def to_heterodata(self, target_timestamps):
         """Return a node layer for 04; topology remains the graph builder's job.
 
-        The caller supplies its approved graph timeline. A layer with a validity
-        feature (satellite always; radar since the archive reader, D13.2) masks
-        invalid payloads only in the model tensor `x`, so the missing/dry
-        distinction survives as `observed`. A one-feature layer (a legacy radar
-        pickle) has no way to flag a missing pixel, so it fails hard instead of
-        silently becoming observed zero rainfall.
+        The caller supplies its approved graph timeline. Missing radar frames fail
+        rather than silently becoming observed zero rainfall. Satellite's source
+        availability remains a feature, with invalid payloads masked only in x.
         """
         import torch
         from torch_geometric.data import HeteroData
@@ -67,14 +64,13 @@ class GridData:
             )
         values = self.values[positions].copy()
         observed = np.isfinite(values[:, :, 0])
-        if values.shape[2] == 2:
+        if self.layer == "satellite":
             observed = values[:, :, 1].astype(bool)
             values[:, :, 0][~observed] = 0.0
         elif not observed.all():
             raise ValueError(
-                f"{self.layer}: missing pixel values cannot enter the "
-                "one-feature graph contract; Component 04 needs an agreed "
-                "validity-mask interface"
+                "radar: missing pixel values cannot enter the one-feature graph "
+                "contract; Component 04 needs an agreed validity-mask interface"
             )
         graph = HeteroData()
         graph[self.layer].x = torch.from_numpy(
@@ -98,7 +94,7 @@ class GridData:
                     "timestamp": timestamp.isoformat(),
                     "rain_rate": self.values[position, :, 0],
                 }
-                if self.values.shape[2] == 2:
+                if self.layer == "satellite":
                     data["valid"] = self.values[position, :, 1].astype(int)
                 pd.DataFrame(data).to_csv(
                     stream, index=False, header=position == 0, lineterminator="\n"
@@ -330,12 +326,7 @@ def build(config_path, check_only=False, sample=False):
                 f"Range: {grid.timestamps[0].isoformat()} to {grid.timestamps[-1].isoformat()}.",
                 f"Absent hours within that range: {len(missing)}. Boundaries outside the source range are not inferred.",
                 _period_coverage_line(grid, config["start"], config["end"]),
-                "Missing rain payloads: "
-                + (
-                    f"{(grid.values[:, :, 1] == 0).sum()}."
-                    if grid.values.shape[2] == 2
-                    else f"{np.isnan(grid.values[:, :, 0]).sum()}."
-                ),
+                f"Missing rain payloads: {np.isnan(grid.values[:, :, 0]).sum()}.",
             ]
         )
         if layer == "satellite":

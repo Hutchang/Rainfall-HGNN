@@ -1,9 +1,8 @@
 """load_standard_grid reads the standard grid tables Component 04 consumes.
 
-A table's own columns decide whether a layer carries a validity feature,
-rather than the layer's name -- satellite has always had one; radar gained
-one with the archive reader (D13.2), so a legacy one-feature radar table must
-keep working exactly as before.
+The layer's name decides its columns. Radar is one value per cell-hour, as
+the paper's gridded nodes are (ISS-36 records adding a validity flag);
+satellite always carries `valid`.
 """
 
 from pathlib import Path
@@ -42,7 +41,7 @@ def test_radar_without_a_valid_column_loads_as_one_feature(tmp_path):
     np.testing.assert_allclose(grid.values[0, :, 0], [1.0, 2.0])
 
 
-def test_radar_with_a_valid_column_loads_as_two_features_and_masks_observed(tmp_path):
+def test_radar_with_a_valid_column_is_refused(tmp_path):
     hour = "2022-01-05T00:00:00+00:00"
     _write_table(
         tmp_path,
@@ -53,13 +52,11 @@ def test_radar_with_a_valid_column_loads_as_two_features_and_masks_observed(tmp_
         ],
         node_count=2,
     )
-    grid = load_standard_grid(tmp_path, "radar")
-    assert grid.values.shape == (1, 2, 2)
-    np.testing.assert_allclose(grid.values[0, :, 0], [0.0, 2.0])
-    np.testing.assert_allclose(grid.values[0, :, 1], [0, 1])
+    with pytest.raises(ValueError, match="radar: unexpected standard grid columns"):
+        load_standard_grid(tmp_path, "radar")
 
 
-def test_satellite_still_requires_a_valid_column(tmp_path):
+def test_satellite_with_a_valid_column_loads_as_two_features(tmp_path):
     hour = "2022-01-05T00:00:00+00:00"
     _write_table(
         tmp_path,
@@ -75,13 +72,27 @@ def test_satellite_still_requires_a_valid_column(tmp_path):
     np.testing.assert_allclose(grid.values[0, :, 0], [999.0, 1.5])
 
 
+def test_satellite_without_a_valid_column_is_refused(tmp_path):
+    hour = "2022-01-05T00:00:00+00:00"
+    _write_table(
+        tmp_path,
+        "satellite",
+        [{"node_id": 0, "timestamp": hour, "rain_rate": 1.5}],
+        node_count=1,
+    )
+    with pytest.raises(ValueError, match="satellite: unexpected standard grid columns"):
+        load_standard_grid(tmp_path, "satellite")
+
+
 def test_a_valid_column_must_be_exactly_zero_or_one(tmp_path):
     hour = "2022-01-05T00:00:00+00:00"
     _write_table(
         tmp_path,
-        "radar",
+        "satellite",
         [{"node_id": 0, "timestamp": hour, "rain_rate": 1.0, "valid": 0.5}],
         node_count=1,
     )
-    with pytest.raises(ValueError, match="radar: availability must be exactly 0 or 1"):
-        load_standard_grid(tmp_path, "radar")
+    with pytest.raises(
+        ValueError, match="satellite: availability must be exactly 0 or 1"
+    ):
+        load_standard_grid(tmp_path, "satellite")

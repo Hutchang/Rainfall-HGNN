@@ -257,11 +257,10 @@ def build_satellite_grid_data(
 
     ordered_hours = sorted(hours)
     rain = np.stack([hours[hour].reshape(-1)[indices] for hour in ordered_hours])
-    # The model cannot accept a null, and radar's contract already carries a
-    # [value, valid] shape for the same reason: a cell missing in one of its
-    # six contributing frames (NaN, per hourly_means) becomes rain_rate 0
-    # with valid False, not NaN. An hour's own genuine zero (all six frames
-    # agreed, dry) stays 0 with valid True.
+    # Satellite's standard table carries [value, valid]: a cell missing in
+    # one of its six contributing frames (NaN, per hourly_means) becomes
+    # rain_rate 0 with valid False, not NaN. An hour's own genuine zero (all
+    # six frames agreed, dry) stays 0 with valid True.
     valid = np.isfinite(rain)
     values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
 

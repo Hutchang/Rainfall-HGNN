@@ -34,7 +34,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-07](#iss-07) | Methods are allowed to read different gauges when predicting | Blocking | Components 04 + 06 | Open |
 | [ISS-11](#iss-11) | Ingestion config claims Sydney but fetches Australia-wide | Blocking | Component 01 | Closed |
 | [ISS-30](#iss-30) | Fetched radar files cannot be read by the grid adapter | Blocking | D13 | Closed |
-| [ISS-35](#iss-35) | Component 06 rejects two-feature radar graphs | Blocking | Component 06 | Open |
+| [ISS-35](#iss-35) | Component 06 rejects two-feature radar graphs | Blocking | Component 06 | Closed |
 | [ISS-04](#iss-04) | Radar and satellite cover 2022 only; radar missing 120 hours | Material | D13 | Open |
 | [ISS-05](#iss-05) | Within-day timestamp fidelity is assumed, not verified | Material | Component 02 | Blocked |
 | [ISS-06](#iss-06) | Unexplained April–May 2021 gap in BoM daily totals | Material | Component 02 | Open |
@@ -58,6 +58,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-32](#iss-32) | Fold count is hard-coded and nothing below Component 01 knows about regions | Material | D07 | Open |
 | [ISS-33](#iss-33) | Test coverage is not measured | Material | D07 | Open |
 | [ISS-34](#iss-34) | Validation gauges are placed at random and can sit next to a hidden gauge | Material | _unassigned_ | Open |
+| [ISS-36](#iss-36) | Radar has no validity flag, so one missing radar cell stops a graph build | Material | _unassigned_ | Open |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
 | [ISS-23](#iss-23) | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
@@ -453,6 +454,35 @@ acceptance criterion. Recorded so nobody rediscovers it and treats a mismatch as
 **Closes when:** the list is found, or a contract records permanently that station-level
 reproduction of the paper is out of scope.
 
+<a id="iss-36"></a>
+
+### ISS-36 — Radar has no validity flag, so one missing radar cell stops a graph build
+**Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
+
+Radar enters the model as one value per cell-hour, as the paper's gridded nodes do
+([source_paper.md](source_paper.md), "Node features": point nodes carry a value and a
+validity flag, while "gridded nodes carry the corresponding radar or satellite cell
+value"). Without a flag, a cell the archive marks as missing cannot be told apart from a
+dry zero, so it stays NaN in `radar_hourly.csv`, and Component 04 refuses the table:
+`load_standard_grid` rejects a radar NaN anywhere in it, so one missing cell in two
+years stops every gauge+radar graph build. Gauges and satellite already carry
+`[value, valid]`.
+
+D13.2 first gave radar a `valid` column. The D13 integration review (2026-10-05) took it
+out again to stay with the paper first, and records the change here for when the project
+extends the paper. Making it means Component 04 and Component 06 accepting two radar
+features (`src/models/modalities.py` fixes radar at one), the model test fixtures and
+docs following, and naming it as a change to the paper's inputs on every result that
+uses it.
+
+How often it would matter is unmeasured. The committed sample's five files and one real
+2022-01-03 file checked on Gadi have no missing cells; the grid report's "Missing rain
+payloads" line from the first real-archive run gives the count.
+
+**Closes when:** the project extends the paper's radar input and radar carries
+`[value, valid]` from the archive reader through Component 06, with the departure stated
+on every result.
+
 ---
 
 ## Code and test gaps
@@ -692,7 +722,7 @@ failing the run, and the baseline recorded in `CURRENT_STATE.md`.
 <a id="iss-35"></a>
 
 ### ISS-35 — Component 06 rejects two-feature radar graphs
-**Severity:** Blocking · **Owner:** Component 06 · **Status:** Open
+**Severity:** Blocking · **Owner:** Component 06 · **Status:** Closed 2026-10-05 (D13 integration review)
 
 `src/models/modalities.py:30` hardcodes radar's feature width as 1 in
 `prepare_modalities()`, which `validate_graph()` (`src/models/graphs.py`) calls before
@@ -719,6 +749,12 @@ is stale for the same reason.
 masking invalid cells the same way satellite's are whenever a validity channel is
 present; the fixture and its damage case are updated to the real current shape; and the
 stale report text in `src/models/run.py` is corrected.
+
+**Closed 2026-10-05** by `fix(D13.2): keep radar at the paper's one value per cell`. The
+D13 integration review returned radar to one value per cell-hour, the paper's form, so
+the archive reader no longer produces the two-feature radar this check rejects and
+Component 06 needs no change. The `run.py` report text quoted above is accurate again.
+Adding a radar validity flag is now [ISS-36](#iss-36).
 
 ## Documentation gaps
 
