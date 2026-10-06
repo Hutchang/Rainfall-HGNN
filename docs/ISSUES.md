@@ -59,6 +59,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-33](#iss-33) | Test coverage is not measured | Material | D07 | Open |
 | [ISS-34](#iss-34) | Validation gauges are placed at random and can sit next to a hidden gauge | Material | _unassigned_ | Open |
 | [ISS-36](#iss-36) | Radar has no validity flag, so one missing radar cell stops a graph build | Material | _unassigned_ | Open |
+| [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Open |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
 | [ISS-23](#iss-23) | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
@@ -490,6 +491,63 @@ payloads" line from the first real-archive run gives the count.
 **Closes when:** the project extends the paper's radar input and radar carries
 `[value, valid]` from the archive reader through Component 06, with the departure stated
 on every result.
+
+<a id="iss-37"></a>
+
+### ISS-37 — Satellite "no value" cells make half of a dry daytime hour invalid
+**Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
+
+The satellite reader marks a cell-hour invalid if any of its six 10-minute
+`crrph_intensity` values is the file's "no value" marker (`_FillValue` 65535). In the
+committed sample (2022-01-03 00:00 UTC, 11:00 in Sydney, no rain anywhere) about 20 % of
+cells have no value in each image, scattered and different from image to image, so
+2,455 of 4,712 cells (52 %) are invalid for the hour.
+
+**What "no value" means.** It is not "dry": the product writes 0 for cloud-free sky and
+for cloud judged too thin to rain. The NWC SAF Precipitation ATBD (issue 1.0.1,
+29 Oct 2021, §4.3.1.2, p.48): "CRRPh is set to zero in the following cases: CMIC Phase
+output indicates cloud free. CWP < 350 gm-2 for both day and night time …" and "CRRPh is
+set to NODATA if satellite inputs are not available, CMIC Phase is undefined or is not
+available or CMICCOT and CMICREFF derived from the NWC/GEO software are Fill Values"
+(CMIC is the cloud-properties product; COT and REFF are cloud thickness and droplet
+size). The Precipitation User Manual (issue 2.0.1, §5.1.3, p.63) gives the same table.
+
+**What the real files say.** Read over NCI's public OPeNDAP service on 2026-10-06, Sydney
+crop rows 4424–4485, columns 3167–3242 of the full disk:
+
+| | 00:00 UTC (11:00 local) | 14:00 UTC (01:00 local) |
+|---|---|---|
+| No-value cells | 944 of 4,712 | 237 of 4,712 |
+| All satellite channels available | all | all |
+| Mandatory input missing | none | none |
+| `crrph_status_flag` `microphysics_data_missing` | all | all |
+| `crrph_status_flag` `phase_not_available` | none | none |
+| `crrph_quality` | `nodata` for all | `nodata` for all |
+
+So every no-value cell is a cloudy pixel whose cloud thickness and droplet size were not
+available, not missing satellite data and not clear sky. The NWC SAF cloud documents say
+these are not retrieved by day for mixed-phase or broken/thin ("fractional") cloud;
+fair-weather cumulus is the likely cause here (inference, not checked against the
+cloud-type product). The night algorithm does not need them, and no-value cells fall to a
+quarter of the daytime share.
+
+**Consequence.** No-value cells follow cloud, and cloud goes with rain, so the current rule
+removes cloudy hours far more than clear ones. The paper does not say how it treated them.
+
+**Current choice:** keep the rule (any no-value image makes the cell-hour invalid) as the
+strict, honest default.
+
+**Suggested fix (TO VALIDATE):** average only the images that have a value, when at least N
+of the six do, with N written in `grids.yaml` and the report — FR03 already asks for a
+written completeness threshold. Treating no-value as 0 is not supported by the product's
+documentation.
+
+Possible extension: the flags show the satellite's own channels were present at every
+no-value cell; only the derived rain rate is missing. Raw imagery or the cloud products
+(CMIC, cloud type) could feed a model directly at those cells.
+
+**Closes when:** the project chooses a rule for no-value cells, records it with its
+reasoning, and the reader and report apply it.
 
 ---
 

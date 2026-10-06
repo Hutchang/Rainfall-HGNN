@@ -161,8 +161,9 @@ def test_build_satellite_grid_data_succeeds_end_to_end_on_the_real_sample():
     assert list(grid.timestamps) == [pd.Timestamp("2022-01-03 00:00:00", tz="UTC")]
     assert len(grid.coordinates) > 0
     assert grid.values.shape == (1, len(grid.coordinates), 2)
-    # A real hour has both valid and invalid cells (day/night terminator
-    # crosses this box), and no rain recorded at this particular hour.
+    # A real hour has both valid and invalid cells (cloudy pixels whose cloud
+    # properties were not retrieved have no value; ISS-37), and no rain
+    # recorded at this particular hour.
     valid = grid.values[0, :, 1]
     assert 0 < valid.mean() < 1
     np.testing.assert_allclose(grid.values[0, :, 0], 0.0)
