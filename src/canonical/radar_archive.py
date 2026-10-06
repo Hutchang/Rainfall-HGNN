@@ -224,7 +224,12 @@ def build_radar_grid_data(
             quarters.extend(files)
             if len(files) < FILES_PER_HOUR:
                 short_hours[hour] = len(files)
-        hours.update(hourly_grids(quarters))
+        # Keep only the subsampled cells of each hour as soon as it is summed:
+        # a full 512 x 512 grid per hour, held for two years, is about 37 GB.
+        for hour, grid in hourly_grids(quarters).items():
+            if grid.shape != (size, size):
+                raise ValueError(f"radar grids under {root} are not all {size}x{size}")
+            hours[hour] = grid.reshape(-1)[indices]
         gauges_by_hour.update(hourly_contributing_gauges(quarters))
 
     # FR04: the report's product, units, site and correction lines come from
@@ -249,6 +254,8 @@ def build_radar_grid_data(
         zip_grid = _first_member_grid(zip_path)
         if grid_def is None:
             grid_def = zip_grid
+            size = len(grid_def["x_m"])
+            indices = subsampled_flat_indices(size, subsample_stride)
         try:
             assert_consistent_grid([grid_def, zip_grid])
         except ValueError as error:
@@ -272,10 +279,6 @@ def build_radar_grid_data(
     if not hours:
         raise ValueError(f"no complete hours found under {root} in {start} to {end}")
 
-    size = next(iter(hours.values())).shape[0]
-    if any(grid.shape != (size, size) for grid in hours.values()):
-        raise ValueError(f"radar grids under {root} are not all {size}x{size}")
-    indices = subsampled_flat_indices(size, subsample_stride)
     coordinates = pd.DataFrame(
         [(node_id, lat, lon) for node_id, (lat, lon) in node_coordinates(grid_def)],
         columns=["node_id", "latitude", "longitude"],
@@ -283,7 +286,7 @@ def build_radar_grid_data(
     coordinates["node_id"] = np.arange(len(coordinates))
 
     ordered_hours = sorted(hours)
-    rain = np.stack([hours[hour].reshape(-1)[indices] for hour in ordered_hours])
+    rain = np.stack([hours[hour] for hour in ordered_hours])
     # One value per cell-hour: the paper's gridded nodes carry the cell value
     # only, with no validity flag (docs/source_paper.md, "Node features"). A
     # cell missing in any of its four files stays NaN, is counted in the

@@ -33,10 +33,9 @@ interface are that adapter's existing, unchanged machinery.
 """
 
 import re
-from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime
-from itertools import pairwise
+from itertools import groupby, pairwise
 from pathlib import Path
 
 import numpy as np
@@ -254,11 +253,41 @@ def build_satellite_grid_data(
         crop["max_lon"] + pad,
     )
 
-    frames = [read_ten_minute_file(p, row_slice, col_slice) for p in nc_paths]
+    n_rows = row_slice.stop - row_slice.start
+    n_cols = col_slice.stop - col_slice.start
+    indices = subsampled_flat_indices(n_rows, n_cols, subsample_stride)
+
+    # Average and subsample each hour as soon as its files are read, rather
+    # than holding every 10-minute frame of the period (about 4 GB for two
+    # years). Files are read in time order, so one hour's files arrive together.
+    declared = {"product_name": set(), "title": set(), "source": set(), "units": set()}
+    hours: dict[pd.Timestamp, np.ndarray] = {}
+    short_hours: dict[pd.Timestamp, int] = {}
+    seen: set[pd.Timestamp] = set()
+    starts = []
+    files_listing_gauges = 0
+    frames = (read_ten_minute_file(p, row_slice, col_slice) for p in nc_paths)
+    for hour, group in groupby(frames, key=lambda frame: frame.start.floor("h")):
+        if hour in seen:
+            raise ValueError(
+                f"{hour}: files under {root} are not in time order -- a file's "
+                "name and its nominal_product_time disagree"
+            )
+        seen.add(hour)
+        group = list(group)
+        for frame in group:
+            for name, values in declared.items():
+                values.add(getattr(frame, name))
+            files_listing_gauges += frame.lists_gauges
+            starts.append(frame.start)
+        for complete_hour, grid in hourly_means(group).items():
+            hours[complete_hour] = grid.reshape(-1)[indices]
+        if len(group) < FILES_PER_HOUR:
+            short_hours[hour] = len(group)
     # FR04: the report's product, units and correction lines come from every
     # file read, not from grids.yaml.
     product_name, title, source, units = (
-        single_declaration({getattr(frame, name) for frame in frames}, label, root)
+        single_declaration(declared[name], label, root)
         for name, label in (
             ("product_name", "product_name"),
             ("title", "title"),
@@ -266,13 +295,9 @@ def build_satellite_grid_data(
             ("units", "crrph_intensity units"),
         )
     )
-    hours = hourly_means(frames)
     if not hours:
         raise ValueError(f"no complete hours found under {root} in {start} to {end}")
 
-    n_rows = row_slice.stop - row_slice.start
-    n_cols = col_slice.stop - col_slice.start
-    indices = subsampled_flat_indices(n_rows, n_cols, subsample_stride)
     coordinates = pd.DataFrame(
         [
             (node_id, lat, lon)
@@ -283,7 +308,7 @@ def build_satellite_grid_data(
     coordinates["node_id"] = np.arange(len(coordinates))
 
     ordered_hours = sorted(hours)
-    rain = np.stack([hours[hour].reshape(-1)[indices] for hour in ordered_hours])
+    rain = np.stack([hours[hour] for hour in ordered_hours])
     # Satellite's standard table carries [value, valid]: a cell missing in
     # one of its six contributing frames (NaN, per hourly_means) becomes
     # rain_rate 0 with valid False, not NaN. An hour's own genuine zero (all
@@ -291,8 +316,7 @@ def build_satellite_grid_data(
     valid = np.isfinite(rain)
     values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
 
-    files_per_hour = Counter(frame.start.floor("h") for frame in frames)
-    starts = sorted(frame.start for frame in frames)
+    starts.sort()
     native_time_step_minutes = None
     if len(starts) > 1:
         gaps = [b - a for a, b in pairwise(starts)]
@@ -306,17 +330,12 @@ def build_satellite_grid_data(
         "product": f"{product_name} -- {title} ({source})",
         "units": units,
         "gauge_correction": (
-            f"contributing_gauges listed in "
-            f"{sum(frame.lists_gauges for frame in frames)} of {len(frames)} "
-            "files read"
+            f"contributing_gauges listed in {files_listing_gauges} of "
+            f"{len(starts)} files read"
         ),
         "hourly_rule": "mean of six 10-minute samples",
         "files_per_hour": FILES_PER_HOUR,
-        "short_hours": {
-            hour: count
-            for hour, count in files_per_hour.items()
-            if count < FILES_PER_HOUR
-        },
+        "short_hours": short_hours,
         "crop": (
             f"configured box lat {crop['min_lat']} to {crop['max_lat']}, lon "
             f"{crop['min_lon']} to {crop['max_lon']}, padded by {pad} degrees: "

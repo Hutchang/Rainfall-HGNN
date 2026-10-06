@@ -388,6 +388,24 @@ def test_a_satellite_hour_with_five_of_six_files_is_recorded_as_short(tmp_path):
     assert grid.provenance["short_hours"] == {hour + pd.Timedelta(hours=1): 5}
 
 
+def test_satellite_files_out_of_time_order_stop_the_build(tmp_path):
+    """Hours are averaged as their files are read, in filename order. A file
+    whose nominal_product_time puts it in an hour already averaged would be
+    split off on its own, so it stops the build instead."""
+    x_m, y_m, box = _tiny_grid_and_matching_box()
+    full = np.full((8, 8), 6, dtype=np.uint16)
+    for name_time, nominal in (("0000", "00:00"), ("0010", "01:00"), ("0020", "00:20")):
+        _write_ten_minute_nc(
+            tmp_path / f"S_NWC_CRRPh_HIMA08_HIMA-N-NR_20220105T{name_time}00Z.nc",
+            f"2022-01-05T{nominal}:00Z",
+            full,
+            x_m,
+            y_m,
+        )
+    with pytest.raises(ValueError, match="not in time order"):
+        build_satellite_grid_data(tmp_path, date(2022, 1, 5), date(2022, 1, 5), box, 2)
+
+
 def test_grids_build_wires_satellite_archive_and_report_node_count_matches_table(
     tmp_path,
 ):
