@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `c51ad8b` · **Sprint:** 2 · **Updated:** 2026-10-05
+**Latest commit:** `dec89b8` · **Sprint:** 2 · **Updated:** 2026-10-06
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
@@ -88,7 +88,7 @@ each deliverable's document. State per deliverable:
 | D09 | Radar fusion | Not started. Now the science only: grid edges (D09.2), then the G+R and G+R+S runs on D13's tables. Builds on gauge-corrected radar, the same kind the paper used, with the caveat stated on every result |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |
-| D13 | Source grids from NCI | All five subtasks merged, with the integration review's fixes on top. `config/canonical/grids.yaml` points `layers.radar.root` at site 71's folder and `layers.satellite.root` at the CRRPh archive; `src.canonical.grids.build()` reads both in place. Radar: four 15-minute `prcp-m15` files summed per hour across daily zips, one value per cell-hour as in the paper (ISS-36). Satellite: six 10-minute `crrph_intensity` samples averaged per hour, cropped from the full disk, with a `valid` column. `grid_report.md` states product, units, site, gauge correction, coordinate system and time step from the files themselves, the hourly, crop and subsample rules, every unwritten hour with its cause, and radar's contributing-gauges cross-reference against Component 02's `stations.csv` (ISS-02, ISS-04). `tests/data/ingestion/{radar,satellite}/` hold real, complete-hour samples, and `python -m src.canonical.grids config/canonical/grids.yaml --sample` runs both readers with no Gadi access. Nothing has been run against the real archive yet |
+| D13 | Source grids from NCI | All five subtasks merged, with the integration review's fixes on top. `config/canonical/grids.yaml` points `layers.radar.root` at site 71's folder and `layers.satellite.root` at the CRRPh archive; `src.canonical.grids.build()` reads both in place. Radar: four 15-minute `prcp-m15` files summed per hour across daily zips, one value per cell-hour as in the paper (ISS-36), cut to the same Sydney study box as satellite (857 nodes for site 71). Satellite: six 10-minute `crrph_intensity` samples averaged per hour, cropped from the full disk, with a `valid` column; an image with no value makes the cell-hour invalid (ISS-37). `grid_report.md` states product, units, site, gauge correction, coordinate system and time step from the files themselves, the hourly, crop and subsample rules, every unwritten hour with its cause, and radar's contributing-gauges cross-reference against Component 02's `stations.csv` (ISS-02, ISS-04). `tests/data/ingestion/{radar,satellite}/` hold real, complete-hour samples, and `python -m src.canonical.grids config/canonical/grids.yaml --sample` runs both readers with no Gadi access. Nothing has been run against the real archive yet |
 
 Open work that belongs to a component rather than a deliverable:
 
@@ -126,14 +126,14 @@ outputs. See [LEGACY_CODE.md](LEGACY_CODE.md).
 
 ## Verification
 
-Run on 2026-10-05 at `c51ad8b`, Windows 11, Python 3.14.2, after `uv sync --locked`:
+Run on 2026-10-06 at `dec89b8`, Windows 11, Python 3.14.2, after `uv sync --locked`:
 
 ```console
 uv run --locked python -m pytest tests -q -rx --cov=src --cov-report=term-missing
 uv run --locked ruff check .
 ```
 
-- `tests/`: **212 passed, 30 skipped, 3 failed**. The skips are the live-API acceptance
+- `tests/`: **215 passed, 30 skipped, 3 failed**. The skips are the live-API acceptance
   checks (`BOM_NETWORK=1`, `NCI_NETWORK=1`) and the legacy-data tests, which skip in a
   checkout without `database/sydney_gauge_legacy/`. The three failures are all in
   `tests/test_experiment_tui.py` and fail the same way on `main` before the D13 merge on
@@ -141,7 +141,7 @@ uv run --locked ruff check .
 - Repository-wide Ruff: **684** findings (ISS-17), the same as before the D13 merge.
 - Coverage, with `--cov=src`: **51 %** over all of `src/`, which includes the inherited
   review-only code. D13's modules: `src/canonical/grids.py` 92 %, `radar_archive.py`
-  95 %, `satellite_archive.py` 94 %, `grid_inputs.py` 96 %, `grid_tables.py` 87 %. The
+  96 %, `satellite_archive.py` 95 %, `grid_inputs.py` 96 %, `grid_tables.py` 87 %. The
   floors are not enforced yet (ISS-33).
 - PyTorch and PyG emit Python 3.14 deprecation warnings.
 - `scripts/nci/test_guards.py` is excluded from `tests/` and fails on a Windows checkout
