@@ -65,10 +65,12 @@ validity flag is [ISS-36](../ISSUES.md#iss-36). See `src/canonical/radar_archive
 
 The native 512x512, 0.5 km grid is far too large to carry densely (~36 TB for
 Sydney), so it is subsampled to the cell nearest each point of a `subsample_stride`
-grid — stride 10 gives ~5 km spacing, matching the paper's radar spacing, and about
-2,700 nodes for one site. This is a recorded scientific choice
-(`layers.radar.subsample_stride` in `config/canonical/grids.yaml`), not an
-incidental default; see [RADAR_SOURCE.md](RADAR_SOURCE.md) for the fuller picture of
+grid — stride 10 gives ~5 km spacing, matching the paper's radar spacing, and 2,704
+nodes over the site's whole 256 km square. Only the nodes inside the study box are
+kept (`layers.radar.crop`, the same padded Sydney box satellite is cropped to), since the
+paper's radar covers Greater Sydney rather than the whole square: 857 nodes for site 71.
+Both are recorded scientific choices (`config/canonical/grids.yaml`), not incidental
+defaults; see [RADAR_SOURCE.md](RADAR_SOURCE.md) for the fuller picture of
 why `rainfields3` is the source at all. The report states product, units, site and
 gauge correction from every file's own attributes, and the build stops if two files
 disagree. The same fields in `grids.yaml` are notes for readers; the report uses them

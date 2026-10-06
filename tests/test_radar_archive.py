@@ -40,6 +40,14 @@ PROJ_ATTRS = {
 }
 TIME_ATTRS = {"units": "seconds since 1970-01-01 00:00:00 UTC", "standard_name": "time"}
 REAL_TITLE = "Merged Gauge/Radar Accumulation (15 min)"
+# config/canonical/grids.yaml's study box, which both radar and satellite use.
+SYDNEY_BOX = {
+    "min_lat": -34.3,
+    "max_lat": -33.4,
+    "min_lon": 150.4,
+    "max_lon": 151.4,
+    "pad_degrees": 0.25,
+}
 
 
 def _write_quarter_hour_nc(
@@ -398,6 +406,7 @@ def test_grids_build_wires_radar_archive_and_report_node_count_matches_table(
                 "layers": {
                     "radar": {
                         "root": str(archive_root),
+                        "crop": SYDNEY_BOX,
                         "subsample_stride": 2,
                         "product": "prcp-m15",
                         "units": "mm accumulated per hour",
@@ -484,6 +493,7 @@ def test_grid_report_states_coordinate_system_and_time_step(tmp_path):
                 "layers": {
                     "radar": {
                         "root": str(archive_root),
+                        "crop": SYDNEY_BOX,
                         "subsample_stride": 2,
                         "product": "prcp-m15",
                         "units": "mm accumulated per hour",
@@ -555,6 +565,7 @@ def test_grid_report_cross_references_contributing_gauges_against_study_stations
                 "layers": {
                     "radar": {
                         "root": str(archive_root),
+                        "crop": SYDNEY_BOX,
                         "subsample_stride": 2,
                         "product": "prcp-m15",
                         "units": "mm accumulated per hour",
@@ -624,6 +635,7 @@ def test_grid_report_declares_from_the_files_not_from_grids_yaml(tmp_path):
                 "layers": {
                     "radar": {
                         "root": str(archive_root),
+                        "crop": SYDNEY_BOX,
                         "subsample_stride": 2,
                         "product": wrong,
                         "units": wrong,
@@ -695,7 +707,13 @@ def test_grid_report_lists_every_unwritten_hour_with_its_cause(tmp_path):
                 "output_dir": str(output_dir),
                 "start": date(2022, 1, 5),
                 "end": date(2022, 1, 5),
-                "layers": {"radar": {"root": str(archive_root), "subsample_stride": 1}},
+                "layers": {
+                    "radar": {
+                        "root": str(archive_root),
+                        "crop": SYDNEY_BOX,
+                        "subsample_stride": 1,
+                    }
+                },
             }
         )
     )
@@ -714,3 +732,38 @@ def test_grid_report_lists_every_unwritten_hour_with_its_cause(tmp_path):
     )
     assert "- 3 of 4 files present: 1 hour\n  - 2022-01-05T05:00:00+00:00" in report
     assert "- Absent hour" not in report
+
+
+def test_the_study_box_keeps_only_radar_nodes_near_the_gauges(tmp_path):
+    """The paper's radar covers Greater Sydney; site 71's grid is a 256 km
+    square. Cropping to the study box keeps the same 5 km lattice but only
+    the nodes inside the padded box."""
+    sample_dir = tmp_path / "sample"
+    sample_dir.mkdir()
+    (sample_dir / REAL_SAMPLE_ZIP.name).write_bytes(REAL_SAMPLE_ZIP.read_bytes())
+    whole = build_radar_grid_data(sample_dir, date(2022, 1, 3), date(2022, 1, 3), 10)
+    cropped = build_radar_grid_data(
+        sample_dir, date(2022, 1, 3), date(2022, 1, 3), 10, SYDNEY_BOX
+    )
+
+    assert len(whole.coordinates) == 2704
+    assert len(cropped.coordinates) == 857
+    lat, lon = cropped.coordinates.latitude, cropped.coordinates.longitude
+    assert lat.between(-34.55, -33.15).all() and lon.between(150.15, 151.65).all()
+    assert list(cropped.coordinates.node_id) == list(range(857))
+    # The kept nodes are the whole-square nodes at the same places.
+    kept = whole.coordinates.merge(cropped.coordinates, on=["latitude", "longitude"])
+    assert len(kept) == 857
+    np.testing.assert_allclose(
+        cropped.values[0, :, 0], whole.values[0, kept.node_id_x.to_numpy(), 0]
+    )
+    assert "857 of the 2704 subsampled cells lie inside" in cropped.provenance["crop"]
+
+
+def test_a_crop_box_with_no_radar_cells_is_refused(tmp_path):
+    sample_dir = tmp_path / "sample"
+    sample_dir.mkdir()
+    (sample_dir / REAL_SAMPLE_ZIP.name).write_bytes(REAL_SAMPLE_ZIP.read_bytes())
+    perth = {"min_lat": -32.1, "max_lat": -31.8, "min_lon": 115.7, "max_lon": 116.0}
+    with pytest.raises(ValueError, match="contains none of the radar's cells"):
+        build_radar_grid_data(sample_dir, date(2022, 1, 3), date(2022, 1, 3), 10, perth)

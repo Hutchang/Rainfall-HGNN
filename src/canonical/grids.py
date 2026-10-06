@@ -374,6 +374,7 @@ def build(config_path, check_only=False, sample=False):
                 config["start"],
                 config["end"],
                 settings.get("subsample_stride", 10),
+                settings["crop"],
             )
         elif archive_root and layer == "satellite":
             # D13.3: same idea, a different archive shape -- see

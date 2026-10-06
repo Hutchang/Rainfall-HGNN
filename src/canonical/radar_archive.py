@@ -187,11 +187,42 @@ def _daily_zips_in_range(root: Path, start: date, end: date) -> list[Path]:
     return [path for _, path in sorted(found)]
 
 
+def cropped_indices(
+    cell_coords: np.ndarray, size: int, stride: int, crop: dict | None
+) -> list[int]:
+    """Flat indices of the stride subgrid whose cells lie inside `crop`'s
+    padded latitude/longitude box, or the whole subgrid when `crop` is None.
+
+    The paper's radar covers Greater Sydney only (source_paper.md, "Sydney"),
+    while one site's 512 x 512 grid is a 256 km square reaching far past every
+    gauge. The box is the one satellite is cropped to (`grids.yaml`).
+    """
+    indices = np.asarray(subsampled_flat_indices(size, stride))
+    if crop is None:
+        return indices.tolist()
+    pad = crop.get("pad_degrees", 0.0)
+    lat, lon = cell_coords[indices, 0], cell_coords[indices, 1]
+    inside = (
+        (crop["min_lat"] - pad <= lat)
+        & (lat <= crop["max_lat"] + pad)
+        & (crop["min_lon"] - pad <= lon)
+        & (lon <= crop["max_lon"] + pad)
+    )
+    if not inside.any():
+        raise ValueError("the radar crop box contains none of the radar's cells")
+    return indices[inside].tolist()
+
+
 def build_radar_grid_data(
-    root: Path, start: date, end: date, subsample_stride: int
+    root: Path,
+    start: date,
+    end: date,
+    subsample_stride: int,
+    crop: dict | None = None,
 ) -> GridData:
     """Read every daily zip under `root` for [start, end], sum complete hours,
-    subsample to the stride grid, and return a radar `GridData`.
+    subsample to the stride grid, keep the cells inside `crop`'s box (all of
+    them when `crop` is None), and return a radar `GridData`.
 
     The archive zips each file under the day its window *ends* (see the
     module docstring), so the 23:00 hour's last file, 23:45-00:00, is in the
@@ -255,7 +286,8 @@ def build_radar_grid_data(
         if grid_def is None:
             grid_def = zip_grid
             size = len(grid_def["x_m"])
-            indices = subsampled_flat_indices(size, subsample_stride)
+            cell_coords = np.array([ll for _, ll in node_coordinates(grid_def)])
+            indices = cropped_indices(cell_coords, size, subsample_stride, crop)
         try:
             assert_consistent_grid([grid_def, zip_grid])
         except ValueError as error:
@@ -280,10 +312,12 @@ def build_radar_grid_data(
         raise ValueError(f"no complete hours found under {root} in {start} to {end}")
 
     coordinates = pd.DataFrame(
-        [(node_id, lat, lon) for node_id, (lat, lon) in node_coordinates(grid_def)],
-        columns=["node_id", "latitude", "longitude"],
-    ).iloc[indices].reset_index(drop=True)
-    coordinates["node_id"] = np.arange(len(coordinates))
+        {
+            "node_id": np.arange(len(indices)),
+            "latitude": cell_coords[indices, 0],
+            "longitude": cell_coords[indices, 1],
+        }
+    )
 
     ordered_hours = sorted(hours)
     rain = np.stack([hours[hour] for hour in ordered_hours])
@@ -319,6 +353,14 @@ def build_radar_grid_data(
             if hour in gauges_by_hour
         },
     }
+    if crop is not None:
+        subsampled = len(range(0, size, subsample_stride)) ** 2
+        provenance["crop"] = (
+            f"configured box lat {crop['min_lat']} to {crop['max_lat']}, lon "
+            f"{crop['min_lon']} to {crop['max_lon']}, padded by "
+            f"{crop.get('pad_degrees', 0.0)} degrees: {len(indices)} of the "
+            f"{subsampled} subsampled cells lie inside"
+        )
     return GridData(
         "radar", pd.DatetimeIndex(ordered_hours), values, coordinates, provenance
     )

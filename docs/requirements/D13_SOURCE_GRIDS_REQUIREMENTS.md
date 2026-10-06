@@ -90,6 +90,9 @@ the only ones written down.
 - Subsample the 512 × 512 grid to nodes by a rule written in the config and explained
   in one paragraph (for example the cell nearest each point of a 5 km grid), giving on
   the order of a thousand nodes; record the rule and the node count in the grid report.
+  Keep only the nodes inside the study box satellite is cropped to (`layers.radar.crop`):
+  the paper's radar covers Greater Sydney ([source_paper.md](../source_paper.md),
+  "Sydney"), while one site's grid is a 256 km square. Site 71 gives 857 nodes.
 - Write `radar_hourly.csv` and `radar_nodes.csv` in the shapes the adapter and Component
   04 already accept; declare in `grids.yaml` and the report: product `prcp-m15`, units
   "mm accumulated per hour", time convention "hour beginning, UTC", gauge correction
