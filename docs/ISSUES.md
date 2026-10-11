@@ -56,10 +56,11 @@ somewhere else, move it here and leave the id behind.
 | [ISS-28](#iss-28) | Component 02 silently overwrites `database/standard/` | Material | D07 | Open |
 | [ISS-29](#iss-29) | Fetch keeps a stale station list and rewrites the index wholesale | Material | D07 | Open |
 | [ISS-32](#iss-32) | Fold count is hard-coded and nothing below Component 01 knows about regions | Material | D07 | Open |
-| [ISS-33](#iss-33) | Test coverage is not measured | Material | D07 | Open |
+| [ISS-33](#iss-33) | Coverage measurement exists; repository floors are unmet | Material | D07 | Open |
 | [ISS-34](#iss-34) | Validation gauges are placed at random and can sit next to a hidden gauge | Material | _unassigned_ | Open |
 | [ISS-36](#iss-36) | Radar has no validity flag, so one missing radar cell stops a graph build | Material | _unassigned_ | Open |
 | [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Open |
+| [ISS-38](#iss-38) | D09.2 within-grid topology and coincident-node weighting remain | Material | D09 | Open |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
 | [ISS-23](#iss-23) | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
@@ -553,6 +554,23 @@ reasoning, and the reader and report apply it.
 
 ## Code and test gaps
 
+<a id="iss-38"></a>
+
+### ISS-38 — D09.2 within-grid topology and coincident-node weighting remain
+**Severity:** Material · **Owner:** D09 · **Status:** Open
+
+Oliver's D09.2 slice supplies sensor-to-gauge edges by default, an explicit reverse-edge
+option, nine cross-support neighbours, and model compatibility with source-only sensors.
+It does not wire the eight-neighbour grid topology into `builder_new.py` or fix the
+coincident-node weight in `radargraphnew.py`. These are the other part of the shared
+D09.2 requirement, deliberately outside this slice. Until they land, the production
+builder's sensor nodes have no within-grid message passing; a working fusion smoke run
+does not establish reproduction of the paper's topology.
+
+**Closes when:** the remaining grid changes and their synthetic tests land, and the
+pipeline graph report demonstrates both grid-to-grid edges and one-way cross-support
+edges, as required by [D09.2](requirements/D09_RADAR_FUSION_REQUIREMENTS.md).
+
 <a id="iss-13"></a>
 
 ### ISS-13 — `train_homo.py` and `train_st.py` cannot import
@@ -768,22 +786,28 @@ component's paths (D07, FR01).
 
 <a id="iss-33"></a>
 
-### ISS-33 — Test coverage is not measured
+### ISS-33 — Coverage measurement is available; repository floors are not yet met
 **Severity:** Material · **Owner:** D07 · **Status:** Open
 
-The suite has 153 tests, but `pytest-cov` is not a dependency and no coverage number has
-ever been produced, so nobody knows which lines the tests reach. Rule 10 of
-[requirements/README.md](requirements/README.md) sets floors — 80 % over the production
-packages, 90 % over the modules that write files other work depends on — and none of them
-can be checked today. The modules in the 90 % class are the ones whose bugs corrupt data
-silently rather than crash; ISS-28 and ISS-29 are both examples, and both are missing
-tests as much as missing fixes.
+The D09.2 cross-support change adds `pytest-cov` as a locked development dependency,
+following AGENTS.md's interim verification rule. On 24 September 2026, the offline suite
+passes 174 tests and skips 30, but the production packages named in rule 10 cover only
+2,156 of 3,079 statements (**70.02 %**), below the 80 % floor. The broad `--cov=src`
+total includes review-only code and must not be substituted for that scoped number.
+The listed file-writing modules cover 989 of 1,125 statements (87.91 % combined);
+`src/ingestion/radar/fetch.py` (80.43 %) and `src/models/run.py` (78.72 %) each miss
+the required 90 % per-module floor.
 
-Measured over all of `src/`, inherited review-only code would swamp the number, so the
-measurement must be scoped to the production packages.
+Changed modules: `builder_new.py` 92.11 %, `gaugegraphnew.py` 84.29 %,
+`modalities.py` 96.67 %, and `models.py` 35.54 %. The latter retains six unused inherited
+architectures; the exercised `GNNInductiveHetero` constructor is 92.31 % and its forward
+method 100 %. This does not exempt the module from the existing floor. No exclusions or
+thresholds were weakened. The graph writer's 90 % floor is met; the wider model/package
+coverage gap and automated gates remain D07.7 work.
 
-**Closes when:** D07.7 lands — `pytest-cov` installed, measurement scoped, both floors
-failing the run, and the baseline recorded in `CURRENT_STATE.md`.
+**Closes when:** D07.7 scopes the measurement, addresses the coverage gaps and enforces
+both existing floors in the verification commands. Until then, report the unmet floors
+explicitly alongside successful behavioural tests.
 
 <a id="iss-35"></a>
 

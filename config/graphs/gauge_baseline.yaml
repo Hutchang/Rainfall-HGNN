@@ -15,4 +15,6 @@ split_file: config/splits/sydney_5fold.json
 output_dir: database/graphs/gauge_baseline
 input_layers: [raingauge]
 # Used only when radar or satellite is selected in input_layers.
-layer_k_neighbours: 4
+layer_k_neighbours: 9
+# D09.2: sensor -> gauge only; true explicitly restores gauge -> sensor edges.
+reverse_cross_support: false

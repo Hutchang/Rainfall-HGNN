@@ -13,6 +13,7 @@ from src.canonical.config import load_config
 from src.canonical.gauge.build import run as build_gauges
 from src.canonical.grids import build as build_grids
 from src.graph.builder_new import build_baseline_graphs
+from src.graph.builder_new import main as graph_main
 from src.graph.gaugegraphnew import GaugeGraphNew
 from src.models.graphs import load_graph
 from src.models.run import check_inputs, read_settings, run
@@ -31,9 +32,27 @@ def pipeline(tmp_path):
     return directory
 
 
-def test_raw_tables_to_splits_graphs_training_and_replay(pipeline):
+@pytest.mark.parametrize("reverse_cross_support", [False, True])
+def test_raw_tables_to_splits_graphs_training_and_replay(
+    pipeline, reverse_cross_support
+):
     directory = pipeline
+    config_path = directory / "graph.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    assert config["layer_k_neighbours"] == 9
+    # Omitting the new key must default to one-way edges, even for an older config.
+    config.pop("reverse_cross_support")
+    if reverse_cross_support:
+        config["reverse_cross_support"] = True
+    config_path.write_text(yaml.safe_dump(config))
     build_baseline_graphs(directory / "graph.yaml")
+    report = (directory / "graphs/report.md").read_text()
+    assert f"reverse_cross_support={reverse_cross_support}" in report
+    for kind in ("radar", "satellite"):
+        assert f"('{kind}', 'connects', 'raingauge')" in report
+        assert (f"('raingauge', 'rev_connects', '{kind}')" in report) == (
+            reverse_cross_support
+        )
     settings = read_settings(directory / "model.yaml")
     assert check_inputs(dict(settings)) == {"folds": 5, "target_rows": 288}
     first = run(settings, directory / "run")
@@ -55,6 +74,13 @@ def test_raw_tables_to_splits_graphs_training_and_replay(pipeline):
     # All edge relations retain their own receiving-node normalization.
     for graph_file in (directory / "graphs").glob("fold-*/*.pt"):
         graph = load_graph(graph_file)
+        for kind in ("radar", "satellite"):
+            edge = graph[kind, "connects", "raingauge"].edge_index
+            assert torch.bincount(edge[1]).tolist() == [9] * len(graph.station_ids)
+            reverse = ("raingauge", "rev_connects", kind)
+            assert (reverse in graph.edge_types) == reverse_cross_support
+            if reverse_cross_support:
+                assert torch.equal(graph[reverse].edge_index, edge.flip(0))
         for relation in graph.edge_types:
             edge = graph[relation]
             assert torch.isfinite(edge.edge_attr).all()
@@ -77,7 +103,9 @@ def test_raw_tables_to_splits_graphs_training_and_replay(pipeline):
         )
     # Removing a radar hour must fail, not change the 288 required targets.
     radar = pd.read_csv(directory / "standard/radar_hourly.csv")
-    radar.iloc[3:].to_csv(directory / "standard/radar_hourly.csv", index=False)
+    radar[radar.timestamp != radar.timestamp.iloc[0]].to_csv(
+        directory / "standard/radar_hourly.csv", index=False
+    )
     with pytest.raises(ValueError, match="requested hours are absent"):
         build_baseline_graphs(
             directory / "graph.yaml", output_dir=directory / "missing-radar"
@@ -158,3 +186,62 @@ def test_released_split_is_preserved_on_rerun(pipeline):
     with pytest.raises(FileExistsError, match="released split already exists"):
         split_main([str(pipeline / "split.yaml"), "--created", "2026-09-11"])
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
+def test_invalid_reverse_setting_fails_before_writing(tmp_path, value):
+    config = yaml.safe_load(Path("config/graphs/gauge_baseline.yaml").read_text())
+    config["reverse_cross_support"] = value
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(config))
+    output = tmp_path / "graphs"
+    with pytest.raises(ValueError, match="reverse_cross_support must be a boolean"):
+        build_baseline_graphs(path, output_dir=output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "key,value,message",
+    [
+        ("input_layers", ["radar"], "input_layers must select raingauge"),
+        ("include_lpe", False, "requires four positional features"),
+        ("k_neighbours", None, "missing explicit graph settings"),
+    ],
+)
+def test_invalid_graph_settings_never_create_outputs(tmp_path, key, value, message):
+    config = yaml.safe_load(Path("config/graphs/gauge_baseline.yaml").read_text())
+    if value is None:
+        config.pop(key)
+    else:
+        config[key] = value
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(config))
+    output = tmp_path / "graphs"
+    with pytest.raises(ValueError, match=message):
+        build_baseline_graphs(path, output_dir=output)
+    assert not output.exists()
+
+
+def test_graph_cli_reports_failure_and_refuses_to_overwrite(pipeline, capsys):
+    config_path = pipeline / "graph.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    config["layer_k_neighbours"] = 13  # Only twelve sensor nodes are available.
+    config_path.write_text(yaml.safe_dump(config))
+    output = pipeline / "failed-graphs"
+    with pytest.raises(ValueError, match="exceeds the available sensor nodes"):
+        graph_main([str(config_path), "--output-dir", str(output)])
+    report_path = output / "report.md"
+    before = report_path.read_bytes()
+    assert b"Status: FAILED: ValueError" in before
+    assert not list(output.glob("fold-*/*.pt"))
+    with pytest.raises(FileExistsError, match="graph output already exists"):
+        graph_main([str(config_path), "--output-dir", str(output)])
+    assert report_path.read_bytes() == before
+
+    config["layer_k_neighbours"] = 9
+    config_path.write_text(yaml.safe_dump(config))
+    completed = pipeline / "completed-graphs"
+    graph_main([str(config_path), "--output-dir", str(completed)])
+    assert str(completed) in capsys.readouterr().out
+    assert "Status: BUILT" in (completed / "report.md").read_text()
+    assert len(list(completed.glob("fold-*/*.pt"))) == 15

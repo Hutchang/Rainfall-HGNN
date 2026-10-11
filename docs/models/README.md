@@ -160,10 +160,17 @@ Unavailable satellite payloads are zeroed only on a cloned computational tensor,
 availability kept at 0. Source graphs and labels remain unchanged. Radar has no validity
 feature in the current contract, so missing radar values fail explicitly. No automatic
 intersection with the radar's shorter 2022 coverage or replacement of missing values
-with observed dry zeros occurs. Each sensor type must connect to gauges and have an
-incoming relation so the stacked HGNN can keep updating that type; 04 supplies these
-edges. The adapter does not import the inherited graph attachment's known coordinate
-ordering defect.
+with observed dry zeros occurs. Each sensor type must have a nonempty relation directed
+to gauges. Incoming sensor relations are optional: the stacked HGNN retains unchanged
+features for source-only sensor types across layers, while types with incoming relations
+(including supplied within-grid edges) keep their normal convolution updates. The model
+never invents a reverse edge. PyG warns that source-only types are not updated; retaining
+their features is intentional and covered by multi-layer gradient and replay tests.
+
+The graph builder's `reverse_cross_support` setting and neighbour count are documented
+in the [pipeline guide](../graphs/README.md). Existing bidirectional graphs remain valid;
+one-way graphs require a new run and checkpoint because their relation schema differs.
+The remaining D09.2 grid-topology work is [ISS-38](../ISSUES.md#iss-38).
 
 No feature rescaling is performed. Do not infer scales from the data or change labels to
 fit a model; agree any transform with Component 04 first. Component 01/02 must establish

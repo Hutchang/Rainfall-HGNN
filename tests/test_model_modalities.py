@@ -32,12 +32,29 @@ def sample(tmp_path):
     return settings
 
 
+def set_sensor_topology(settings, topology):
+    for path in Path(settings["graphs_dir"]).glob("fold-*/*.pt"):
+        graph = load_graph(path)
+        for kind in ("radar", "satellite"):
+            if topology != "reverse":
+                del graph["raingauge", "rev_connects", kind]
+            if topology == "grid":
+                # Supplied within-grid edges must still update sensors normally.
+                graph[kind, "grid", kind].edge_index = torch.tensor([[0, 1], [1, 0]])
+                graph[kind, "grid", kind].edge_attr = torch.ones(2)
+        torch.save(graph, path)
+
+
+@pytest.mark.parametrize("topology", ["reverse", "one_way", "grid"])
 @pytest.mark.parametrize(
     "modalities", [("radar",), ("satellite",), ("radar", "satellite")]
 )
-def test_five_fold_multimodal_training_and_replay(sample, tmp_path, modalities):
+def test_five_fold_multimodal_training_and_replay(
+    sample, tmp_path, modalities, topology
+):
     # Each experiment supplies matching 04 graphs; the production runner does not
     # modify graph structure to create a private ablation.
+    set_sensor_topology(sample, topology)
     sample["input_layers"] = ["raingauge", *modalities]
     for path in Path(sample["graphs_dir"]).glob("fold-*/*.pt"):
         graph = load_graph(path)
@@ -72,7 +89,10 @@ def test_five_fold_multimodal_training_and_replay(sample, tmp_path, modalities):
         assert all(torch.isfinite(value).all() for value in fold["state_dict"].values())
 
 
-def test_modalities_reach_output_and_hidden_gauge_cannot_leak(sample):
+@pytest.mark.parametrize("topology", ["reverse", "one_way", "grid"])
+def test_modalities_reach_output_and_hidden_gauge_cannot_leak(sample, topology):
+    set_sensor_topology(sample, topology)
+    sample["num_layers"] = 3
     gauge, split, _ = load_inputs(sample["gauge_file"], sample["split_file"])
     graph = read_fold(sample, split["folds"][0], gauge)["test"]
     batch = Batch.from_data_list(
@@ -107,12 +127,12 @@ def test_modalities_reach_output_and_hidden_gauge_cannot_leak(sample):
     model.zero_grad()
     original.sum().backward()
     for kind in ("radar", "satellite"):
-        assert any(
-            kind in name
-            and parameter.grad is not None
-            and parameter.grad.abs().sum() > 0
-            for name, parameter in model.named_parameters()
-        ), f"{kind} relation received no gradient"
+        for conv in model.convs:
+            relation = conv.convs[kind, "connects", "raingauge"]
+            gradient = relation.lin_rel.weight.grad
+            assert gradient is not None and gradient.abs().sum() > 0, (
+                f"{kind} relation received no gradient in a stacked layer"
+            )
 
 
 @pytest.mark.parametrize(
@@ -122,7 +142,6 @@ def test_modalities_reach_output_and_hidden_gauge_cannot_leak(sample):
         ("radar_width", "radar.x"),
         ("satellite_flag", "validity"),
         ("satellite_observed_missing", "observed rainfall"),
-        ("no_incoming", "incoming relation"),
         ("no_outgoing", "relation to raingauge"),
         ("missing_hour", "nodes,time"),
     ],
@@ -138,8 +157,6 @@ def test_bad_modality_contract_fails_before_training(sample, damage, message):
         graph["satellite"].x[0, 0, 1] = 0.5
     elif damage == "satellite_observed_missing":
         graph["satellite"].x[0, 0, 0] = float("nan")
-    elif damage == "no_incoming":
-        del graph["raingauge", "rev_connects", "radar"]
     elif damage == "no_outgoing":
         del graph["radar", "connects", "raingauge"]
     elif damage == "missing_hour":

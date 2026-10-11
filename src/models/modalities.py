@@ -67,13 +67,8 @@ def prepare_modalities(graph, prefix):
             and graph[edge].edge_index.shape[1] > 0
             for edge in graph.edge_types
         )
-        receives_messages = any(
-            edge[2] == kind and graph[edge].edge_index.shape[1] > 0
-            for edge in graph.edge_types
-        )
-        if not reaches_gauges or not receives_messages:
+        if not reaches_gauges:
             raise ValueError(
-                f"{prefix}: {kind} needs a nonempty relation to raingauge and an "
-                "incoming relation for the stacked HGNN; Component 04 must supply "
-                "the topology"
+                f"{prefix}: {kind} needs a nonempty relation to raingauge; "
+                "Component 04 must supply the topology"
             )

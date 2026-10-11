@@ -46,12 +46,27 @@ held-out-gauge independence must be established before interpreting fusion score
 The graph contains gauge `[N,T,6]`, radar `[R,T,1]` and satellite `[S,T,2]` features.
 The first gauge channel remains physical rainfall, the second is binary validity, and
 four positional features are constant over time. Sensor edges connect each gauge to
-its configured nearest sensor nodes in both directions. The graph report names the
-coordinate and edge-weight corrections; Angus should review them before acceptance.
+its configured nearest sensor nodes, directed **from the sensor into the gauge**.
+`layer_k_neighbours: 9` is the production default. `reverse_cross_support: false`
+is the default even when the key is absent; set it to `true` to explicitly include
+gauge-to-sensor edges for a comparison with the earlier bidirectional topology.
+The setting must be a YAML boolean. Each stored relation keeps its own receiving-node
+normalization when `edge_normalisation: per_node` is selected. The graph report records
+the effective reverse-edge setting and the counts and weight ranges of every relation.
+
+The direct `GaugeGraphNew.add_heterodata` API also defaults to nine neighbours and accepts
+the keyword `reverse_cross_support=True`. Existing callers with smaller fixtures must
+pass their intended `knn`; an oversized neighbour request fails instead of silently
+clamping it. To reproduce an earlier fusion graph, explicitly set both the previous
+neighbour count and `reverse_cross_support: true`.
+
+This implements the cross-support direction part of D09.2. The remaining grid-topology
+work is tracked by [ISS-38](../ISSUES.md#iss-38); this is not full D09.2 acceptance.
 
 ## Fully offline integration example
 
-This creates invented raw-format observations for 12 gauges and three nodes per sensor.
+This creates invented raw-format observations for 12 gauges and twelve nodes per sensor,
+exercising the production nine-neighbour setting.
 It then runs the actual implementations of 02, 03, 04 and 06, not a mock graph builder.
 Choose a new fixture directory if this example already exists.
 

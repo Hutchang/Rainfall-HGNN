@@ -73,7 +73,7 @@ def make_fixture(directory):
     for layer in ("radar", "satellite"):
         folder = raw / layer
         folder.mkdir()
-        rainfall = np.arange(24 * 3, dtype=np.float32).reshape(24, 3) / 10
+        rainfall = np.arange(24 * 12, dtype=np.float32).reshape(24, 12) / 10
         values = (
             rainfall
             if layer == "radar"
@@ -87,7 +87,10 @@ def make_fixture(directory):
             raw / data_path
         )
         pd.DataFrame(
-            {"latitude": [-33.95, -33.8, -34.0], "longitude": [151.0, 151.4, 150.9]}
+            {
+                "latitude": [-33.95 + 0.05 * (i // 4) for i in range(12)],
+                "longitude": [151.0 + 0.05 * (i % 4) for i in range(12)],
+            }
         ).to_csv(raw / coord_path, index=False)
         for relative in (data_path, coord_path):
             index.append(
@@ -144,7 +147,6 @@ def make_fixture(directory):
         output_dir=str(directory / "graphs"),
         split_file=str(split_file),
         input_layers=["raingauge", "radar", "satellite"],
-        layer_k_neighbours=2,
     )
     configs["graph"] = graph
     model = yaml.safe_load(Path("config/models/hgnn.yaml").read_text())
