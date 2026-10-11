@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Component 04 on Gadi: build the G, G+R and G+R+S graphs for D09 on the round-robin
+# split, then check each set against Component 06 before any GPU time is spent.
+# Memory is for reading the satellite table (about 82 million rows) and holding
+# satellite features; on normal, 96 GB is charged as 24 CPUs either way.
+#PBS -P no50
+#PBS -q normal
+#PBS -N rainflow-graphs
+#PBS -l ncpus=24
+#PBS -l mem=96GB
+#PBS -l jobfs=1GB
+#PBS -l walltime=08:00:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+if [[ ! -x .venv/bin/python ]]; then
+    printf 'BLOCKED: missing .venv; run scripts/nci/prepare_environment.pbs first.\n' >&2
+    exit 1
+fi
+export PYTHONDONTWRITEBYTECODE=1
+export MPLBACKEND=Agg
+export OMP_NUM_THREADS=${PBS_NCPUS:-1}
+
+names=${NCI_RUNS:-"d09_round_robin_g d09_round_robin_gr d09_round_robin_grs"}
+for name in $names; do
+    for file in "config/graphs/$name.yaml" "config/models/$name.yaml"; do
+        if [[ ! -f $file ]]; then
+            printf 'BLOCKED: missing %s.\n' "$file" >&2
+            exit 1
+        fi
+    done
+    split_file=$(.venv/bin/python -B scripts/nci/pipeline_config.py get "config/graphs/$name.yaml" split_file)
+    if [[ ! -f $split_file ]]; then
+        printf 'BLOCKED: missing released split %s; it is committed, so pull the latest revision.\n' "$split_file" >&2
+        exit 1
+    fi
+done
+for table in gauge_hourly stations radar_hourly radar_nodes satellite_hourly satellite_nodes; do
+    if [[ ! -f database/standard/$table.csv ]]; then
+        printf 'BLOCKED: missing database/standard/%s.csv (gauge tables are uploaded; grid tables come from build_grids.pbs).\n' "$table" >&2
+        exit 1
+    fi
+done
+
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+git status --short
+for name in $names; do
+    output_dir=$(.venv/bin/python -B scripts/nci/pipeline_config.py get "config/graphs/$name.yaml" output_dir)
+    if [[ -d $output_dir ]]; then
+        if grep -q '^Status: BUILT' "$output_dir/report.md" 2>/dev/null; then
+            printf 'Already built, kept as is: %s\n' "$output_dir"
+        else
+            printf 'BLOCKED: %s holds an unfinished build; read its report.md, then move it aside.\n' "$output_dir" >&2
+            exit 1
+        fi
+    else
+        started=$(date +%s)
+        .venv/bin/python -B -u -m src.graph.builder_new "config/graphs/$name.yaml"
+        printf 'GRAPHS_BUILT %s seconds=%s\n' "$name" "$(( $(date +%s) - started ))"
+    fi
+    grep -E '^(Timeline|  )' "$output_dir/report.md" | head -n 8 || true
+    du -sh "$output_dir"
+    bash scripts/nci/preflight.sh "config/models/$name.yaml"
+done
+printf 'GRAPHS_STATUS=READY\n'

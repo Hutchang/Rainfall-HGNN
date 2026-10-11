@@ -1,9 +1,11 @@
-# Training on NCI Gadi
+# Running on NCI Gadi
 
-This is the deployment path for Component 06. It uses the checked-in `uv.lock`,
-Component 02 standard tables, Component 03 splits/seeds and Component 04 saved graphs.
-It does not download BoM data, build the preceding components or use legacy exports.
-The runner is `python -m src.models.run`, as implemented under `src/models/`.
+Sections 1 to 5 are the deployment path for Component 06 training: the checked-in
+`uv.lock`, Component 02 standard tables, Component 03 splits/seeds and Component 04
+saved graphs. The runner is `python -m src.models.run`, as implemented under
+`src/models/`. [Section 6](#6-the-sydney-fusion-runs-d09-end-to-end) builds the radar
+and satellite tables and the D09 graphs on Gadi as well, because the archives they read
+are only there. Nothing here downloads BoM data or uses legacy exports.
 
 ## Readiness
 
@@ -205,3 +207,131 @@ Check `Exit_status`, the `rainflow-smoke.o*` log, and the runner's `config.yaml`
 queue entry alone is not completion. Require the runner's exact target-row check and
 review predictions before scheduling a longer run. No production training duration,
 checkpoint recovery or A100 speed has yet been verified on Gadi.
+
+## 6. The Sydney fusion runs (D09), end to end
+
+The radar (`rq0`) and satellite (`rv74`) archives are read in place on Gadi, so the grid
+tables, the graphs built from them and the training all run there. The gauge tables are
+built on your own machine and uploaded; they are small.
+
+| Step | Where | Job | Writes |
+|---|---|---|---|
+| Environment | `copyq` | `prepare_environment.pbs` (section 3) | `.venv/` |
+| Gauge tables | your machine | Component 02, then upload | `database/standard/gauge_hourly.csv`, `stations.csv` |
+| Grid tables | `normal`, 1 CPU, 32 GB | `build_grids.pbs` | `database/standard/{radar,satellite}_{hourly,nodes}.csv`, `grid_report.md` |
+| Graphs | `normal`, 24 CPUs, 96 GB | `build_graphs.pbs` | `database/graphs/d09_round_robin_{g,gr,grs}/` |
+| Training | `dgxa100`, 1 A100 | `train.pbs` | `experiments/nci/<run>/` |
+
+The three runs are G, G+R and G+R+S on the round-robin split
+([DEC-03](../DECISIONS.md#dec-03)), configured in `config/graphs/d09_round_robin_*.yaml`
+and `config/models/d09_round_robin_*.yaml`. Each HGNN run also scores IDW and network
+mean on the same rows. All three drop the hours radar or satellite lack
+([DEC-01](../DECISIONS.md#dec-01)), so every row of D09's table covers the same hours.
+
+### Before the first job
+
+On a login node, confirm the archive memberships with the counts NCI's public listing
+gives, and the quotas:
+
+```console
+ls /g/data/rq0/rainfields3/71/2021/prcp-m15 | wc -l      # 359 daily files
+ls /g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1/2022/01/03 | wc -l   # 142
+lquota
+nci_account -P no50
+```
+
+Check out the revision to run under `/scratch/no50/$USER/COMP3888-m17-01-p23` (section
+2) and prepare the environment (section 3).
+
+### Gauge tables
+
+The gauge tables come from the national download in `database.zip`: the stations inside
+`config/ingestion/sydney.yaml`'s box are copied out with their files unchanged (184
+stations, 4,784 files, each checked against the index's sha256), and Component 02 builds
+the tables from them. Built with Unix line endings, `gauge_hourly.csv` has sha256
+`7ccf6813…` and `stations.csv` `6f624f27…`, the same files D08's runs used, with the same
+127 study stations as both released splits. Upload them through NCI's data mover:
+
+```console
+ssh gadi.nci.org.au mkdir -p /scratch/no50/YOUR_NCI_USERNAME/COMP3888-m17-01-p23/database/standard
+rsync -av database/standard/gauge_hourly.csv database/standard/stations.csv \
+  YOUR_NCI_USERNAME@gadi-dm.nci.org.au:/scratch/no50/YOUR_NCI_USERNAME/COMP3888-m17-01-p23/database/standard/
+```
+
+Then on Gadi, `sha256sum database/standard/{gauge_hourly,stations}.csv` should print the
+two hashes above.
+
+### Time the grid readers first
+
+Nobody has run the readers against the whole archive, so first read one week:
+
+```console
+qsub -v NCI_GRID_TRIAL=2022-01-01:2022-01-07 -l walltime=02:00:00 scripts/nci/build_grids.pbs
+```
+
+The trial writes to its own `database/grid-trial-<job>/`. Its log ends with
+`GRID_STATUS=READY seconds=N` and the report's coverage lines. The full two years take
+about `N × 730 / 7` seconds; if that is near 24 hours, raise the walltime when submitting
+the full build (`qsub -l walltime=…`).
+
+### Submit the chain
+
+```console
+bash scripts/nci/submit_pipeline.sh
+```
+
+From a login node, this submits the full grid build, then the graph build, then a
+one-epoch G+R+S timing run, each starting only when the one before it succeeded
+(`qsub -W depend=afterok`). It refuses to start if the gauge tables or `.venv` are
+missing, or if any grid output already exists. `--no-timing` leaves out the timing run.
+
+- **Grid build:** `grid_report.md` gives, per source, the hours present and missing
+  over 2021–2022 and every hour not written, with its cause. That is the measurement
+  [ISS-04](../ISSUES.md#iss-04) is waiting for; copy the report back.
+- **Graph build:** each report's `Timeline (DEC-01)` line says how many hours were
+  dropped and why; `dropped_hours.csv` lists them. The job then runs Component 06's
+  input check on each set, so a mismatch shows up before any GPU time is spent.
+- **Timing run:** its log's `TRAIN_STATUS=DONE seconds=N` covers five folds of one
+  epoch plus prediction. A full run trains up to 100 epochs per fold, stopping after
+  10 without improvement, so book well above `N × 30`, capped at the queue's 48 hours.
+
+### Full runs
+
+```console
+qsub -l walltime=HH:MM:SS -v NCI_MODEL_CONFIG=config/models/d09_round_robin_g.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-g scripts/nci/train.pbs
+qsub -l walltime=HH:MM:SS -v NCI_MODEL_CONFIG=config/models/d09_round_robin_gr.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-gr scripts/nci/train.pbs
+qsub -l walltime=HH:MM:SS -v NCI_MODEL_CONFIG=config/models/d09_round_robin_grs.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-grs scripts/nci/train.pbs
+```
+
+A run never overwrites an existing output folder. Copy each folder back with
+`rsync -av YOUR_NCI_USERNAME@gadi-dm.nci.org.au:/scratch/no50/YOUR_NCI_USERNAME/COMP3888-m17-01-p23/experiments/nci/ experiments/nci/`.
+
+### Cost and space
+
+Charges follow NCI's published rates (check them before booking): `normal` 2 SU per CPU
+hour, with every 4 GB of memory counted as one CPU; `dgxa100` 4.5 SU per CPU hour. A job
+is charged for the time it uses, so these are ceilings at the default walltimes:
+
+| Job | Charged as | Most it can cost |
+|---|---|---|
+| Grid trial (2 h) | 8 CPUs | 32 SU |
+| Grid build (24 h) | 8 CPUs | 384 SU |
+| Graph build (8 h) | 24 CPUs | 384 SU |
+| Timing run (4 h) | 16 CPUs | 288 SU |
+| Each full run (48 h) | 16 CPUs | 3,456 SU |
+
+On `/scratch/no50` expect about 4 GB of grid tables (the satellite table is about 82
+million rows), 11 GB of G+R+S graphs, 1.5 GB of G+R graphs, and about 0.4 GB of
+predictions per run.
+
+### TO VALIDATE on the first run
+
+- The archive paths and counts above, from a Gadi shell rather than the public listing.
+- How fast the readers are (the trial answers it) and whether 32 GB is enough.
+- Whether 96 GB holds the satellite table while the graphs are built.
+- How long one G+R+S epoch takes on an A100 (the timing run answers it).
+- The queue limits and charge rates used above.
+
+The unmerged D14 branch has a `scripts/nci/train.pbs` of its own, used by its remote
+runner. This one keeps the same interface (`NCI_MODEL_CONFIG`, `NCI_OUTPUT_DIR`) and adds
+default resources, which `qsub` options override.

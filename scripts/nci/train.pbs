@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Component 06 training on one Gadi A100: the HGNN plus IDW and network mean on the
+# same rows. The defaults below can be overridden on the qsub command line.
+#   qsub -v NCI_MODEL_CONFIG=config/models/d09_round_robin_grs.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-grs scripts/nci/train.pbs
+# NCI_EPOCHS=1 with a short walltime times one epoch before a full run is booked.
+#PBS -P no50
+#PBS -q dgxa100
+#PBS -N rainflow-train
+#PBS -l ncpus=16
+#PBS -l ngpus=1
+#PBS -l mem=128GB
+#PBS -l jobfs=10GB
+#PBS -l walltime=48:00:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+if [[ -z ${NCI_MODEL_CONFIG:-} || -z ${NCI_OUTPUT_DIR:-} ]]; then
+    printf 'BLOCKED: NCI_MODEL_CONFIG and NCI_OUTPUT_DIR must be passed with qsub -v.\n' >&2
+    exit 1
+fi
+if [[ -n ${NCI_EPOCHS:-} && ! ${NCI_EPOCHS} =~ ^[1-9][0-9]{0,2}$ ]]; then
+    printf 'BLOCKED: NCI_EPOCHS must be a whole number from 1 to 999.\n' >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+if [[ ${PBS_NGPUS:-0} != 1 ]]; then
+    printf 'BLOCKED: training requires exactly one allocated GPU.\n' >&2
+    exit 1
+fi
+if [[ -e $NCI_OUTPUT_DIR ]]; then
+    printf 'BLOCKED: %s already exists; runs are never overwritten.\n' "$NCI_OUTPUT_DIR" >&2
+    exit 1
+fi
+
+# The Linux environment must already exist. Compute nodes do not install/download.
+export PYTHONDONTWRITEBYTECODE=1
+export OMP_NUM_THREADS=${PBS_NCPUS:-1}
+export MPLBACKEND=Agg
+epochs=()
+if [[ -n ${NCI_EPOCHS:-} ]]; then
+    epochs=(--epochs "$NCI_EPOCHS")
+fi
+
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+git status --short
+nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+started=$(date +%s)
+.venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device cuda \
+    --output-dir "$NCI_OUTPUT_DIR" "${epochs[@]}"
+printf 'TRAIN_STATUS=DONE seconds=%s output=%s UTC end: %s\n' \
+    "$(( $(date +%s) - started ))" "$NCI_OUTPUT_DIR" "$(date -u +%FT%TZ)"
