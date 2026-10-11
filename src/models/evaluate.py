@@ -58,11 +58,6 @@ def write_report(path, df, settings, notes=()):
             str(settings["fixture_label"]),
             "",
         ]
-    if settings.get("method") == "hgnn":
-        lines += [
-            "**Comparison pending review:** the current graph and baseline contracts let each method read a different set of gauges at test time. These scores do not yet establish which method is better.",
-            "",
-        ]
     lines += [
         "Target validation must pass before this run is complete.",
         "",

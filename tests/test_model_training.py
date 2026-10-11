@@ -8,11 +8,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import torch
+import yaml
 from torch_geometric.data import Batch
 
 from src.models.contracts import load_inputs, target_rows, validate_predictions
 from src.models.graphs import HourlyGraphDataset, load_graph, validate_graph
 from src.models.run import check_inputs, read_fold, read_settings, run
+from src.models.scaling import rainfall_scaling
 from src.models.trainer import masked_forward, predict_fold, restore_model
 
 
@@ -230,6 +232,90 @@ def test_graph_rejects_normalization_identity_and_label_corruption(inputs):
     graph["raingauge"].x[0, 1, 2] += 1
     with pytest.raises(ValueError, match="constant across hours"):
         validate_graph(graph, split["folds"][0], "test", gauge)
+
+
+def test_zscore_scaling_uses_training_statistics_and_leaves_the_rest_alone(inputs):
+    gauge, split, _ = load_inputs(inputs["gauge_file"], inputs["split_file"])
+    fold = split["folds"][0]
+    physical = read_fold(dict(inputs, input_rainfall_scale="physical_mm"), fold, gauge)
+    settings = dict(inputs, input_rainfall_scale="zscore_train")
+    scaled = read_fold(settings, fold, gauge)
+
+    statistics = settings["input_scaling"][0]["raingauge"]
+    train = physical["train"]["raingauge"]
+    train_rain = train.x[:, :, 0][train.observed].double()
+    assert statistics["mean_mm"] == pytest.approx(train_rain.mean().item())
+    assert statistics["std_mm"] == pytest.approx(train_rain.std(correction=0).item())
+    assert statistics["observed_values"] == int(train.observed.sum())
+
+    # The training graph's observed rainfall is centred with unit spread.
+    scaled_train = scaled["train"]["raingauge"]
+    centred = scaled_train.x[:, :, 0][scaled_train.observed].double()
+    assert centred.mean().item() == pytest.approx(0.0, abs=1e-5)
+    assert centred.std(correction=0).item() == pytest.approx(1.0, abs=1e-5)
+
+    for role in ("train", "validation", "test"):
+        before, after = physical[role]["raingauge"], scaled[role]["raingauge"]
+        # Every role is scaled with the training numbers, never its own.
+        torch.testing.assert_close(
+            after.x[:, :, 0][after.observed],
+            (before.x[:, :, 0][before.observed] - statistics["mean_mm"])
+            / statistics["std_mm"],
+        )
+        # Unobserved rainfall keeps the zero placeholder; validity says it is absent.
+        assert torch.equal(
+            after.x[:, :, 0][~after.observed],
+            torch.zeros_like(after.x[:, :, 0][~after.observed]),
+        )
+        # Validity, positional features and millimetre targets are untouched.
+        assert torch.equal(after.x[:, :, 1:], before.x[:, :, 1:])
+        torch.testing.assert_close(after.y, before.y, equal_nan=True)
+
+
+def test_zscore_run_records_its_scaling_and_replays_from_a_checkpoint(inputs, tmp_path):
+    settings = dict(inputs, input_rainfall_scale="zscore_train")
+    first = run(settings, tmp_path / "first")
+    recorded = yaml.safe_load((first / "config.yaml").read_text())
+
+    assert recorded["input_rainfall_scale"] == "zscore_train"
+    assert sorted(recorded["input_scaling"]) == [0, 1, 2, 3, 4]
+    for fold in range(5):
+        values = recorded["input_scaling"][fold]["raingauge"]
+        assert values["std_mm"] > 0
+        assert values["observed_values"] > 0
+    assert "z-scored per node type" in (first / "report.md").read_text()
+
+    # Predictions are still millimetres on the canonical target rows.
+    original = read_predictions(first)
+    gauge, split, _ = load_inputs(inputs["gauge_file"], inputs["split_file"])
+    validate_predictions(original, gauge, split)
+
+    restored = run(settings, tmp_path / "restored", first / "best.pt")
+    pd.testing.assert_frame_equal(
+        original, read_predictions(restored), check_exact=True
+    )
+    # A checkpoint trained on scaled inputs cannot be replayed on raw millimetres.
+    with pytest.raises(ValueError, match="input_rainfall_scale"):
+        run(
+            dict(inputs, input_rainfall_scale="physical_mm"),
+            tmp_path / "mismatch",
+            first / "best.pt",
+        )
+
+
+def test_scaling_rejects_an_unknown_setting_and_rainfall_without_spread(inputs):
+    with pytest.raises(ValueError, match="physical_mm or zscore_train"):
+        check_inputs(dict(inputs, input_rainfall_scale="log"))
+
+    gauge, split, _ = load_inputs(inputs["gauge_file"], inputs["split_file"])
+    fold = split["folds"][0]
+    graph = read_fold(dict(inputs), fold, gauge)["train"]
+    graph["raingauge"].x[:, :, 0] = 1.0
+    with pytest.raises(ValueError, match="no spread"):
+        rainfall_scaling(graph, "fold 0 train")
+    graph["raingauge"].observed[:] = False
+    with pytest.raises(ValueError, match="no observed raingauge rainfall"):
+        rainfall_scaling(graph, "fold 0 train")
 
 
 def test_readonly_preflight_and_failed_run_keep_error(inputs, tmp_path):

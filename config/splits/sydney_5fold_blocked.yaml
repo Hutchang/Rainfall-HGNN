@@ -1,0 +1,57 @@
+# Component 03 split settings: the paper's Sydney evaluation protocol (D08.1).
+#
+# Every setting below is either something the paper states, quoted from
+# docs/source_paper.md, or something the paper leaves open, marked "paper silent"
+# with the reason for our value. A reviewer who reads only this file can say which
+# parts of the split are the paper's and which are ours.
+#
+# Every setting here is honoured by src/study/split.py. fold_assignment:
+# whole_clusters was added for D08.1; before it, create_test_folds could only deal
+# each cluster's stations one at a time across the folds.
+#
+# Station set. The paper's Sydney station list was never published (ISS-23), so this
+# split runs over every station Component 02 marks use_in_study on the current build
+# of database/standard/stations.csv (127 eligible of 184 in the box, built 2026-09-20
+# under config/canonical/standard.yaml). The paper reports 75 stations. This is the one
+# difference no split setting can remove.
+
+stations_file: database/standard/stations.csv
+output: config/splits/sydney_5fold_blocked.json
+
+# Paper §4.2: "We evaluate every method under five-fold spatial cross-validation".
+n_folds: 5
+
+# Paper §4.2: "Stations are partitioned into spatially coherent folds so that held-out
+# stations are not adjacent to training stations, preventing a model from succeeding
+# through trivial spatial proximity rather than genuine generalisation."
+# Each fold's test set is made of whole spatial clusters; no cluster is shared between a
+# fold's test stations and its train or validation stations. The alternative value,
+# round_robin, is the inherited behaviour kept for config/splits/sydney_5fold.yaml.
+fold_assignment: whole_clusters
+
+# Paper silent on how the "spatially coherent" areas are drawn. Ours: k-means on
+# station coordinates projected to local kilometres (today's method, unchanged), and
+# 10 areas (today's value). With 5 folds this gives 2 whole areas per fold. The code
+# refuses a cluster count that does not divide evenly by the fold count.
+n_clusters: 10
+
+# Paper silent on which areas pair up in a fold. k-means labels are arbitrary, so
+# sorting them would be reproducible but meaningless. Ours: shuffle the cluster order
+# with the split seed and deal n_clusters / n_folds consecutive clusters to each fold.
+
+# Paper §4.3: "early stopping with patience 10", so validation gauges exist; the paper
+# gives no share and no rule for where they go. Ours: 15 % of each fold's non-test
+# stations, drawn at random (today's value and method). Where they land relative to the
+# hidden area is out of scope for D08 and is measured by D08.7; see ISS-34.
+validation_fraction: 0.15
+
+# Every station is hidden exactly once across the five folds: implied by five-fold
+# cross-validation and enforced by validate_fold_roles.
+#
+# Paper §4.2: "The same held-out stations are used across all methods and all support
+# configurations to ensure comparability." Kept by there being one split file per
+# config (requirements rule 6): every method reads this file's test sets.
+#
+# Seed: config/seeds.yaml split_seed (requirements rule 5). Used for k-means
+# initialisation, the cluster-to-fold shuffle, and the validation draw. No seed lives
+# in this file or in the code.

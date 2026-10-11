@@ -172,8 +172,15 @@ in the [pipeline guide](../graphs/README.md). Existing bidirectional graphs rema
 one-way graphs require a new run and checkpoint because their relation schema differs.
 The remaining D09.2 grid-topology work is [ISS-38](../ISSUES.md#iss-38).
 
-No feature rescaling is performed. Do not infer scales from the data or change labels to
-fit a model; agree any transform with Component 04 first. Component 01/02 must establish
+Rescaling is one setting, `input_rainfall_scale`. `physical_mm` feeds the model raw
+millimetres. `zscore_train` (D08.2; paper §4.3) subtracts the mean and divides by the
+spread of the observed rainfall in each fold's **training** graph, per node type, and
+applies those two numbers to the validation and test graphs as well. Only the rainfall
+input channel is scaled: validity, positional features, targets and predictions are not,
+so scores stay in millimetres. The numbers used are written to the run's `config.yaml`
+under `input_scaling`, and a checkpoint cannot be replayed under the other setting. Graph
+files stay in physical millimetres either way; do not change labels to fit a model, and
+agree any transform of the files themselves with Component 04 first. Component 01/02 must establish
 product, units, timestamp meaning and gauge correction before physical interpretation. All
 fusion run reports flag that tensor compatibility alone does not establish independent
 held-out gauge evaluation. The supervisor's broader national-run objective does not make
@@ -194,11 +201,12 @@ used here. Their end-to-end path is tested with synthetic inputs.
 
 ## Baselines and model behaviour
 
-`network_mean` averages only observed **training** gauges at the target hour. `idw`
+`network_mean` averages the observed **visible** gauges at the target hour: the fold's
+training and validation gauges, the same ones the HGNN's test graph holds (D08.2). `idw`
 reads those same gauges, WGS84 haversine distances, and the explicitly configured
 `idw_power` (the example is 2.0). A gauge at the same location as the target, if it is
 observed, takes precedence over the rest; several such gauges are averaged. No hour is
-gap-filled. If no training gauge is observed at that hour, the run fails with the
+gap-filled. If no visible gauge is observed at that hour, the run fails with the
 fold/hour instead of dropping targets or inventing rainfall.
 
 The model adapter keeps the inherited `GNNInductiveHetero` and leave-one-gauge-out

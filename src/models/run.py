@@ -21,6 +21,7 @@ from src.models.contracts import load_inputs, target_rows, validate_predictions
 from src.models.evaluate import write_report
 from src.models.graphs import load_graph, validate_graph
 from src.models.modalities import validate_layer_selection
+from src.models.scaling import apply_rainfall_scaling, rainfall_scaling
 from src.models.trainer import model_spec, predict_fold, restore_model, train_fold
 
 INPUT_KEYS = ("gauge_file", "stations_file", "split_file", "seeds_file")
@@ -35,6 +36,9 @@ HISTORY_COLUMNS = (
     "patience_remaining",
     "early_stop_status",
 )
+# physical_mm feeds the model raw millimetres (inherited). zscore_train scales the
+# rainfall input per node type on each fold's training graph (paper sec 4.3; D08.2).
+RAINFALL_SCALES = ("physical_mm", "zscore_train")
 
 
 def read_settings(path):
@@ -82,9 +86,10 @@ def validate_settings(settings):
             raise ValueError("loss must be weighted_mse or mse")
         if type(settings.get("deterministic")) is not bool:
             raise ValueError("deterministic must be explicitly true or false")
-        if settings.get("input_rainfall_scale") != "physical_mm":
+        if settings.get("input_rainfall_scale") not in RAINFALL_SCALES:
             raise ValueError(
-                "input_rainfall_scale must be physical_mm; normalized graph inputs are TO VALIDATE with Component 04"
+                "input_rainfall_scale must be physical_mm or zscore_train; graph files "
+                "stay in physical millimetres either way"
             )
         if not isinstance(settings.get("graphs_dir"), str):
             raise ValueError("missing input path config.graphs_dir")
@@ -163,7 +168,20 @@ def read_fold(settings, fold, gauge):
             raise ValueError(
                 f"fold {fold['fold_index']}: {role} feature widths or edge relations differ from train"
             )
+    if settings["input_rainfall_scale"] == "zscore_train":
+        # Statistics come from the training graph alone and are applied to all three,
+        # so nothing about validation or test rainfall reaches the scaling.
+        statistics = rainfall_scaling(
+            graphs["train"], f"fold {fold['fold_index']} train"
+        )
+        for graph in graphs.values():
+            apply_rainfall_scaling(graph, statistics)
+        settings.setdefault("input_scaling", {})[fold["fold_index"]] = statistics
     return graphs
+
+
+def write_config(directory, settings):
+    (directory / "config.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
 
 
 def check_inputs(settings):
@@ -231,9 +249,7 @@ def run(settings, output_dir=None, predict_from=None):
             if settings["device"] == "cuda" and settings["deterministic"]:
                 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         settings["provenance"] = provenance(settings)
-        (directory / "config.yaml").write_text(
-            yaml.safe_dump(settings, sort_keys=False)
-        )
+        write_config(directory, settings)
         tables = []
         checkpoint_input = None
         if predict_from:
@@ -305,6 +321,8 @@ def run(settings, output_dir=None, predict_from=None):
             for fold in split["folds"]:
                 index = fold["fold_index"]
                 graphs = read_fold(settings, fold, gauge)
+                # Records this fold's input scaling beside the settings it ran with.
+                write_config(directory, settings)
 
                 def save_progress(row, best, index=index):
                     history.append(row)
@@ -340,6 +358,13 @@ def run(settings, output_dir=None, predict_from=None):
                     ):
                         raise ValueError(
                             f"fold {index}: checkpoint model graph schema differs"
+                        )
+                    if saved.get("input_scaling", {}).get(index) != settings.get(
+                        "input_scaling", {}
+                    ).get(index):
+                        raise ValueError(
+                            f"fold {index}: checkpoint input scaling differs from "
+                            "this run's training graph"
                         )
                     model = restore_model(checkpoint, settings)
                     checkpoints[index] = checkpoint
@@ -392,9 +417,13 @@ def run(settings, output_dir=None, predict_from=None):
                     )
         notes = [
             "Target checker passed: every method predicts exactly the canonical observed test rows across all five folds.",
-            "Gauge features use physical millimetres with no Component 06 normalization; hidden rainfall and validity are zeroed while LPE is preserved. Normalized upstream graphs are rejected until Component 04 supplies an agreed transform contract.",
+            (
+                "Rainfall inputs are z-scored per node type with each fold's training-graph mean and spread, recorded under input_scaling in config.yaml (paper sec 4.3; D08.2). Graph files, targets and predictions stay in physical millimetres; validity and LPE are unscaled. Hidden rainfall and validity are zeroed while LPE is preserved."
+                if settings.get("input_rainfall_scale") == "zscore_train"
+                else "Gauge features use physical millimetres with no Component 06 normalization; hidden rainfall and validity are zeroed while LPE is preserved. Normalized upstream graphs are rejected until Component 04 supplies an agreed transform contract."
+            ),
             "Training retains inherited leave-one-gauge-out masking, weighted MSE and gradient clipping at 1. Missing targets are excluded, and epoch losses are weighted by observed row count; these correct the inherited zero-label/missingness behaviour.",
-            "TO VALIDATE: Component 04 permits train + validation context at GNN test time; the prescribed baselines read training gauges only. The two methods therefore read different gauges, so the comparison is unbalanced pending reviewer agreement.",
+            "Every method reads the same gauges when predicting the test gauges: the fold's training and validation gauges (paper sec 4.2; D08.2).",
             f"IDW uses haversine distance with explicit power {settings.get('idw_power', 'not used')}; exponent requires Component 03 reviewer signoff.",
             "Checkpoint prediction uses each fold's lowest validation-loss state.",
             "Validation retains the inherited clamp-before-loss rule: negative outputs become zero before scoring. A tied all-zero plateau keeps the first best epoch and can stop before raw outputs cross zero; training loss remains unclamped. This policy needs reviewer agreement before scientific runs.",
@@ -430,9 +459,7 @@ def run(settings, output_dir=None, predict_from=None):
         write_report(report_path, predictions, settings, notes=notes)
         return directory
     except BaseException as error:
-        (directory / "config.yaml").write_text(
-            yaml.safe_dump(settings, sort_keys=False)
-        )
+        write_config(directory, settings)
         report_path.write_text(
             f"# Model run\n\nStatus: FAILED\n\n{type(error).__name__}: {error}\n\nPartial artifacts are retained. No completed result is claimed.\n"
         )
