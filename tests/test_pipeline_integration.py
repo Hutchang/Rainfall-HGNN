@@ -48,8 +48,10 @@ def test_raw_tables_to_splits_graphs_training_and_replay(
     build_baseline_graphs(directory / "graph.yaml")
     report = (directory / "graphs/report.md").read_text()
     assert f"reverse_cross_support={reverse_cross_support}" in report
+    assert "grid_edges=True" in report
     for kind in ("radar", "satellite"):
         assert f"('{kind}', 'connects', 'raingauge')" in report
+        assert f"('{kind}', 'connects', '{kind}')" in report
         assert (f"('raingauge', 'rev_connects', '{kind}')" in report) == (
             reverse_cross_support
         )
@@ -81,6 +83,8 @@ def test_raw_tables_to_splits_graphs_training_and_replay(
             assert (reverse in graph.edge_types) == reverse_cross_support
             if reverse_cross_support:
                 assert torch.equal(graph[reverse].edge_index, edge.flip(0))
+            # The fixture's 3 x 4 grid: 4 corners x 3 + 6 edge cells x 5 + 2 inside x 8.
+            assert graph[kind, "connects", kind].edge_index.shape[1] == 58
         for relation in graph.edge_types:
             edge = graph[relation]
             assert torch.isfinite(edge.edge_attr).all()
@@ -196,6 +200,18 @@ def test_invalid_reverse_setting_fails_before_writing(tmp_path, value):
     path.write_text(yaml.safe_dump(config))
     output = tmp_path / "graphs"
     with pytest.raises(ValueError, match="reverse_cross_support must be a boolean"):
+        build_baseline_graphs(path, output_dir=output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
+def test_invalid_grid_edges_setting_fails_before_writing(tmp_path, value):
+    config = yaml.safe_load(Path("config/graphs/gauge_baseline.yaml").read_text())
+    config["grid_edges"] = value
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(config))
+    output = tmp_path / "graphs"
+    with pytest.raises(ValueError, match="grid_edges must be a boolean"):
         build_baseline_graphs(path, output_dir=output)
     assert not output.exists()
 

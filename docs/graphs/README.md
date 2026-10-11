@@ -54,14 +54,22 @@ The setting must be a YAML boolean. Each stored relation keeps its own receiving
 normalization when `edge_normalisation: per_node` is selected. The graph report records
 the effective reverse-edge setting and the counts and weight ranges of every relation.
 
-The direct `GaugeGraphNew.add_heterodata` API also defaults to nine neighbours and accepts
-the keyword `reverse_cross_support=True`. Existing callers with smaller fixtures must
+Each radar or satellite cell also links to its immediate neighbours on its own grid
+(paper §3.2): up to eight, four along the grid and four diagonal, so a cell on the edge
+of the grid gets fewer rather than links to cells two steps away. A neighbour is any of
+a cell's eight nearest cells within 1.9 times its closest spacing; on the D13 sample
+grids that picks exactly the surrounding cells (radar's diagonals sit at 1.42, the
+satellite grid's at up to 1.76, and the next ring out at 2). The links run both ways
+and are weighted by inverse distance, normalized at the receiving cell like every other
+relation. `grid_edges: true` is the default even when the key is absent; `false` leaves
+sensor cells unlinked, as before D09.2. The report records the setting and lists the
+`(<layer>, 'connects', <layer>)` relations.
+
+The direct `GaugeGraphNew.add_heterodata` API also defaults to nine neighbours and grid
+links, and accepts the keywords `reverse_cross_support=True` and `grid_edges=False`. Existing callers with smaller fixtures must
 pass their intended `knn`; an oversized neighbour request fails instead of silently
 clamping it. To reproduce an earlier fusion graph, explicitly set both the previous
-neighbour count and `reverse_cross_support: true`.
-
-This implements the cross-support direction part of D09.2. The remaining grid-topology
-work is tracked by [ISS-38](../ISSUES.md#iss-38); this is not full D09.2 acceptance.
+neighbour count, `reverse_cross_support: true` and `grid_edges: false`.
 
 ## Fully offline integration example
 

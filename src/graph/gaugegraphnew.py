@@ -9,6 +9,8 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.transforms import AddLaplacianEigenvectorPE
 from torch_geometric.utils import is_undirected
 
+from src.graph.radargraphnew import grid_neighbour_edges
+
 # config = read_config("config.yaml")
 # removed the config file reading from this file as it is not needed here
 
@@ -343,16 +345,20 @@ class GaugeGraphNew:
 
     def add_heterodata(
         self, heterodata_layer, coords, layer_name, knn=9, *,
-        reverse_cross_support=False,
+        reverse_cross_support=False, grid_edges=True,
     ):
         """Attach an aligned point layer using WGS84 latitude/longitude order.
 
         Sensors send to gauges; reverse edges require an explicit opt-in (D09.2).
+        Each sensor cell also links to its immediate grid neighbours unless
+        ``grid_edges`` is false (D09.2, paper sec 3.2).
         Numerical correction: finite zero-distance weights, receiving-node
         normalization on each directed relation, and no coordinate-axis swap.
         """
         if type(reverse_cross_support) is not bool:
             raise ValueError("reverse_cross_support must be a boolean")
+        if type(grid_edges) is not bool:
+            raise ValueError("grid_edges must be a boolean")
         if layer_name not in {"radar", "satellite"}:
             raise ValueError("only Australian radar/satellite layers are supported")
         if heterodata_layer.timestamps != self.train_heterodata.timestamps:
@@ -368,6 +374,10 @@ class GaugeGraphNew:
             self.train_mask | self.val_mask,
             np.ones(len(self.test_mask), dtype=bool),
         )
+        # The grid is the same in every role graph, so its links are built once.
+        grid_relation = (layer_name, "connects", layer_name)
+        if grid_edges:
+            grid_index, grid_weights = grid_neighbour_edges(coords)
         graphs = self.get_fused_heterodata()
         for graph, mask in zip(graphs, masks, strict=True):
             graph[layer_name].x = heterodata_layer[layer_name].x.clone()
@@ -376,16 +386,29 @@ class GaugeGraphNew:
             ].to_numpy()
             pairs, raw_weights = self.connect_graphs(gauge_coords, coords, knn)
             gauge_to_grid = torch.tensor(pairs, dtype=torch.long).T.contiguous()
-            relations = [((layer_name, "connects", "raingauge"), gauge_to_grid.flip(0))]
+            raw_weights = torch.tensor(raw_weights, dtype=torch.float32)
+            relations = [
+                (
+                    (layer_name, "connects", "raingauge"),
+                    gauge_to_grid.flip(0),
+                    raw_weights,
+                )
+            ]
             reverse_relation = ("raingauge", "rev_connects", layer_name)
             if reverse_cross_support:
-                relations.append((reverse_relation, gauge_to_grid))
+                relations.append((reverse_relation, gauge_to_grid, raw_weights))
             elif reverse_relation in graph.edge_types:
                 del graph[reverse_relation]
-            for relation, index in relations:
-                weights = torch.tensor(raw_weights, dtype=torch.float32)
+            if grid_edges:
+                relations.append((grid_relation, grid_index.clone(), grid_weights))
+            elif grid_relation in graph.edge_types:
+                del graph[grid_relation]
+            for relation, index, raw in relations:
+                weights = raw.clone()
                 if self.edge_normalisation == "global":
-                    weights /= weights.max()
+                    # A one-cell grid has no grid links to scale.
+                    if weights.numel():
+                        weights /= weights.max()
                 else:
                     for destination in index[1].unique():
                         selected = index[1] == destination

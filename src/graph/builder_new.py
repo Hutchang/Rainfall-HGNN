@@ -28,6 +28,10 @@ def build_baseline_graphs(
     config.setdefault("reverse_cross_support", False)
     if type(config["reverse_cross_support"]) is not bool:
         raise ValueError("reverse_cross_support must be a boolean")
+    # On unless switched off: the paper links every grid cell to its neighbours.
+    config.setdefault("grid_edges", True)
+    if type(config["grid_edges"]) is not bool:
+        raise ValueError("grid_edges must be a boolean")
     data_dir = Path(data_dir or config.get("data_dir", "database/standard"))
     output_dir = Path(
         output_dir or config.get("output_dir", "database/graphs/gauge_baseline")
@@ -140,7 +144,10 @@ def build_baseline_graphs(
             "Sensor topology: each gauge selects the configured nearest sensor nodes; "
             "sensor-to-gauge edges are always stored; "
             f"reverse_cross_support={config['reverse_cross_support']} "
-            "controls gauge-to-sensor edges. Each stored relation is normalized "
+            "controls gauge-to-sensor edges; "
+            f"grid_edges={config['grid_edges']} controls links between each sensor "
+            "cell and its immediate grid neighbours (up to eight). Each stored "
+            "relation is normalized "
             "independently at its receiving nodes when edge_normalisation=per_node. "
             "Source product/"
             "units, coverage and held-out-gauge independence remain subject to review."
@@ -181,6 +188,7 @@ def build_baseline_graphs(
                 builder.add_heterodata(
                     features, coords, layer, knn=config["layer_k_neighbours"],
                     reverse_cross_support=config["reverse_cross_support"],
+                    grid_edges=config["grid_edges"],
                 )
             folder = output_dir / f"fold-{fold['fold_index']}"
             folder.mkdir()

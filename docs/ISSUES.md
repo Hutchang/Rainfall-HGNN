@@ -60,7 +60,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-34](#iss-34) | Validation gauges are placed at random and can sit next to a hidden gauge | Material | _unassigned_ | Open |
 | [ISS-36](#iss-36) | Radar has no validity flag, so one missing radar cell stops a graph build | Material | _unassigned_ | Open |
 | [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Open |
-| [ISS-38](#iss-38) | D09.2 within-grid topology and coincident-node weighting remain | Material | D09 | Open |
+| [ISS-38](#iss-38) | D09.2 within-grid topology and coincident-node weighting remain | Material | D09 | Closed |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
 | [ISS-23](#iss-23) | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
@@ -577,7 +577,7 @@ reasoning, and the reader and report apply it.
 <a id="iss-38"></a>
 
 ### ISS-38 — D09.2 within-grid topology and coincident-node weighting remain
-**Severity:** Material · **Owner:** D09 · **Status:** Open
+**Severity:** Material · **Owner:** D09 · **Status:** Closed 2026-10-12
 
 Oliver's D09.2 slice supplies sensor-to-gauge edges by default, an explicit reverse-edge
 option, nine cross-support neighbours, and model compatibility with source-only sensors.
@@ -590,6 +590,16 @@ does not establish reproduction of the paper's topology.
 **Closes when:** the remaining grid changes and their synthetic tests land, and the
 pipeline graph report demonstrates both grid-to-grid edges and one-way cross-support
 edges, as required by [D09.2](requirements/D09_RADAR_FUSION_REQUIREMENTS.md).
+
+**Closed 2026-10-12** by `feat(D09.2): link each grid cell to its immediate neighbours`.
+`grid_neighbour_edges` (`src/graph/radargraphnew.py`) links each radar or satellite cell
+to its immediate grid neighbours, and `builder_new.py` adds them to every role graph
+behind `grid_edges` (default on). The pipeline graph report lists the
+`(<layer>, 'connects', <layer>)` relations beside the one-way cross-support ones. Cells at
+the same position now get the strongest weight (1e6 before normalizing) in both the new
+function and `RadarGraphNew`. `RadarGraphNew` itself is no longer on the production path;
+when two of its cells share a position it can still link a cell to itself, because it
+assumes a cell's first neighbour is the cell.
 
 <a id="iss-13"></a>
 
