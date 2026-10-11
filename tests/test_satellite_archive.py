@@ -244,37 +244,50 @@ def test_crop_window_rejects_a_box_outside_the_grid():
         )
 
 
-# ---- TEST05: hourly averaging of six 10-minute frames ----------------------
+# ---- TEST05: hourly averaging of 10-minute frames (DEC-02) -----------------
 
 
-def test_hourly_means_averages_six_and_propagates_nan():
-    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
-    grids = [
-        np.array([[np.nan, 1.0], [1.0, 1.0]]),
-        np.array([[2.0, 1.0], [1.0, 1.0]]),
-        np.array([[2.0, 1.0], [1.0, 1.0]]),
-        np.array([[2.0, 1.0], [1.0, 1.0]]),
-        np.array([[2.0, 1.0], [1.0, 1.0]]),
-        np.array([[2.0, 1.0], [1.0, 1.0]]),
-    ]
-    frames = [
-        TenMinuteFrame(hour + pd.Timedelta(minutes=10 * i), grid)
+def _frames(hour, grids):
+    return [
+        TenMinuteFrame(hour + pd.Timedelta(minutes=10 * i), np.array(grid))
         for i, grid in enumerate(grids)
     ]
-    result = hourly_means(frames)
-    assert list(result) == [hour]
-    assert np.isnan(result[hour][0, 0])
-    assert result[hour][0, 1] == pytest.approx(1.0)
-    assert result[hour][1, 1] == pytest.approx(1.0)
 
 
-def test_hourly_means_drops_an_incomplete_hour():
+def test_hourly_means_averages_the_images_that_have_a_value():
     hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
-    frames = [
-        TenMinuteFrame(hour + pd.Timedelta(minutes=10 * i), np.zeros((1, 1)))
-        for i in range(5)
+    nan = np.nan
+    # Cells: [all six, five of six, three of six, two of six]
+    grids = [
+        [[1.0, nan, nan, nan]],
+        [[1.0, 2.0, nan, nan]],
+        [[1.0, 2.0, nan, nan]],
+        [[1.0, 2.0, 3.0, nan]],
+        [[1.0, 2.0, 6.0, 4.0]],
+        [[4.0, 2.0, 0.0, 8.0]],
     ]
-    assert hourly_means(frames) == {}
+    result = hourly_means(_frames(hour, grids))
+    assert list(result) == [hour]
+    np.testing.assert_allclose(result[hour][0, :3], [1.5, 2.0, 3.0])
+    # Two images with a value is less than half the hour: no value at all.
+    assert np.isnan(result[hour][0, 3])
+
+
+def test_hourly_means_counts_a_missing_image_as_no_value():
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    five = hourly_means(_frames(hour, [[[0.6]]] * 5))
+    np.testing.assert_allclose(five[hour], 0.6)
+    two = hourly_means(_frames(hour, [[[0.6]]] * 2))
+    assert list(two) == [hour] and np.isnan(two[hour]).all()
+    strict = hourly_means(_frames(hour, [[[0.6]]] * 5), min_images=6)
+    assert np.isnan(strict[hour]).all()
+
+
+@pytest.mark.parametrize("min_images", [0, 7, 3.0, "3", None])
+def test_hourly_means_rejects_an_impossible_image_count(min_images):
+    hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
+    with pytest.raises(ValueError, match="min_images_per_hour"):
+        hourly_means(_frames(hour, [[[0.6]]] * 6), min_images)
 
 
 def test_hourly_means_rejects_more_than_six_for_one_hour():
@@ -351,10 +364,11 @@ def test_build_satellite_grid_data_end_to_end_subsamples_and_averages(tmp_path):
     x_m, y_m, box = _tiny_grid_and_matching_box()
     hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
     full = np.full((8, 8), 6, dtype=np.uint16)  # 0.6 mm/h everywhere
-    first_frame_with_a_gap = full.copy()
+    frame_with_a_gap = full.copy()
     # (1, 1) is the crop window's own (0, 0) -- see _tiny_grid_and_matching_box.
-    first_frame_with_a_gap[1, 1] = 65535  # fill: that node invalid this hour
-    raws = [first_frame_with_a_gap] + [full] * 5
+    frame_with_a_gap[1, 1] = 65535  # fill: no value at that node
+    # Four of six frames lack it, so two values are left: below DEC-02's three.
+    raws = [frame_with_a_gap] * 4 + [full] * 2
     _write_hour_files(tmp_path, hour, raws, x_m, y_m)
 
     grid = build_satellite_grid_data(
@@ -372,8 +386,9 @@ def test_build_satellite_grid_data_end_to_end_subsamples_and_averages(tmp_path):
     assert (valid[1:] == 1.0).all()
 
 
-def test_a_satellite_hour_with_five_of_six_files_is_recorded_as_short(tmp_path):
-    """Rule 7: the report lists a short hour with how many files it had."""
+def test_a_satellite_hour_with_five_of_six_files_is_written_and_recorded(tmp_path):
+    """DEC-02: the archive's daily missing image does not cost the hour, and
+    rule 7: the report still lists the hour with how many files it had."""
     x_m, y_m, box = _tiny_grid_and_matching_box()
     full = np.full((8, 8), 6, dtype=np.uint16)
     hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
@@ -384,9 +399,12 @@ def test_a_satellite_hour_with_five_of_six_files_is_recorded_as_short(tmp_path):
         tmp_path, date(2022, 1, 5), date(2022, 1, 5), box, 2
     )
 
-    assert list(grid.timestamps) == [hour]
+    assert list(grid.timestamps) == [hour, hour + pd.Timedelta(hours=1)]
+    np.testing.assert_allclose(grid.values[1, :, 0], 0.6)
+    assert (grid.values[1, :, 1] == 1.0).all()
     assert grid.provenance["files_per_hour"] == 6
     assert grid.provenance["short_hours"] == {hour + pd.Timedelta(hours=1): 5}
+    assert "at least 3 of 6" in grid.provenance["hourly_rule"]
 
 
 def test_satellite_files_out_of_time_order_stop_the_build(tmp_path):
@@ -421,10 +439,12 @@ def test_grids_build_wires_satellite_archive_and_report_node_count_matches_table
     archive_root.mkdir()
     hour = pd.Timestamp("2022-01-05 00:00", tz="UTC")
     full = np.full((8, 8), 6, dtype=np.uint16)
-    first_frame_with_a_gap = full.copy()
-    first_frame_with_a_gap[1, 1] = 65535  # the crop window's own (0, 0)
-    raws = [first_frame_with_a_gap] + [full] * 5
+    frame_with_a_gap = full.copy()
+    frame_with_a_gap[1, 1] = 65535  # the crop window's own (0, 0)
+    raws = [frame_with_a_gap] * 4 + [full] * 2  # two values left at (0, 0)
     _write_hour_files(archive_root, hour, raws, x_m, y_m)
+    # The next hour lacks one image, as the archive's 02:40 and 14:40 hours do.
+    _write_hour_files(archive_root, hour + pd.Timedelta(hours=1), [full] * 5, x_m, y_m)
 
     output_dir = tmp_path / "standard"
     config_path = tmp_path / "grids.yaml"
@@ -461,8 +481,14 @@ def test_grids_build_wires_satellite_archive_and_report_node_count_matches_table
     assert "Nodes: 9;" in report
     assert "UNKNOWN" not in report
     assert list(hourly.columns) == ["node_id", "timestamp", "rain_rate", "valid"]
-    by_node = hourly.set_index("node_id")
+    by_node = hourly[hourly.timestamp == hourly.timestamp.min()].set_index("node_id")
     assert by_node.loc[0, "rain_rate"] == pytest.approx(0.0)
     assert by_node.loc[0, "valid"] == 0
     np.testing.assert_allclose(by_node.loc[[1, 2, 3], "rain_rate"], 0.6)
     assert (by_node.loc[[1, 2, 3], "valid"] == 1).all()
+    assert len(hourly) == 2 * 9
+    assert "at least 3 of 6 do" in report
+    assert "### Hours written from fewer files" in report
+    assert "- 5 of 6 files present: 1 hour" in report
+    # Every other hour of the configured month has no file: not written, listed.
+    assert "- no files in the archive: 742 hours" in report

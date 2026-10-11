@@ -158,9 +158,13 @@ been aligned by 04; equal dimensions cannot prove correct physical alignment.
 
 Unavailable satellite payloads are zeroed only on a cloned computational tensor, with
 availability kept at 0. Source graphs and labels remain unchanged. Radar has no validity
-feature in the current contract, so missing radar values fail explicitly. No automatic
-intersection with the radar's shorter 2022 coverage or replacement of missing values
-with observed dry zeros occurs. Each sensor type must have a nonempty relation directed
+feature, so Component 04 drops any hour with a radar cell that has no value
+([DEC-01](../DECISIONS.md#dec-01)). When the graph folder has `dropped_hours.csv`,
+Component 06 removes those hours from the gauge table before it builds targets, so the
+HGNN and both baselines are scored on the same hours; `config.yaml` records how many
+hours and station-hours went, and the report says so. An hour missing from the graphs
+but not listed in that file still fails validation. Missing values are never replaced
+with observed dry zeros. Each sensor type must have a nonempty relation directed
 to gauges. Incoming sensor relations are optional: the stacked HGNN retains unchanged
 features for source-only sensor types across layers, while types with incoming relations
 (including supplied within-grid edges) keep their normal convolution updates. The model

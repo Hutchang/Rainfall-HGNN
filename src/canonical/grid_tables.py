@@ -45,6 +45,13 @@ def load_standard_grid(directory, layer):
         .to_numpy(dtype=float)
         .reshape(len(hours), count, len(features))
     )
+    without_values = None
+    if layer == "radar":
+        # DEC-01: radar has no validity flag, so an hour with any cell that has
+        # no value is set aside whole, for Component 04 to drop and list.
+        complete = ~np.isnan(values[:, :, 0]).any(axis=1)
+        without_values = hours[~complete]
+        hours, values = hours[complete], values[complete]
     observed = np.ones((len(hours), count), dtype=bool)
     if layer == "satellite":
         if not np.isin(values[:, :, 1], [0, 1]).all():
@@ -53,4 +60,4 @@ def load_standard_grid(directory, layer):
     rain = values[:, :, 0][observed]
     if not np.isfinite(rain).all() or (rain < 0).any():
         raise ValueError(f"{layer}: observed rainfall must be finite and nonnegative")
-    return GridData(layer, hours, values, coords)
+    return GridData(layer, hours, values, coords, hours_without_values=without_values)

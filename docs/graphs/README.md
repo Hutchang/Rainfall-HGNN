@@ -39,8 +39,19 @@ of the graph config set `input_layers` to `[raingauge, radar]`,
 
 For every sensor, 04 reads `<layer>_hourly.csv` and `<layer>_nodes.csv`. It requires the
 exact gauge timeline, complete coordinate-node rows for each present hour, valid
-coordinate order and unchanged source availability. Missing radar values/hours fail;
-there is no automatic time intersection or dry-zero fill. Source product, units and
+coordinate order and unchanged source availability.
+
+A gauge hour that a timeline layer has no value for is dropped from every graph the
+build writes ([DEC-01](../DECISIONS.md#dec-01)): for radar, an hour missing from
+`radar_hourly.csv` or with any cell that has no value; for satellite, an hour missing
+from `satellite_hourly.csv` (an hour with any image is always written, DEC-02). Grid
+layers in `input_layers` are always timeline layers. `timeline_layers: [radar,
+satellite]` applies the same cut to a build that does not read those layers, so a
+gauge-only run can be scored on exactly the hours of the G+R and G+R+S runs beside it.
+`dropped_hours.csv` in the output folder lists every dropped hour with its layer and
+cause (just a header when nothing is dropped), the report gives the counts, and
+Component 06 removes those hours from every method's targets. Missing values are never
+filled with dry zeros. Source product, units and
 held-out-gauge independence must be established before interpreting fusion scores.
 
 The graph contains gauge `[N,T,6]`, radar `[R,T,1]` and satellite `[S,T,2]` features.

@@ -105,15 +105,95 @@ def test_raw_tables_to_splits_graphs_training_and_replay(
             graph["raingauge"].x.untyped_storage().data_ptr()
             != graph["raingauge"].y.untyped_storage().data_ptr()
         )
-    # Removing a radar hour must fail, not change the 288 required targets.
-    radar = pd.read_csv(directory / "standard/radar_hourly.csv")
-    radar[radar.timestamp != radar.timestamp.iloc[0]].to_csv(
-        directory / "standard/radar_hourly.csv", index=False
+    # Nothing is dropped when every layer covers every gauge hour (DEC-01).
+    assert pd.read_csv(directory / "graphs/dropped_hours.csv").empty
+
+
+def test_hours_without_radar_are_dropped_for_every_method_and_listed(pipeline):
+    """DEC-01: an hour with no radar, or a radar cell without a value, leaves
+    the timeline with its cause, and Component 06 scores no method on it."""
+    directory = pipeline
+    radar_path = directory / "standard/radar_hourly.csv"
+    radar = pd.read_csv(radar_path)
+    hours = sorted(radar.timestamp.unique())
+    gone, gap = hours[3], hours[5]
+    radar = radar[radar.timestamp != gone].copy()
+    radar.loc[(radar.timestamp == gap) & (radar.node_id == 0), "rain_rate"] = None
+    radar.to_csv(radar_path, index=False)
+
+    graphs = build_baseline_graphs(
+        directory / "graph.yaml", output_dir=directory / "dropped"
     )
-    with pytest.raises(ValueError, match="requested hours are absent"):
-        build_baseline_graphs(
-            directory / "graph.yaml", output_dir=directory / "missing-radar"
-        )
+    listed = pd.read_csv(graphs / "dropped_hours.csv")
+    listed["timestamp"] = pd.to_datetime(listed.timestamp, utc=True)
+    expected = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime([gone, gap], utc=True),
+            "layer": ["radar", "radar"],
+            "cause": [
+                "no radar hour in radar_hourly.csv",
+                "radar cells without a value",
+            ],
+        }
+    )
+    pd.testing.assert_frame_equal(listed, expected)
+    report = (graphs / "report.md").read_text()
+    assert "2 dropped because a timeline layer (radar, satellite)" in report
+    for graph_file in graphs.glob("fold-*/*.pt"):
+        stamps = set(pd.to_datetime(load_graph(graph_file).timestamps, utc=True))
+        assert stamps.isdisjoint(expected.timestamp)
+
+    # Component 06 removes the same hours from every method's targets.
+    gauge = pd.read_csv(directory / "standard/gauge_hourly.csv")
+    gauge_hours = pd.to_datetime(gauge.timestamp, utc=True)
+    removed = int(gauge_hours.isin(expected.timestamp).sum())
+    assert removed > 0
+    settings = read_settings(directory / "model.yaml")
+    settings["graphs_dir"] = str(graphs)
+    assert check_inputs(dict(settings)) == {"folds": 5, "target_rows": 288 - removed}
+    result = run(settings, directory / "run-dropped")
+    predictions = pd.read_csv(result / "predictions.csv")
+    assert set(predictions.method) == {"hgnn", "idw", "network_mean"}
+    assert len(predictions) == 3 * (288 - removed)
+    predicted_hours = pd.to_datetime(predictions.timestamp, utc=True)
+    assert not predicted_hours.isin(expected.timestamp).any()
+    run_report = (result / "report.md").read_text()
+    assert "Hours dropped by Component 04 (DEC-01): 2" in run_report
+
+    # A gauge-only run drops the same hours only when asked to.
+    config = yaml.safe_load((directory / "graph.yaml").read_text())
+    config["input_layers"] = ["raingauge"]
+    (directory / "gauge.yaml").write_text(yaml.safe_dump(config))
+    plain = build_baseline_graphs(directory / "gauge.yaml", output_dir=directory / "g")
+    assert pd.read_csv(plain / "dropped_hours.csv").empty
+    config["timeline_layers"] = ["radar"]
+    (directory / "gauge.yaml").write_text(yaml.safe_dump(config))
+    matched = build_baseline_graphs(
+        directory / "gauge.yaml", output_dir=directory / "g-matched"
+    )
+    pd.testing.assert_frame_equal(
+        pd.read_csv(matched / "dropped_hours.csv"),
+        pd.read_csv(graphs / "dropped_hours.csv"),
+    )
+
+    # An hour left out of the graphs without being listed still stops 06.
+    pd.DataFrame(columns=["timestamp", "layer", "cause"]).to_csv(
+        graphs / "dropped_hours.csv", index=False
+    )
+    with pytest.raises(ValueError, match="graph omits"):
+        check_inputs(dict(settings))
+
+
+@pytest.mark.parametrize("value", ["radar", ["raingauge"], ["radar", "radar"], None])
+def test_invalid_timeline_layers_fail_before_writing(tmp_path, value):
+    config = yaml.safe_load(Path("config/graphs/gauge_baseline.yaml").read_text())
+    config["timeline_layers"] = value
+    path = tmp_path / "graph.yaml"
+    path.write_text(yaml.safe_dump(config))
+    output = tmp_path / "graphs"
+    with pytest.raises(ValueError, match="timeline_layers must list radar"):
+        build_baseline_graphs(path, output_dir=output)
+    assert not output.exists()
 
 
 def test_gauge_only_and_held_out_rainfall_cannot_change_training_graph(pipeline):

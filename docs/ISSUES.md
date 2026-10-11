@@ -58,8 +58,8 @@ somewhere else, move it here and leave the id behind.
 | [ISS-32](#iss-32) | Fold count is hard-coded and nothing below Component 01 knows about regions | Material | D07 | Open |
 | [ISS-33](#iss-33) | Coverage measurement exists; repository floors are unmet | Material | D07 | Open |
 | [ISS-34](#iss-34) | Validation gauges are placed at random and can sit next to a hidden gauge | Material | _unassigned_ | Open |
-| [ISS-36](#iss-36) | Radar has no validity flag, so one missing radar cell stops a graph build | Material | _unassigned_ | Open |
-| [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Open |
+| [ISS-36](#iss-36) | Radar has no validity flag, so an hour with one missing radar cell is dropped | Material | _unassigned_ | Open |
+| [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Closed |
 | [ISS-38](#iss-38) | D09.2 within-grid topology and coincident-node weighting remain | Material | D09 | Closed |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
@@ -176,9 +176,9 @@ including the `crr`-vs-`crrph` and `intensity`-vs-`accum` decisions.
 **Severity:** Material · **Owner:** D13 · **Status:** Open
 
 Gauges cover 2021–2022; the hand-exported radar and satellite files cover 2022, and the
-radar export is missing 120 hours. The graph builder fails on missing radar values rather
-than silently filling them, which is correct, but it means fusion experiments were
-implicitly 2022-only.
+radar export is missing 120 hours. The graph builder failed on missing radar values rather
+than silently filling them, which was correct, but it meant fusion experiments were
+implicitly 2022-only. Since DEC-01 it drops and lists those hours instead.
 
 The archive is a different matter: the radar fetcher found both 2021 and 2022 present for
 site 71, so the "2022 only" limit belonged to the export. Whether the 120 missing hours
@@ -201,18 +201,20 @@ checked from a Gadi shell:
   2022-09-01. That is at least 264 hours. Gaps inside the files that are present are still
   unmeasured.
 - Satellite: no file at 02:40 or 14:40 UTC on any day checked (2021-03-15, 2022-01-03,
-  2022-07-20; 142 of 144 files each). The reader writes an hour only when all six
-  10-minute files are present (`src/canonical/satellite_archive.py:8`), so 02:00 and
-  14:00 UTC are never written: about 1,460 hours over 2021–2022.
+  2022-07-20; 142 of 144 files each). Under the reader's old rule, which needed all six
+  10-minute files, 02:00 and 14:00 UTC were never written: about 1,460 hours over
+  2021–2022.
 
-Component 04 asks each layer for every gauge hour and stops at the first one that is
-absent (`src/canonical/grids.py:67-75`), so any one of these gaps stops every G+R or
-G+R+S graph build over the study period. For radar there is nothing to average: the whole
-day has no radar.
+Component 04 used to ask each layer for every gauge hour and stop at the first one that
+was absent, so any one of these gaps stopped every G+R or G+R+S graph build over the
+study period. For radar there is nothing to average: the whole day has no radar.
 
 **Rules:** radar hours, [DEC-01](DECISIONS.md#dec-01); satellite images,
-[DEC-02](DECISIONS.md#dec-02). Neither is applied in code yet, so until they are, any of
-these gaps still stops a G+R or G+R+S graph build.
+[DEC-02](DECISIONS.md#dec-02). Both are applied since 2026-10-12: the satellite reader
+writes the 02:00 and 14:00 UTC hours, and Component 04 drops each hour without radar and
+lists it in `dropped_hours.csv`, which Component 06 reads. What stays open is the
+measurement itself: a real-archive grid report giving each source's present and missing
+hours.
 
 <a id="iss-05"></a>
 
@@ -491,17 +493,18 @@ reproduction of the paper is out of scope.
 
 <a id="iss-36"></a>
 
-### ISS-36 — Radar has no validity flag, so one missing radar cell stops a graph build
+### ISS-36 — Radar has no validity flag, so an hour with one missing radar cell is dropped
 **Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
 
 Radar enters the model as one value per cell-hour, as the paper's gridded nodes do
 ([source_paper.md](source_paper.md), "Node features": point nodes carry a value and a
 validity flag, while "gridded nodes carry the corresponding radar or satellite cell
 value"). Without a flag, a cell the archive marks as missing cannot be told apart from a
-dry zero, so it stays NaN in `radar_hourly.csv`, and Component 04 refuses the table:
-`load_standard_grid` rejects a radar NaN anywhere in it, so one missing cell in two
-years stops every gauge+radar graph build. Gauges and satellite already carry
-`[value, valid]`.
+dry zero, so it stays NaN in `radar_hourly.csv`. Until 2026-10-12 Component 04 then
+refused the whole table, so one missing cell in two years stopped every gauge+radar graph
+build. Since [DEC-01](DECISIONS.md#dec-01), `load_standard_grid` sets that hour aside and
+Component 04 drops it from the timeline with its cause, so a missing cell costs one hour
+for every method. Gauges and satellite already carry `[value, valid]`.
 
 D13.2 first gave radar a `valid` column. The D13 integration review (2026-10-05) took it
 out again to stay with the paper first, and records the change here for when the project
@@ -512,7 +515,8 @@ uses it.
 
 How often it would matter is unmeasured. The committed sample's five files and one real
 2022-01-03 file checked on Gadi have no missing cells; the grid report's "Missing rain
-payloads" line from the first real-archive run gives the count.
+payloads" line from the first real-archive run gives the count. If that run drops many
+hours this way, a radar validity flag is how to keep them (DEC-01, "Cost").
 
 **Closes when:** the project extends the paper's radar input and radar carries
 `[value, valid]` from the archive reader through Component 06, with the departure stated
@@ -521,7 +525,7 @@ on every result.
 <a id="iss-37"></a>
 
 ### ISS-37 — Satellite "no value" cells make half of a dry daytime hour invalid
-**Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
+**Severity:** Material · **Owner:** _unassigned_ · **Status:** Closed 2026-10-12
 
 The satellite reader marks a cell-hour invalid if any of its six 10-minute
 `crrph_intensity` values is the file's "no value" marker (`_FillValue` 65535). In the
@@ -560,8 +564,7 @@ quarter of the daytime share.
 **Consequence.** No-value cells follow cloud, and cloud goes with rain, so the current rule
 removes cloudy hours far more than clear ones. The paper does not say how it treated them.
 
-**Rule:** [DEC-02](DECISIONS.md#dec-02). The reader still applies the old rule (any
-no-value image makes the cell-hour invalid) until it is changed.
+**Rule:** [DEC-02](DECISIONS.md#dec-02).
 
 Possible extension: the flags show the satellite's own channels were present at every
 no-value cell; only the derived rain rate is missing. Raw imagery or the cloud products
@@ -569,6 +572,11 @@ no-value cell; only the derived rain rate is missing. Raw imagery or the cloud p
 
 **Closes when:** the project chooses a rule for no-value cells, records it with its
 reasoning, and the reader and report apply it.
+
+**Closed 2026-10-12** by `feat: apply DEC-01 and DEC-02 to missing radar and satellite
+hours`. The reader averages, for each cell, the images that have a value if at least 3
+of 6 do, and the grid report states the rule. On the committed sample hour (2022-01-03
+00:00 UTC) the invalid cells fall from 2,455 to 463 of 4,712.
 
 ---
 

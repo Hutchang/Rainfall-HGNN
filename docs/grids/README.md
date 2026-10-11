@@ -91,7 +91,10 @@ config:
   `station_id`/`station_name`; satellite's `product_name`, `title`, `source` and
   `crrph_intensity` units; and, for both, how many files read list
   `contributing_gauges`. Every file must agree, or the build stops. The hourly rule
-  (sum of four, mean of six), the satellite crop and the subsample rule follow.
+  follows: radar sums its four 15-minute files; satellite averages, for each cell, the
+  10-minute images that have a value there, if at least `min_images_per_hour` (3) of the
+  six do, and marks the cell-hour invalid otherwise ([DEC-02](../DECISIONS.md#dec-02)).
+  Then the satellite crop and the subsample rule.
 - **Coordinate system** — the file's own `grid_mapping_name` (`albers_conical_equal_area`
   for radar, `geostationary` for satellite).
 - **Native time step** — computed, not assumed: radar from `valid_time - start_time`
@@ -105,8 +108,11 @@ config:
 - **Hours not written** (archive inputs) — every hour of the configured period with no
   row, grouped by cause: "no files in the archive", or how many of the hour's files were
   present ("3 of 4 files present" for radar, "5 of 6" for satellite). Consecutive hours
-  are one range, so a week-long outage is one line. Pickle inputs keep the plain
-  "Absent hour" list, since a pickle records no cause.
+  are one range, so a week-long outage is one line. Satellite writes every hour that
+  has at least one file (DEC-02), so its short hours appear under **Hours written from
+  fewer files** instead, grouped the same way; only hours with no file at all are not
+  written. Pickle inputs keep the plain "Absent hour" list, since a pickle records no
+  cause.
 - **Contributing-gauges cross-reference** (radar only) — how many *study* stations (from
   Component 02's `stations.csv`, `use_in_study` rows only, since an excluded station can
   never be a held-out test station) appear in at least one written hour's
@@ -216,7 +222,10 @@ The caller must provide the approved timeline. The adapter never intersects or d
 target hours automatically. If a requested source hour is missing, it fails with the
 first missing timestamp. Radar's one-feature contract cannot represent missing pixels
 as distinct from dry zeros, so those also fail at the graph boundary. Agree a common
-timeline or a validity-aware modality interface with the graph owner first. For
+timeline or a validity-aware modality interface with the graph owner first. Component
+04's builder does this: it asks only for hours every timeline layer has, and drops and
+lists the rest ([DEC-01](../DECISIONS.md#dec-01); see the
+[graph README](../graphs/README.md)). For
 satellite, invalid rain payloads are zeroed only in the model tensor while the source
 0/1 flag is retained; the source arrays and CSV remain unchanged. Tensor conversion is
 float32 and checked for overflow.

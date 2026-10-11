@@ -5,9 +5,13 @@ project `rv74`, not `crrph_accum` or `crr` -- see
 `docs/grids/SATELLITE_SOURCE.md` for the investigation and why. Three
 decisions recorded there and applied here:
 
-- **Six of six.** An hour needs all six 10-minute files present; fewer is
-  missing, not partial -- the same standard FR02 holds radar to, at the
-  satellite product's own cadence.
+- **At least half the hour (DEC-02).** A cell's hourly value is the mean of
+  the 10-minute images that have a value there, if at least
+  `min_images_per_hour` (3) of the six do; otherwise the cell-hour is invalid.
+  A missing file is an image with no value at any cell, so the hours whose
+  02:40 or 14:40 image the archive never has are still written. An hour with
+  no file at all is not written; Component 04 drops it from the timeline
+  (DEC-01) and the report lists it.
 - **Mean, not sum.** `crrph_intensity` is an instantaneous *rate* (mm/h), not
   a per-window accumulation the way radar's `precipitation` is. Averaging the
   six samples approximates the hour's accumulated-equivalent rate; summing
@@ -46,6 +50,8 @@ import xarray as xr
 from src.canonical.grids import GridData, single_declaration
 
 FILES_PER_HOUR = 6
+# DEC-02: at least half the hour seen. grids.yaml states it as min_images_per_hour.
+MIN_IMAGES_PER_HOUR = 3
 _DATETIME_RE = re.compile(r"(\d{8}T\d{6})")
 _EXPECTED_GRID_MAPPING = "geostationary"
 _EXPECTED_AXIS_UNITS = "m"
@@ -178,25 +184,35 @@ def read_ten_minute_file(
         )
 
 
-def hourly_means(frames: list[TenMinuteFrame]) -> dict[pd.Timestamp, np.ndarray]:
-    """Average every complete set of six consecutive 10-minute frames into
-    one hour-beginning grid. An hour with any other count of files is
-    missing, not written. A cell that is NaN in even one contributing frame
-    makes that cell's hourly value NaN too; ordinary averaging already does
-    this without special handling.
+def hourly_means(
+    frames: list[TenMinuteFrame], min_images: int = MIN_IMAGES_PER_HOUR
+) -> dict[pd.Timestamp, np.ndarray]:
+    """Average each hour's 10-minute frames into one hour-beginning grid
+    (DEC-02). A cell's value is the mean of the frames with a value there
+    (not NaN) when at least `min_images` of them have one, and NaN otherwise.
+    A frame that is absent counts the same as one with no value anywhere, so
+    every hour with at least one frame is returned.
     """
+    if type(min_images) is not int or not 1 <= min_images <= FILES_PER_HOUR:
+        raise ValueError(
+            f"min_images_per_hour must be a whole number from 1 to {FILES_PER_HOUR}"
+        )
     by_hour: dict[pd.Timestamp, list[np.ndarray]] = {}
     for frame in frames:
         by_hour.setdefault(frame.start.floor("h"), []).append(frame.intensity)
     result = {}
     for hour, grids in by_hour.items():
-        if len(grids) == FILES_PER_HOUR:
-            result[hour] = np.mean(grids, axis=0)
-        elif len(grids) > FILES_PER_HOUR:
+        if len(grids) > FILES_PER_HOUR:
             raise ValueError(
                 f"{hour}: {len(grids)} ten-minute files, expected at most "
                 f"{FILES_PER_HOUR} -- duplicate or misaligned archive files"
             )
+        stack = np.stack(grids)
+        seen = np.isfinite(stack)
+        count = seen.sum(axis=0)
+        total = np.where(seen, stack, 0.0).sum(axis=0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            result[hour] = np.where(count >= min_images, total / count, np.nan)
     return result
 
 
@@ -231,11 +247,16 @@ def _files_in_range(root: Path, start: date, end: date) -> list[Path]:
 
 
 def build_satellite_grid_data(
-    root: Path, start: date, end: date, crop: dict, subsample_stride: int
+    root: Path,
+    start: date,
+    end: date,
+    crop: dict,
+    subsample_stride: int,
+    min_images: int = MIN_IMAGES_PER_HOUR,
 ) -> GridData:
     """Read every 10-minute file under `root` in [start, end], crop to
-    `crop`'s padded lat/lon box, average complete hours, subsample to the
-    stride grid, and return a satellite `GridData`.
+    `crop`'s padded lat/lon box, average each hour by DEC-02's rule, subsample
+    to the stride grid, and return a satellite `GridData`.
     """
     nc_paths = _files_in_range(root, start, end)
     if not nc_paths:
@@ -280,8 +301,8 @@ def build_satellite_grid_data(
                 values.add(getattr(frame, name))
             files_listing_gauges += frame.lists_gauges
             starts.append(frame.start)
-        for complete_hour, grid in hourly_means(group).items():
-            hours[complete_hour] = grid.reshape(-1)[indices]
+        for written_hour, grid in hourly_means(group, min_images).items():
+            hours[written_hour] = grid.reshape(-1)[indices]
         if len(group) < FILES_PER_HOUR:
             short_hours[hour] = len(group)
     # FR04: the report's product, units and correction lines come from every
@@ -295,8 +316,6 @@ def build_satellite_grid_data(
             ("units", "crrph_intensity units"),
         )
     )
-    if not hours:
-        raise ValueError(f"no complete hours found under {root} in {start} to {end}")
 
     coordinates = pd.DataFrame(
         [
@@ -309,10 +328,10 @@ def build_satellite_grid_data(
 
     ordered_hours = sorted(hours)
     rain = np.stack([hours[hour] for hour in ordered_hours])
-    # Satellite's standard table carries [value, valid]: a cell missing in
-    # one of its six contributing frames (NaN, per hourly_means) becomes
-    # rain_rate 0 with valid False, not NaN. An hour's own genuine zero (all
-    # six frames agreed, dry) stays 0 with valid True.
+    # Satellite's standard table carries [value, valid]: a cell with fewer
+    # than min_images frames holding a value (NaN, per hourly_means) becomes
+    # rain_rate 0 with valid False, not NaN. A genuine zero (the frames with a
+    # value agree it is dry) stays 0 with valid True.
     valid = np.isfinite(rain)
     values = np.stack([np.where(valid, rain, 0.0), valid.astype(np.float64)], axis=-1)
 
@@ -333,7 +352,11 @@ def build_satellite_grid_data(
             f"contributing_gauges listed in {files_listing_gauges} of "
             f"{len(starts)} files read"
         ),
-        "hourly_rule": "mean of six 10-minute samples",
+        "hourly_rule": (
+            "mean of the 10-minute samples that have a value, if at least "
+            f"{min_images} of {FILES_PER_HOUR} do; otherwise the cell-hour is "
+            "invalid (DEC-02)"
+        ),
         "files_per_hour": FILES_PER_HOUR,
         "short_hours": short_hours,
         "crop": (

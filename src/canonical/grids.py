@@ -46,6 +46,10 @@ class GridData:
     written hour's `contributing_gauges` union -- for the report to state.
     `None` for a legacy pickle-mode grid, which has no file attributes to
     take these from.
+
+    `hours_without_values` lists radar hours the standard table has but with a
+    cell that has no value; `load_standard_grid` sets them aside so Component 04
+    can drop them from the timeline with their cause (DEC-01).
     """
 
     layer: str
@@ -53,6 +57,7 @@ class GridData:
     values: np.ndarray
     coordinates: pd.DataFrame
     provenance: dict | None = None
+    hours_without_values: pd.DatetimeIndex | None = None
 
     def to_heterodata(self, target_timestamps):
         """Return a node layer for 04; topology remains the graph builder's job.
@@ -216,28 +221,50 @@ def _range_line(run) -> str:
 def _hours_not_written(grid: GridData, start, end) -> list[str]:
     """Every configured-period hour an archive reader did not write, grouped
     by cause: no files at all, or how many of the hour's files were present.
-    No hour disappears without its cause (rule 7)."""
+    No hour disappears without its cause (rule 7). Hours the reader did write
+    from fewer files (satellite, DEC-02) are listed after them the same way."""
     expected = _period_hours(start, end)
     short = grid.provenance["short_hours"]
+    written = set(grid.timestamps)
     no_files = [
         hour for hour in expected.difference(grid.timestamps) if hour not in short
     ]
-    groups = [("no files in the archive", no_files)] + [
+
+    def by_count(keep):
+        return [
+            (
+                f"{count} of {grid.provenance['files_per_hour']} files present",
+                [hour for hour, n in short.items() if n == count and keep(hour)],
+            )
+            for count in sorted(set(short.values()), reverse=True)
+        ]
+
+    sections = [
         (
-            f"{count} of {grid.provenance['files_per_hour']} files present",
-            [hour for hour, n in short.items() if n == count],
-        )
-        for count in sorted(set(short.values()), reverse=True)
+            "### Hours not written",
+            [
+                ("no files in the archive", no_files),
+                *by_count(lambda hour: hour not in written),
+            ],
+            True,
+        ),
+        (
+            "### Hours written from fewer files",
+            by_count(lambda hour: hour in written),
+            False,
+        ),
     ]
-    lines = ["### Hours not written", ""]
-    for cause, hours in groups:
-        if hours:
-            noun = "hour" if len(hours) == 1 else "hours"
-            lines.append(f"- {cause}: {len(hours)} {noun}")
-            lines.extend(_hour_ranges(hours))
-    if len(lines) == 2:
-        lines.append("- none")
-    return lines
+    lines = []
+    for heading, groups, always in sections:
+        body = []
+        for cause, hours in groups:
+            if hours:
+                noun = "hour" if len(hours) == 1 else "hours"
+                body.append(f"- {cause}: {len(hours)} {noun}")
+                body.extend(_hour_ranges(hours))
+        if body or always:
+            lines.extend([heading, "", *(body or ["- none"]), ""])
+    return lines[:-1]
 
 
 def _period_coverage_line(grid: GridData, start, end) -> str:
@@ -380,7 +407,10 @@ def build(config_path, check_only=False, sample=False):
             # D13.3: same idea, a different archive shape -- see
             # docs/grids/SATELLITE_SOURCE.md for why crop/subsample_stride
             # default the way they do.
-            from src.canonical.satellite_archive import build_satellite_grid_data
+            from src.canonical.satellite_archive import (
+                MIN_IMAGES_PER_HOUR,
+                build_satellite_grid_data,
+            )
 
             grid = build_satellite_grid_data(
                 Path(archive_root),
@@ -388,6 +418,7 @@ def build(config_path, check_only=False, sample=False):
                 config["end"],
                 settings["crop"],
                 settings.get("subsample_stride", 1),
+                settings.get("min_images_per_hour", MIN_IMAGES_PER_HOUR),
             )
         else:
             data_file = indexed_path(raw_dir, index, settings["data_file"])
