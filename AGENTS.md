@@ -107,8 +107,8 @@ invented scientific decisions.
 
 ## Keeping the documentation true
 
-Two documents carry live project information, and each has exactly one job. Keeping them
-separate is what stops either from going stale.
+Three documents carry live project information, and each has exactly one job. Keeping
+them separate is what stops any of them from going stale.
 
 **`docs/CURRENT_STATE.md` — where the project is.** It is a continuously updated source of
 truth, not a milestone report. Its own "How this document is maintained" section is the
@@ -132,6 +132,15 @@ is recorded.
 - Do not open a new issue instead of making a cheap fix. Defer on purpose, with a reason.
 - If you find an issue written up in a component README, a handover note or a code
   comment, move it here and leave the id behind.
+
+**`docs/DECISIONS.md` — what the project lead has decided.**
+
+- Every decision gets a permanent `DEC-xx` id, with its date, who decided, the evidence,
+  what it costs and what it changes.
+- A decision is not edited to change its meaning; a new entry replaces it and names the
+  old one.
+- A decision that settles an issue updates or closes that issue with a pointer to the
+  entry. Do not record a decision as an issue, and do not repeat it in the issue.
 
 Other documents may cite an `ISS-xx` id. None of them — `CURRENT_STATE.md` included — may
 restate an issue's severity, owner or status. Two copies means two answers and no way to

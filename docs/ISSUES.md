@@ -40,7 +40,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-06](#iss-06) | Unexplained April–May 2021 gap in BoM daily totals | Material | Component 02 | Open |
 | [ISS-08](#iss-08) | IDW exponent is unprescribed | Material | _unassigned_ | Open |
 | [ISS-09](#iss-09) | No reversible normalization metadata in the graph contract | Material | Components 04 + 06 | Open |
-| [ISS-10](#iss-10) | Spatial-block cross-validation decision unresolved | Material | _unassigned_ | Open |
+| [ISS-10](#iss-10) | Spatial-block cross-validation decision unresolved | Material | _unassigned_ | Closed |
 | [ISS-12](#iss-12) | Plausibility caps, tolerance and coverage threshold need a client decision | Material | _unassigned_ | Blocked |
 | [ISS-14](#iss-14) | Inherited-baseline graph fingerprint test missing | Material | Component 04 | Open |
 | [ISS-15](#iss-15) | No `.gitattributes`; NCI guard tests fail on Windows checkouts | Material | _unassigned_ | Open |
@@ -192,6 +192,27 @@ possible/present/missing against the configured period, so the 120-hour question
 answerable by comparison once a run reads the real archive. Not yet closed: nobody has
 run this against Gadi, so whether the 120 hours are actually present or absent in the
 archive is still unmeasured.
+
+**Archive gaps measured 2026-10-11**, from NCI's public THREDDS catalog listing, not yet
+checked from a Gadi shell:
+
+- Radar, site 71: no daily file for 11 days — 2021-01-05, 2021-01-06, 2021-02-20,
+  2021-02-21, 2021-09-28, 2021-11-17, 2022-02-04, 2022-02-16, 2022-02-17, 2022-02-26 and
+  2022-09-01. That is at least 264 hours. Gaps inside the files that are present are still
+  unmeasured.
+- Satellite: no file at 02:40 or 14:40 UTC on any day checked (2021-03-15, 2022-01-03,
+  2022-07-20; 142 of 144 files each). The reader writes an hour only when all six
+  10-minute files are present (`src/canonical/satellite_archive.py:8`), so 02:00 and
+  14:00 UTC are never written: about 1,460 hours over 2021–2022.
+
+Component 04 asks each layer for every gauge hour and stops at the first one that is
+absent (`src/canonical/grids.py:67-75`), so any one of these gaps stops every G+R or
+G+R+S graph build over the study period. For radar there is nothing to average: the whole
+day has no radar.
+
+**Rules:** radar hours, [DEC-01](DECISIONS.md#dec-01); satellite images,
+[DEC-02](DECISIONS.md#dec-02). Neither is applied in code yet, so until they are, any of
+these gaps still stops a G+R or G+R+S graph build.
 
 <a id="iss-05"></a>
 
@@ -357,7 +378,7 @@ and records the two numbers in each run's config.
 <a id="iss-10"></a>
 
 ### ISS-10 — Spatial-block cross-validation decision unresolved
-**Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
+**Severity:** Material · **Owner:** _unassigned_ · **Status:** Closed 2026-10-11 by [DEC-03](DECISIONS.md#dec-03)
 
 A design discussion worked through where spatial leakage actually lives in the current
 k-fold split and proposed a fix, but the decision was never taken and the document was
@@ -374,6 +395,10 @@ clusters, as the paper's sec 4.2 requires.
 released (subtask D08.1), and D08.7's measurement shows that hidden gauges no longer have
 training gauges next door (D08.7 attaches the figure and the table). Whoever holds the
 original design note should still commit it to `docs/archive/`.
+
+**Closed 2026-10-11.** The decision is taken: Sydney uses the round-robin split
+([DEC-03](DECISIONS.md#dec-03)), so the closing condition above no longer applies. D08.7
+still measures and scores both splits.
 
 <a id="iss-34"></a>
 
@@ -535,13 +560,8 @@ quarter of the daytime share.
 **Consequence.** No-value cells follow cloud, and cloud goes with rain, so the current rule
 removes cloudy hours far more than clear ones. The paper does not say how it treated them.
 
-**Current choice:** keep the rule (any no-value image makes the cell-hour invalid) as the
-strict, honest default.
-
-**Suggested fix (TO VALIDATE):** average only the images that have a value, when at least N
-of the six do, with N written in `grids.yaml` and the report — FR03 already asks for a
-written completeness threshold. Treating no-value as 0 is not supported by the product's
-documentation.
+**Rule:** [DEC-02](DECISIONS.md#dec-02). The reader still applies the old rule (any
+no-value image makes the cell-hour invalid) until it is changed.
 
 Possible extension: the flags show the satellite's own channels were present at every
 no-value cell; only the derived rain rate is missing. Raw imagery or the cloud products

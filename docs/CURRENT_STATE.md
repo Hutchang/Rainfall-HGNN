@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `94c6e74` · **Sprint:** 2 · **Updated:** 2026-10-11
+**Latest commit:** `ace34b8` · **Sprint:** 2 · **Updated:** 2026-10-11
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
@@ -20,8 +20,9 @@ per milestone. Five rules keep it that way.
    changes.** Take main's version when you branch and again when you rebase, then edit
    only the lines your feature makes untrue. Two people working in parallel therefore
    merge two small paragraphs, not two competing rewrites.
-3. **It records state, not issues.** Anything broken, missing, deferred or undecided goes
-   to [ISSUES.md](ISSUES.md) and gets an id. Cite the id here if the state depends on it.
+3. **It records state, not issues or decisions.** Anything broken, missing, deferred or
+   undecided goes to [ISSUES.md](ISSUES.md) and gets an id; what the project lead has
+   decided goes to [DECISIONS.md](DECISIONS.md). Cite the id here if the state depends on it.
    Never restate an issue's severity, owner or status in this document — there would then
    be two answers and no way to tell which is current.
 4. **It records the present, not history.** When a sprint closes, its state description
@@ -84,7 +85,7 @@ each deliverable's document. State per deliverable:
 | Deliverable | Name | State |
 |---|---|---|
 | D07 | Experiment runner | Not started. The terminal app above already gives each experiment its own folder, config copies and results; D07's runner, provenance record and registry are still to come. Today only Component 06 writes one folder per run with the fingerprints of its inputs; every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
-| D08 | Sydney gauge-only baseline | D08.1 and D08.2 merged, closing the code side of D08's three gaps. Split: `config/splits/sydney_5fold_blocked.yaml` hides two whole location clusters per fold (`fold_assignment: whole_clusters`), and its released `.json` over 127 real stations is committed; `sydney_5fold_round_robin.yaml` is a companion that differs only in dealing each cluster's gauges across the folds, as the first author's code does, and its `.json` is built locally, not committed. `src/study/summary.py` writes the split summary and fold map, and `docs/study/README.md` covers Component 03. Every method reads training and validation gauges at test time (ISS-07). `input_rainfall_scale: zscore_train` scales the rainfall input on each fold's training graph and records the numbers in the run's config (ISS-09). `config/graphs/gauge_{blocked,round_robin}.yaml` and `config/models/hgnn_{blocked,round_robin}.yaml` run each split end to end. Not yet done: D08.3's table, D08.5's correlation plot, D08.6's distance tool and D08.7's before/after measurement, which closes ISS-10 |
+| D08 | Sydney gauge-only baseline | D08.1 and D08.2 merged, closing the code side of D08's three gaps. Split: Sydney uses `config/splits/sydney_5fold_round_robin.yaml` (DEC-03), which deals each location cluster's gauges one at a time across the folds as the first author's code does; its `.json` is built locally and not committed yet. `sydney_5fold_blocked.yaml` hides two whole clusters per fold (`fold_assignment: whole_clusters`) and stays as the comparison; its released `.json` over 127 real stations is committed. `src/study/summary.py` writes the split summary and fold map, and `docs/study/README.md` covers Component 03. Every method reads training and validation gauges at test time (ISS-07). `input_rainfall_scale: zscore_train` scales the rainfall input on each fold's training graph and records the numbers in the run's config (ISS-09). `config/graphs/gauge_{blocked,round_robin}.yaml` and `config/models/hgnn_{blocked,round_robin}.yaml` run each split end to end. Not yet done: D08.3's table, D08.5's correlation plot, D08.6's distance tool and D08.7's before/after measurement of the two splits |
 | D09 | Radar fusion | D09.2's cross-support half merged: each gauge links to its nine nearest sensor nodes, edges run sensor-to-gauge only unless `reverse_cross_support: true`, and the HGNN keeps a sensor layer's values across layers when nothing sends to it. Synthetic graph, training and checkpoint-replay tests pass in both modes. The eight-neighbour grid edges and the coincident-node weight are ISS-38. D09.4 and D09.5 need D08.3's gauge-only table and D13's tables built from the real archive (ISS-04); no real-data fusion result is claimed |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |

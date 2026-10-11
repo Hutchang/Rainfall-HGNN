@@ -10,8 +10,12 @@ Sprint 1 contract: [03_STUDY_SPLIT_REQUIREMENTS.md](../archive/sprint1/03_STUDY_
 ## Command
 
 ```
+uv run python -m src.study.split config/splits/sydney_5fold_round_robin.yaml
 uv run python -m src.study.split config/splits/sydney_5fold_blocked.yaml
 ```
+
+Sydney's split is round-robin ([DEC-03](../DECISIONS.md#dec-03)); the blocked split is
+kept as the comparison D08.7 scores.
 
 Reads `database/standard/stations.csv` (Component 02) and `config/seeds.yaml`. Tests run
 offline against `tests/data/study/`:
@@ -49,8 +53,8 @@ All randomness comes from `split_seed` in `config/seeds.yaml`.
 
 | Value | Each fold hides | Config |
 |---|---|---|
-| `whole_clusters` | `n_clusters / n_folds` whole areas. No hidden station has a station from its own area in train or validation. This is the paper's protocol (§4.2). | `sydney_5fold_blocked.yaml` |
-| `round_robin` (default) | About a fifth of every area, dealt one station at a time. Every hidden station keeps neighbours from its own area visible. Inherited; kept so the effect of the change can be measured (D08.7). | `sydney_5fold.yaml` |
+| `whole_clusters` | `n_clusters / n_folds` whole areas. No hidden station has a station from its own area in train or validation. What the paper's text describes (§4.2); kept as the comparison. | `sydney_5fold_blocked.yaml` |
+| `round_robin` (default) | About a fifth of every area, dealt one station at a time. Every hidden station keeps neighbours from its own area visible. What the first author's code does, and Sydney's split ([DEC-03](../DECISIONS.md#dec-03)). | `sydney_5fold_round_robin.yaml` (127 stations); `sydney_5fold.yaml` is the inherited one over 148 |
 
 `whole_clusters` needs `n_clusters` to divide evenly by `n_folds` and refuses otherwise.
 
