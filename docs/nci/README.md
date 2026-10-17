@@ -205,3 +205,57 @@ Check `Exit_status`, the `rainflow-smoke.o*` log, and the runner's `config.yaml`
 queue entry alone is not completion. Require the runner's exact target-row check and
 review predictions before scheduling a longer run. No production training duration,
 checkpoint recovery or A100 speed has yet been verified on Gadi.
+
+## 5. Run from your own machine with one command
+
+`scripts/nci/remote.py` does sections 2 to 4 for you, from a clean local checkout, and
+brings the results back. Gadi never sees raw data: it receives the code as a git bundle
+of the committed revision, plus the model's inputs that git does not carry (the
+Component 02 tables, the Component 03 split file and the Component 04 graphs).
+
+```console
+uv run python -m scripts.nci.remote plan   config/models/hgnn.yaml
+uv run python -m scripts.nci.remote run    config/models/hgnn.yaml --label sydney-baseline
+```
+
+`plan` checks everything and changes nothing. `run` repeats the checks, prints the plan,
+waits for you to type `yes`, then:
+
+1. refuses uncommitted edits to tracked files, because Gadi runs the committed revision;
+2. sends only the commits Gadi's copy lacks, and checks the revision out into a new
+   folder for this run under `/scratch/no50/<user>/rainflow/runs/`;
+3. uploads the inputs once, into `/g/data/no50/<user>/rainflow-inputs/<fingerprint>/`.
+   Gadi checks every checksum, then makes the folder read-only. A later run with the
+   same inputs reuses it;
+4. checks the inputs on the login node, runs `prepare_environment.pbs` first if the
+   environment is missing or out of date, and submits `scripts/nci/train.pbs`;
+5. checks `qstat` every five minutes, then downloads the run into
+   `experiments/nci/<date>_<time>_<label>/results/` and records the verdict in
+   `state.json`.
+
+Before anything is uploaded, the plan checks `lquota` and `nci_account`. It refuses a run
+that would pass the size or file-count quota, or whose most expensive case (every CPU for
+the whole walltime) is more than the SU balance. Queue, resources and walltime are in
+`config/nci/remote.yaml`.
+
+`submit` does the same without waiting. You can close the laptop while the job runs, then
+`status <run folder>` shows the job states and `fetch <run folder>` resumes the wait and
+download. Ctrl-C while waiting only stops the local wait; the job keeps running.
+
+**One-time setup.** The script never handles passwords. Add your NCI public key to
+Gadi's `~/.ssh/authorized_keys` (e.g. `ssh-copy-id`), and put your username in
+`~/.ssh/config`:
+
+```text
+Host gadi.nci.org.au gadi-dm.nci.org.au
+    User YOUR_NCI_USERNAME
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+`ssh gadi.nci.org.au hostname` must then work without a prompt. On Windows, use the
+same OpenSSH client for this check and for the script.
+
+**TO VALIDATE on the first real run.** The tests use a stand-in for Gadi. These
+assumptions have not yet been checked on Gadi itself: `qstat -F json` output, `lquota`,
+`nci_account` and `qsub` being on the `PATH` for non-interactive SSH commands, and
+`git worktree` sharing one `.venv` through a symlink.
