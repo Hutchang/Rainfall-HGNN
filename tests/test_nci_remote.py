@@ -39,6 +39,23 @@ Usage Report: Project=no50 Period=2026.q3
  Reserved:     0.00 SU
     Avail:     5.67 KSU
 """
+# The end of a real Gadi job log (job 181460515, 2026-10-17), as pasted by the
+# project lead.
+LOG_END = """\
+======================================================================================
+                  Resource Usage on 2026-10-17 14:57:55:
+   Job Id:             181460515.gadi-pbs
+   Project:            no50
+   Exit Status:        0
+   Service Units:      0.04
+   NCPUs Requested:    16                  CPU Time Used: 00:00:00
+   Memory Requested:   16.0GB                Memory Used: 18.95MB
+   NGPUs Requested:    1                 GPU Utilisation: 0%
+                                         GPU Memory Used: 0B
+   Walltime Requested: 00:05:00            Walltime Used: 00:00:02
+   JobFS Requested:    100.0MB                JobFS Used: 0B
+======================================================================================
+"""
 
 
 def probe_output(venv="present", inputs="absent", account=ACCOUNT):
@@ -426,7 +443,11 @@ def write_run(tmp_path, jobs):
     state = {
         "login_host": "gadi",
         "transfer_host": "gadi-dm",
-        "remote": {"run": "/scratch/no50/u/rainflow/runs/run"},
+        "remote": {
+            "run": "/scratch/no50/u/rainflow/runs/run",
+            "log": "/scratch/no50/u/rainflow/runs/run/pbs.log",
+            "prepare_log": "/scratch/no50/u/rainflow/runs/run/prepare.log",
+        },
         "jobs": jobs,
     }
     (run_dir / "state.json").write_text(json.dumps(state))
@@ -467,3 +488,70 @@ def test_training_dropped_after_failed_preparation_is_reported(tmp_path):
     state = remote.fetch(run_dir, ssh, 300, say=lambda text: None)
     assert state["exits"] == {"prepare": 1, "train": None}
     assert state["status"] == "FAILED: environment preparation exited 1"
+
+
+def test_exit_status_is_read_from_the_end_of_a_gadi_log():
+    assert remote.parse_exit_status(LOG_END) == 0
+    killed = LOG_END.replace("Exit Status:        0", "Exit Status:        271")
+    assert remote.parse_exit_status(killed) == 271
+    assert remote.parse_exit_status("Epoch 3 of 100\n") is None
+
+
+def test_a_job_qstat_has_forgotten_is_fetched_using_its_log(tmp_path):
+    run_dir = write_run(tmp_path, {"train": "123.gadi-pbs"})
+    ssh = FakeSsh([(r"^tail .*pbs\.log", LOG_END), (r"^qstat", '{"Jobs": {}}')])
+    ssh.tar_to_return = results_tar()
+    state = remote.fetch(run_dir, ssh, 300, say=lambda text: None)
+    assert state["status"] == "DONE"
+    assert state["exits"] == {"train": 0}
+    assert not any(call.startswith("qstat") for call in ssh.calls)
+
+
+def test_a_job_neither_log_nor_qstat_knows_is_reported(tmp_path):
+    run_dir = write_run(tmp_path, {"train": "123.gadi-pbs"})
+    ssh = FakeSsh([(r"^qstat", '{"Jobs": {}}')])
+    with pytest.raises(BlockedError, match="may never have started"):
+        remote.fetch(run_dir, ssh, 300, say=lambda text: None)
+    assert not (run_dir / "results").exists()
+
+
+def flaky_qstat(failures, then):
+    replies = iter([*([None] * failures), then])
+
+    def reply(command):
+        answer = next(replies)
+        if answer is None:
+            raise remote.ConnectionLostError("ssh to gadi failed: Connection reset")
+        return answer
+
+    return reply
+
+
+def test_a_dropped_connection_is_tried_again(tmp_path):
+    run_dir = write_run(tmp_path, {"train": "123.gadi-pbs"})
+    ssh = FakeSsh([(r"^qstat", flaky_qstat(2, qstat("123.gadi-pbs", "F", 0)))])
+    ssh.tar_to_return = results_tar()
+    said = []
+    state = remote.fetch(run_dir, ssh, 300, sleep=lambda s: None, say=said.append)
+    assert state["status"] == "DONE"
+    assert said[:2] == [
+        "lost the connection to Gadi (1 of 3); trying again in 300 s",
+        "lost the connection to Gadi (2 of 3); trying again in 300 s",
+    ]
+
+
+def test_waiting_stops_after_repeated_dropped_connections(tmp_path):
+    run_dir = write_run(tmp_path, {"train": "123.gadi-pbs"})
+    ssh = FakeSsh([(r"^qstat", flaky_qstat(4, qstat("123.gadi-pbs", "F", 0)))])
+    with pytest.raises(remote.ConnectionLostError):
+        remote.fetch(run_dir, ssh, 300, sleep=lambda s: None, say=lambda text: None)
+    assert sum(call.startswith("qstat") for call in ssh.calls) == 4
+
+
+def test_ssh_failures_are_told_apart_from_failed_commands():
+    ssh = remote.Ssh({"ssh": ["ssh"]})
+    with pytest.raises(remote.ConnectionLostError):
+        ssh._check("gadi", "qstat", 255, "Connection reset by peer")
+    with pytest.raises(BlockedError) as error:
+        ssh._check("gadi", "qstat", 153, "qstat: Unknown Job Id")
+    assert not isinstance(error.value, remote.ConnectionLostError)

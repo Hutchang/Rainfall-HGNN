@@ -64,6 +64,7 @@ JOB_STATES = {
     "E": "exiting",
     "F": "finished",
 }
+LOG_KEYS = {"prepare": "prepare_log", "train": "log"}  # job name -> remote_paths key
 
 # Read-only facts about the remote side, printed as key=value then two raw reports.
 PROBE = r"""
@@ -84,6 +85,10 @@ nci_account -P "$project"
 
 class BlockedError(Exception):
     """A check failed; the message says what to fix."""
+
+
+class ConnectionLostError(BlockedError):
+    """ssh itself failed (exit 255), as opposed to the command it ran."""
 
 
 def quote(*parts):
@@ -357,6 +362,13 @@ def parse_qstat(text, job_id):
     return job["job_state"], None if exit_status is None else int(exit_status)
 
 
+def parse_exit_status(text):
+    """The exit status from the Resource Usage block Gadi adds to the end of a
+    job's log when the job ends, or None while that block is not there."""
+    match = re.search(r"^\s*Exit Status:\s+(-?\d+)\s*$", text, re.MULTILINE)
+    return None if match is None else int(match[1])
+
+
 def parse_probe(text):
     head, _, rest = text.partition("--- lquota\n")
     quota, _, account = rest.partition("--- nci_account\n")
@@ -416,6 +428,8 @@ class Ssh:
         return [*self.base, host, "bash -c " + shlex.quote(command)]
 
     def _check(self, host, command, code, errors):
+        if code == 255:  # ssh's own failure: the command may never have run
+            raise ConnectionLostError(f"ssh to {host} failed: {errors.strip()}")
         if code:
             raise BlockedError(f"on {host}: {command}\n{errors.strip()}")
 
@@ -742,30 +756,64 @@ def submit(plan, cfg, ssh, run_dir, login_check=True, root=ROOT):
 
 
 def job_state(ssh, state, name):
+    """(state letter, exit status or None) for one of the run's jobs.
+
+    The job's log is read first: Gadi ends it with the exit status, and it is
+    still there after qstat has forgotten the job. qstat answers until then.
+    """
     job_id = state["jobs"][name]
-    text = ssh.run(state["login_host"], f"qstat -xf -F json {quote(job_id)}")
-    return parse_qstat(text, job_id)
+    log = state["remote"][LOG_KEYS[name]]
+    tail = ssh.run(state["login_host"], f"tail -n 30 {quote(log)} 2>/dev/null || true")
+    exit_status = parse_exit_status(tail)
+    if exit_status is not None:
+        return "F", exit_status
+    try:
+        text = ssh.run(state["login_host"], f"qstat -xf -F json {quote(job_id)}")
+        return parse_qstat(text, job_id)
+    except ConnectionLostError:
+        raise
+    except BlockedError as error:
+        raise BlockedError(
+            f"{error}\n{log} has no exit status either, so {job_id} may never have "
+            "started (for example, it was removed while queued)"
+        ) from error
 
 
-def wait(ssh, state, poll_seconds, sleep=time.sleep, say=print):
-    """Poll until every job has finished; returns {job name: exit status}."""
-    finished, last = {}, {}
+def wait(ssh, state, poll_seconds, sleep=time.sleep, say=print, retries=3):
+    """Poll until every job has finished; returns {job name: exit status}.
+
+    A dropped ssh connection is tried again at the next poll, up to `retries`
+    times in a row, so one network drop does not end a long wait.
+    """
+    finished, last, failures = {}, {}, 0
     while len(finished) < len(state["jobs"]):
-        for name in state["jobs"]:
-            if name in finished:
-                continue
-            try:
-                letter, exit_status = job_state(ssh, state, name)
-            except BlockedError:
-                if name == "train" and finished.get("prepare", 0) != 0:
-                    finished[name] = None  # PBS drops a job whose dependency failed
+        try:
+            for name in state["jobs"]:
+                if name in finished:
                     continue
+                try:
+                    letter, exit_status = job_state(ssh, state, name)
+                except BlockedError:
+                    if name == "train" and finished.get("prepare", 0) != 0:
+                        finished[name] = None  # PBS drops a job whose dependency failed
+                        continue
+                    raise
+                if last.get(name) != letter:
+                    job_id = state["jobs"][name]
+                    say(f"{name} {job_id}: {JOB_STATES.get(letter, letter)}")
+                    last[name] = letter
+                if letter == "F":
+                    finished[name] = exit_status
+        except ConnectionLostError:
+            failures += 1
+            if failures > retries:
                 raise
-            if last.get(name) != letter:
-                say(f"{name} {state['jobs'][name]}: {JOB_STATES.get(letter, letter)}")
-                last[name] = letter
-            if letter == "F":
-                finished[name] = exit_status
+            say(
+                f"lost the connection to Gadi ({failures} of {retries}); "
+                f"trying again in {poll_seconds} s"
+            )
+        else:
+            failures = 0
         if len(finished) < len(state["jobs"]):
             sleep(poll_seconds)
     return finished

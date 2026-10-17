@@ -229,9 +229,12 @@ waits for you to type `yes`, then:
    same inputs reuses it;
 4. checks the inputs on the login node, runs `prepare_environment.pbs` first if the
    environment is missing or out of date, and submits `scripts/nci/train.pbs`;
-5. checks `qstat` every five minutes, then downloads the run into
+5. checks the jobs every five minutes, then downloads the run into
    `experiments/nci/<date>_<time>_<label>/results/` and records the verdict in
-   `state.json`.
+   `state.json`. A job has ended once its log in the run folder ends with Gadi's
+   "Resource Usage" block, whose `Exit Status` is used; until then `qstat` gives its
+   state. The log stays after `qstat` has forgotten the job, so `fetch` still works
+   days later. A dropped connection is tried again three times before the wait stops.
 
 Before anything is uploaded, the plan checks `lquota` and `nci_account`. It refuses a run
 that would pass the size or file-count quota, or whose most expensive case (every CPU for
