@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# CPU variant of train.pbs, for when the dgxa100 queue is backed up. Same variables:
+#
+#   qsub -v CONFIG=config/models/hgnn_round_robin.yaml,NAME=g_rr,SEEDS=123 \
+#        scripts/nci/train_cpu.pbs
+#
+# Run one seed per job so seeds train side by side on separate nodes.
+#PBS -P no50
+#PBS -q normal
+#PBS -N rainflow-train-cpu
+#PBS -l ncpus=16
+#PBS -l mem=64GB
+#PBS -l jobfs=10GB
+#PBS -l walltime=48:00:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+cd "${PBS_O_WORKDIR:?submit through PBS}"
+DEVICE=cpu exec bash scripts/nci/train.pbs

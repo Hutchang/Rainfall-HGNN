@@ -13,7 +13,7 @@ from torch_geometric.data import Batch
 
 from src.models.contracts import load_inputs, target_rows, validate_predictions
 from src.models.graphs import HourlyGraphDataset, load_graph, validate_graph
-from src.models.run import check_inputs, read_fold, read_settings, run
+from src.models.run import check_inputs, read_fold, read_inputs, read_settings, run
 from src.models.scaling import rainfall_scaling
 from src.models.trainer import masked_forward, predict_fold, restore_model
 
@@ -325,3 +325,12 @@ def test_readonly_preflight_and_failed_run_keep_error(inputs, tmp_path):
         run(inputs, tmp_path / "failed")
     assert "Status: FAILED" in (tmp_path / "failed/report.md").read_text()
     assert not (tmp_path / "failed/predictions.csv").exists()
+
+
+def test_model_seed_override_replaces_only_the_model_seed(inputs):
+    settings = dict(inputs, model_seed_override=7)
+    read_inputs(settings)
+    assert settings["model_seed"] == 7
+    assert "model_seed_override" not in settings
+    with pytest.raises(ValueError, match="--model-seed"):
+        read_inputs(dict(inputs, model_seed_override=-1))

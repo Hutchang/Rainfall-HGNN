@@ -139,7 +139,13 @@ def read_inputs(settings):
         raise ValueError(
             "seeds_file must supply model_seed as an integer in [0, 2**32)"
         )
-    if "model_seed" in settings and settings["model_seed"] != seed:
+    override = settings.pop("model_seed_override", None)
+    if override is not None:
+        # Repeat runs over model seeds; the split seed still comes from seeds_file.
+        if type(override) is not int or not 0 <= override < 2**32:
+            raise ValueError("--model-seed must be an integer in [0, 2**32)")
+        seed = override
+    elif "model_seed" in settings and settings["model_seed"] != seed:
         raise ValueError(
             "model_seed may not override the shared Component 03 seed file"
         )
@@ -252,6 +258,11 @@ def run(settings, output_dir=None, predict_from=None):
         write_config(directory, settings)
         tables = []
         checkpoint_input = None
+        subset = settings.get("fold_subset")
+        if subset is not None and (predict_from or not set(subset) <= set(range(5))):
+            raise ValueError(
+                "--folds takes indices 0-4 and cannot be combined with --predict-from"
+            )
         if predict_from:
             checkpoint_input = torch.load(
                 predict_from, map_location="cpu", weights_only=True
@@ -320,6 +331,8 @@ def run(settings, output_dir=None, predict_from=None):
             targets = target_rows(gauge, split)
             for fold in split["folds"]:
                 index = fold["fold_index"]
+                if subset is not None and index not in subset:
+                    continue
                 graphs = read_fold(settings, fold, gauge)
                 # Records this fold's input scaling beside the settings it ran with.
                 write_config(directory, settings)
@@ -370,6 +383,8 @@ def run(settings, output_dir=None, predict_from=None):
                     checkpoints[index] = checkpoint
                 else:
                     model, _, _ = train_fold(graphs, index, settings, save_progress)
+                if subset is not None:
+                    continue
                 predicted = predict_fold(model, graphs["test"], index, settings)
                 predicted = predicted.merge(
                     targets,
@@ -378,6 +393,17 @@ def run(settings, output_dir=None, predict_from=None):
                     validate="one_to_one",
                 )
                 tables.append(predicted)
+            if subset is not None:
+                # Training only: src.models.combine_folds joins the fold runs and
+                # --predict-from scores them, so every method still meets the full
+                # target check.
+                report_path.write_text(
+                    "# Model run\n\nStatus: PARTIAL\n\n"
+                    f"Trained folds {sorted(subset)} only; no predictions or scores. "
+                    "Join the fold runs with src.models.combine_folds, then score the "
+                    "result with --predict-from.\n"
+                )
+                return directory
             hgnn = (
                 pd.concat(tables, ignore_index=True)
                 .sort_values(["method", "fold", "station_id", "timestamp"])
@@ -439,7 +465,7 @@ def run(settings, output_dir=None, predict_from=None):
             notes.extend(
                 [
                     f"Selected input layers: {', '.join(layers)}. Feature widths are taken from the validated Component 04 graphs; graph topology and target rows are unchanged.",
-                    "Unavailable satellite payloads are computationally zeroed with the source validity flag kept at 0. Radar missingness is rejected because its prescribed single feature has no validity channel. No rainfall rescaling or automatic timeline intersection occurs.",
+                    "Missing radar and satellite values, and hours a source lacks entirely, enter as rain 0 with validity 0; every gauge target hour is kept. No automatic timeline intersection occurs.",
                     "TO VALIDATE: tensor checks do not certify radar/satellite product, units, timestamp meaning, coordinate alignment or gauge correction. Components 01/02/04 must supply that evidence before a fusion score supports scientific claims. Gauge-corrected inputs can contain held-out gauge information even when graph masking is correct.",
                 ]
             )
@@ -474,12 +500,25 @@ def main(argv=None):
     parser.add_argument("--device", choices=["cpu", "cuda"])
     parser.add_argument("--predict-from", type=Path)
     parser.add_argument("--check-inputs", action="store_true")
+    parser.add_argument(
+        "--folds",
+        help="train only these folds, e.g. 0,2 (no scoring; see combine_folds)",
+    )
+    parser.add_argument(
+        "--model-seed",
+        type=int,
+        help="replace seeds_file's model_seed for this run (recorded in config.yaml)",
+    )
     args = parser.parse_args(argv)
     try:
         settings = read_settings(args.config)
         for key in ("epochs", "device"):
             if getattr(args, key) is not None:
                 settings[key] = getattr(args, key)
+        if args.model_seed is not None:
+            settings["model_seed_override"] = args.model_seed
+        if args.folds is not None:
+            settings["fold_subset"] = sorted({int(f) for f in args.folds.split(",")})
         if args.check_inputs:
             print(json.dumps(check_inputs(settings)))
         else:

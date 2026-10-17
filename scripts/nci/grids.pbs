@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Build radar and satellite tables from the NCI archives (read in place), CPU only.
+#
+#   qsub scripts/nci/grids.pbs
+#
+# Writes radar_*.csv, satellite_*.csv and grid_report.md into config/canonical/grids.yaml's
+# output_dir (database/standard). Refuses to overwrite existing grid outputs.
+# Override the config with qsub -v GRIDS_CONFIG=<path>.
+#PBS -P no50
+#PBS -q normal
+#PBS -N rainflow-grids
+#PBS -l ncpus=8
+#PBS -l mem=32GB
+#PBS -l walltime=12:00:00
+#PBS -l storage=scratch/no50+gdata/rq0+gdata/rv74
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+export PYTHONDONTWRITEBYTECODE=1
+config=${GRIDS_CONFIG:-config/canonical/grids.yaml}
+
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+git status --short
+.venv/bin/python -B -u -m src.canonical.grids "$config"
+printf 'UTC end: %s\n' "$(date -u +%FT%TZ)"

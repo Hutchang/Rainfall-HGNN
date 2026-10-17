@@ -4,6 +4,9 @@
 raw_dir: database/raw
 output_dir: database/standard
 ingestion_config: config/ingestion/sydney.yaml   # for the bounding box in figures
+# database/raw holds a national fetch (ISS-11). Build only stations inside the
+# ingestion config's gauge bounds. Set false for an all-stations (Australia-wide) build.
+restrict_to_bounds: true
 
 # Station-level rules (requirements doc 02, "The three rules that carry the science")
 min_coverage: 0.90        # fraction of the period's hours a station needs to be usable

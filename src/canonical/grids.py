@@ -57,32 +57,35 @@ class GridData:
     def to_heterodata(self, target_timestamps):
         """Return a node layer for 04; topology remains the graph builder's job.
 
-        The caller supplies its approved graph timeline. Missing radar frames fail
-        rather than silently becoming observed zero rainfall. Satellite's source
-        availability remains a feature, with invalid payloads masked only in x.
+        The caller supplies its approved graph timeline. Every layer leaves as two
+        features, [rain, valid]. A missing cell (NaN rain, or satellite valid=0) and
+        an hour the source lacks entirely both enter as rain 0 with valid 0, never as
+        observed dry rainfall, so a fusion run keeps every gauge target hour.
         """
         import torch
         from torch_geometric.data import HeteroData
 
         target = utc_hours(target_timestamps, "graph timeline")
         positions = self.timestamps.get_indexer(target)
-        if (positions < 0).any():
-            missing = target[positions < 0]
-            raise ValueError(
-                f"{self.layer}: {len(missing)} requested hours are absent; "
-                f"first={missing[0].isoformat()}. Agree the common experiment "
-                "timeline or a missing-modality interface with Component 04."
-            )
-        values = self.values[positions].copy()
-        observed = np.isfinite(values[:, :, 0])
+        present = positions >= 0
+        source = np.full(
+            (len(target), len(self.coordinates), self.values.shape[2]), np.nan
+        )
+        if self.values.shape[2] == 2:
+            source[:, :, 1] = 0.0
+        source[present] = self.values[positions[present]]
+        rain = source[:, :, 0]
+        observed = np.isfinite(rain)
         if self.layer == "satellite":
-            observed = values[:, :, 1].astype(bool)
-            values[:, :, 0][~observed] = 0.0
-        elif not observed.all():
-            raise ValueError(
-                "radar: missing pixel values cannot enter the one-feature graph "
-                "contract; Component 04 needs an agreed validity-mask interface"
-            )
+            observed &= source[:, :, 1] == 1
+        rain[~observed] = 0.0
+        values = np.stack([rain, observed.astype(float)], axis=2)
+        print(
+            f"{self.layer}: {int((~present).sum())} of {len(target)} graph hours "
+            f"absent from the source and {int((~observed[present]).sum())} cell-hours "
+            "missing within present hours; both entered as rain 0, valid 0",
+            flush=True,
+        )
         graph = HeteroData()
         graph[self.layer].x = torch.from_numpy(
             np.ascontiguousarray(values.transpose(1, 0, 2), dtype=np.float32)

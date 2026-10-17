@@ -50,6 +50,10 @@ def load_standard_grid(directory, layer):
         if not np.isin(values[:, :, 1], [0, 1]).all():
             raise ValueError("satellite: availability must be exactly 0 or 1")
         observed = values[:, :, 1].astype(bool)
+    else:
+        # A radar cell the archive left empty arrives as NaN; to_heterodata marks it
+        # valid=0. Only an observed value must be finite.
+        observed = ~np.isnan(values[:, :, 0])
     rain = values[:, :, 0][observed]
     if not np.isfinite(rain).all() or (rain < 0).any():
         raise ValueError(f"{layer}: observed rainfall must be finite and nonnegative")

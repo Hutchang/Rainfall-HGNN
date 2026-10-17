@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Full training run: one model config, several model seeds, one GPU.
+#
+#   qsub -v CONFIG=config/models/hgnn_round_robin.yaml,NAME=g_rr,SEEDS=123:1:2 \
+#        scripts/nci/train.pbs
+#
+# Optional: EPOCHS=1 for a short test run (overrides the config's epochs).
+# Optional: FOLDS=3 (or 0,1) trains only those folds into seed-<seed>-folds-<list>/;
+# join the parts with src.models.combine_folds and score with --predict-from.
+# Optional: DEVICE=cpu trains on CPU with cpu_threads set to the job's ncpus; use
+# scripts/nci/train_cpu.pbs, which requests a CPU node and sets this.
+# Optional: GRAPH_CONFIG=config/graphs/gauge_round_robin.yaml builds the graphs on the
+# node first when the model config's graphs_dir is missing. Override walltime with
+# qsub -l walltime=HH:MM:SS. Outputs go to experiments/$NAME/seed-<seed>/.
+#PBS -P no50
+#PBS -q dgxa100
+#PBS -N rainflow-train
+#PBS -l ncpus=16
+#PBS -l ngpus=1
+#PBS -l mem=64GB
+#PBS -l jobfs=10GB
+#PBS -l walltime=10:00:00
+# Gauge-only needs scratch only. Radar/satellite runs add the archives at submission:
+#   qsub -l storage=scratch/no50+gdata/rq0+gdata/rv74 ...
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+: "${CONFIG:?set CONFIG=<model config> with qsub -v}"
+: "${NAME:?set NAME=<experiment name> with qsub -v}"
+SEEDS=${SEEDS:-123}
+DEVICE=${DEVICE:-cuda}
+epoch_args=()
+if [[ -n ${EPOCHS:-} ]]; then
+    epoch_args=(--epochs "$EPOCHS")
+fi
+fold_args=()
+suffix=
+if [[ -n ${FOLDS:-} ]]; then
+    fold_args=(--folds "$FOLDS")
+    suffix=-folds-${FOLDS//,/}
+fi
+
+export PYTHONDONTWRITEBYTECODE=1
+export OMP_NUM_THREADS=${PBS_NCPUS:-16}
+export MPLBACKEND=Agg
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+py=.venv/bin/python
+
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+git status --short
+if [[ $DEVICE == cuda ]]; then
+    nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+fi
+
+graphs_dir=$("$py" -c "import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))['graphs_dir'])" "$CONFIG")
+if [[ ! -d $graphs_dir ]]; then
+    : "${GRAPH_CONFIG:?graphs_dir $graphs_dir is missing; pass GRAPH_CONFIG to build it}"
+    "$py" -B -u -m src.graph.builder_new "$GRAPH_CONFIG"
+fi
+"$py" -B -m src.models.run "$CONFIG" --check-inputs --device cpu
+
+out=experiments/$NAME
+mkdir -p "$out"
+# The run reads this copy, so the experiment folder records the exact settings used.
+run_config=$out/$(basename "$CONFIG")
+if [[ $DEVICE == cpu ]]; then
+    sed "s/^cpu_threads: .*/cpu_threads: ${PBS_NCPUS:-1}/" "$CONFIG" > "$run_config"
+else
+    cp "$CONFIG" "$run_config"
+fi
+IFS=: read -ra seed_list <<< "$SEEDS"
+for seed in "${seed_list[@]}"; do
+    printf '=== seed %s, UTC %s\n' "$seed" "$(date -u +%FT%TZ)"
+    "$py" -B -u -m src.models.run "$run_config" --device "$DEVICE" --model-seed "$seed" \
+        "${epoch_args[@]}" "${fold_args[@]}" --output-dir "$out/seed-$seed$suffix"
+done
+printf 'UTC end: %s\n' "$(date -u +%FT%TZ)"

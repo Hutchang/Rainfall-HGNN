@@ -1,0 +1,19 @@
+# gauge + radar graphs on the round-robin split. Identical to gauge_round_robin.yaml except
+# input_layers and output_dir. Radar is the gauge-corrected Rainfields3 prcp-m15.
+k_neighbours: 5
+distance: haversine_km        # or euclidean_degrees for the inherited comparison
+edge_normalisation: per_node  # or global for the inherited comparison
+# both_directions: every pick adds i -> j and j -> i, each weight scaled at its own
+# receiving gauge, so no gauge is left receiving from nothing (ISS-25).
+both_directions: true
+include_lpe: true
+lpe_dimensions: 4
+# Per-node weights are directed because they are normalised by receiving node.
+layer_is_directed: true
+
+data_dir: database/standard
+split_file: config/splits/sydney_5fold_round_robin.json
+output_dir: database/graphs/radar_round_robin
+input_layers: [raingauge, radar]
+# Cross-support: sensor -> gauge only (reverse_cross_support defaults to false).
+layer_k_neighbours: 9  # D09.2: each gauge receives from its nine nearest sensor nodes
