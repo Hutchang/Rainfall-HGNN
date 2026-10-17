@@ -1,5 +1,6 @@
 """Offline tests for scripts/nci/remote.py; a fake stands in for ssh and Gadi."""
 
+import hashlib
 import io
 import json
 import re
@@ -252,6 +253,19 @@ def test_tracked_inputs_travel_with_code_and_the_rest_are_uploaded(repo):
     assert not inputs["gauge_file"].tracked
     assert inputs["gauge_file"].remote == "gauge_file/gauge.csv"
     assert inputs["gauge_file"].sha256 == remote.file_digest(repo / "data/gauge.csv")
+
+
+def test_tracked_inputs_are_hashed_as_committed_not_as_checked_out(repo):
+    # Windows checks text out with CRLF and commits LF; Gadi reads the LF bytes.
+    git(repo, "config", "core.autocrlf", "true")
+    (repo / "config/seeds.yaml").unlink()
+    git(repo, "checkout", "--", "config/seeds.yaml")
+    assert (repo / "config/seeds.yaml").read_bytes() == b"global: 1\r\n"
+    remote.committed_revision(repo)  # git does not count the CRLF as an edit
+    settings = remote.read_settings(repo / "config/model.yaml")
+    inputs = {item.label: item for item in remote.plan_inputs(settings, repo)}
+    assert inputs["seeds_file"].sha256 == hashlib.sha256(b"global: 1\n").hexdigest()
+    assert inputs["seeds_file"].size == len(b"global: 1\n")
 
 
 def test_missing_inputs_are_all_named(repo):

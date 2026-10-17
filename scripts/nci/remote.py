@@ -151,6 +151,26 @@ def is_tracked(path, root=ROOT):
     return result.returncode == 0
 
 
+def committed_digest(path, revision, root=ROOT):
+    """sha256 and size of a file as committed, which is what Gadi checks out.
+
+    The working copy can differ without git calling it edited: on Windows git
+    checks text files out with CRLF line endings but commits them with LF.
+    """
+    result = subprocess.run(
+        ["git", "cat-file", "blob", f"{revision}:{path}"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise BlockedError(
+            f"git cat-file failed for {path}: "
+            + result.stderr.decode(errors="replace").strip()
+        )
+    return hashlib.sha256(result.stdout).hexdigest(), len(result.stdout)
+
+
 @dataclass(frozen=True)
 class Input:
     label: str
@@ -161,7 +181,7 @@ class Input:
     tracked: bool
 
 
-def plan_inputs(settings, root=ROOT):
+def plan_inputs(settings, root=ROOT, revision="HEAD"):
     """Lists every file that the model config reads. Files committed to git ride along with
     the code when we upload the git bundle. 
 
@@ -185,16 +205,12 @@ def plan_inputs(settings, root=ROOT):
             remote = f"graphs/{label}.pt"
         else:
             remote = f"{label}/{local.name}"
-        inputs.append(
-            Input(
-                label,
-                str(local),
-                remote,
-                file_digest(local),
-                local.stat().st_size,
-                tracked,
-            )
+        sha256, size = (
+            committed_digest(remote, revision, root)
+            if tracked
+            else (file_digest(local), local.stat().st_size)
         )
+        inputs.append(Input(label, str(local), remote, sha256, size, tracked))
     if len({item.tracked for item in inputs if item.label.startswith("fold-")}) > 1:
         raise BlockedError(
             "graphs_dir is partly tracked by git; track all of it or none"
@@ -476,7 +492,7 @@ def make_plan(model_config, cfg, ssh, root=ROOT):
     settings = read_settings(root / model_config)
     validate_settings(dict(settings, device="cpu"))  # CUDA is checked on the GPU node
     revision = committed_revision(root)
-    inputs = plan_inputs(settings, root)
+    inputs = plan_inputs(settings, root, revision)
     fingerprint = inputs_fingerprint(inputs)
     user = ssh.run(cfg["login_host"], "id -un").strip()
     paths = remote_paths(cfg, user, "probe", fingerprint)
