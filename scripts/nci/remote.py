@@ -182,10 +182,10 @@ class Input:
 
 
 def plan_inputs(settings, root=ROOT, revision="HEAD"):
-    """Lists every file that the model config reads. Files committed to git ride along with
-    the code when we upload the git bundle. 
+    """Lists every file that the model config reads. Files committed to git ride
+    along with the code when we upload the git bundle.
 
-    Stops if any files are missing
+    Stops if any files are missing.
     """
     paths = input_paths(settings)
     missing = [
@@ -242,10 +242,7 @@ def remote_settings(settings, inputs, inputs_dir, output_dir):
 
 
 def remote_paths(cfg, user, run_id, fingerprint):
-    """
-    Decides where everything lives on Gadi
-    
-    """
+    """Decides where everything lives on Gadi."""
     fill = {"project": cfg["project"], "user": user}
     scratch = cfg["scratch_root"].format(**fill)
     run = f"{scratch}/runs/{run_id}"
@@ -350,8 +347,8 @@ def parse_available_su(text):
 
 def parse_qstat(text, job_id):
     """(state letter, exit status or None) from `qstat -xf -F json`.
-    
-    qstat is the command on Gadi showing the state of batch jobs
+
+    qstat is the command on Gadi showing the state of batch jobs.
     """
     job = json.loads(text).get("Jobs", {}).get(job_id)
     if job is None:
@@ -472,6 +469,7 @@ class Ssh:
                 errors.read().decode(errors="replace"),
             )
 
+
 @dataclass
 class Plan:
     model_config: str
@@ -488,7 +486,8 @@ class Plan:
 
 def make_plan(model_config, cfg, ssh, root=ROOT):
     """Run every check before actually making changes. If everything passes,
-    return a Plan object which"""
+    return a Plan object which `describe` prints and `submit` carries out;
+    otherwise raise BlockedError saying what to fix."""
     settings = read_settings(root / model_config)
     validate_settings(dict(settings, device="cpu"))  # CUDA is checked on the GPU node
     revision = committed_revision(root)
@@ -771,16 +770,14 @@ def verdict(results, exits):
 
 
 def fetch(run_dir, ssh, poll_seconds, sleep=time.sleep, say=print):
-    """Wait for the jobs to finish , then download the run folder into <run>/results/.
-    
-    
-    """
+    """Wait for the jobs to finish, then download the run folder into <run>/results/."""
     run_dir = Path(run_dir)
     state = read_state(run_dir)
     results = run_dir / "results"
     if results.exists():
         # refuse overwrite if results already exist for that specific run_dir.
-        # BUG: what if something stops mid write and we get a partial write
+        # A download that stops partway is left in results.partial (below) and
+        # redone by the next fetch, so results/ only ever holds a whole download.
         raise BlockedError(f"{results} already exists; results are never overwritten")
     exits = wait(ssh, state, poll_seconds, sleep, say)
     partial = run_dir / "results.partial"
@@ -806,11 +803,11 @@ def fetch(run_dir, ssh, poll_seconds, sleep=time.sleep, say=print):
 def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
     """
     1. reads the command and config/nci/remote.yaml, then opens the SSH helper
-    2. status / fetch: loads saved run state and either shows the job states or calls `fetch`
-    
+    2. status / fetch: loads saved run state and either shows the job states or
+       calls `fetch`
+    3. plan / submit / run: makes and prints the plan; submit and run then ask
+       to go ahead and call `submit`, and run also waits and calls `fetch`
     """
-
-
     root = root or ROOT
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -839,7 +836,6 @@ def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
             run_dir = args.run_dir
             if args.command == "status":
                 # just read job state, don't fetch
-                
                 state = read_state(run_dir)
                 for name, job_id in state["jobs"].items():
                     letter, exit_status = job_state(ssh, state, name)
@@ -850,7 +846,6 @@ def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
                 return 0
             print(fetch(run_dir, ssh, cfg["poll_seconds"])["status"])
             return 0
-        #
         plan = make_plan(args.model_config, cfg, ssh, root)
         print(describe(plan, cfg))
         if args.command == "plan":
