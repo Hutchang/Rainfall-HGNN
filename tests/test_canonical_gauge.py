@@ -12,7 +12,11 @@ import yaml
 
 from src.canonical.config import load_config
 from src.canonical.gauge import raw
-from src.canonical.gauge.build import load_gauge_hourly, load_stations
+from src.canonical.gauge.build import (
+    load_gauge_hourly,
+    load_stations,
+    restrict_to_bounds,
+)
 from src.canonical.gauge.stations import build_station_table
 from src.canonical.gauge.verify import judgeable_hours, rain_day_end, verify_days
 
@@ -568,3 +572,25 @@ def test_restrict_to_bounds_needs_the_ingestion_box(tmp_path):
     settings["restrict_to_bounds"] = False
     path.write_text(yaml.safe_dump(settings))
     assert load_config(path)["restrict_to_bounds"] is False
+
+
+def test_restrict_to_bounds_keeps_the_stations_inside_the_box_and_their_files(
+    tmp_path,
+):
+    ingestion = tmp_path / "ingestion.yaml"
+    bounds = {"min_lat": -34.0, "max_lat": -33.0, "min_lon": 150.0, "max_lon": 151.0}
+    ingestion.write_text(yaml.safe_dump({"gauge": {"bounds": bounds}}))
+    stations = pd.DataFrame(
+        {
+            "station_id": ["1", "2", "3"],
+            "latitude": [-33.5, -33.9, -35.0],  # 3 lies south of the box
+            "longitude": [150.5, 150.9, 150.5],
+        }
+    )
+    index = pd.DataFrame({"station_id": ["1", "1", "2", "3"], "path": list("abcd")})
+    cfg = {"ingestion_config": str(ingestion)}
+    kept_index, kept = restrict_to_bounds(index, stations, cfg)
+    assert kept["station_id"].tolist() == ["1", "2"]
+    assert kept_index["path"].tolist() == ["a", "b", "c"]
+    with pytest.raises(ValueError, match="no raw station lies inside"):
+        restrict_to_bounds(index, stations[stations.station_id == "3"], cfg)
