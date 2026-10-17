@@ -41,12 +41,13 @@ for name in $names; do
         printf 'BLOCKED: missing released split %s; it is committed, so pull the latest revision.\n' "$split_file" >&2
         exit 1
     fi
-done
-for table in gauge_hourly stations radar_hourly radar_nodes satellite_hourly satellite_nodes; do
-    if [[ ! -f database/standard/$table.csv ]]; then
-        printf 'BLOCKED: missing database/standard/%s.csv (gauge tables are uploaded; grid tables come from build_grids.pbs).\n' "$table" >&2
-        exit 1
-    fi
+    data_dir=$(.venv/bin/python -B scripts/nci/pipeline_config.py get "config/graphs/$name.yaml" data_dir)
+    for table in gauge_hourly stations radar_hourly radar_nodes satellite_hourly satellite_nodes; do
+        if [[ ! -f $data_dir/$table.csv ]]; then
+            printf 'BLOCKED: missing %s/%s.csv (gauge tables are uploaded; grid tables come from build_grids.pbs).\n' "$data_dir" "$table" >&2
+            exit 1
+        fi
+    done
 done
 
 printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
