@@ -16,6 +16,7 @@ from src.canonical.gauge.build import (
     load_gauge_hourly,
     load_stations,
     restrict_to_bounds,
+    restrict_to_period,
 )
 from src.canonical.gauge.stations import build_station_table
 from src.canonical.gauge.verify import judgeable_hours, rain_day_end, verify_days
@@ -594,3 +595,37 @@ def test_restrict_to_bounds_keeps_the_stations_inside_the_box_and_their_files(
     assert kept_index["path"].tolist() == ["a", "b", "c"]
     with pytest.raises(ValueError, match="no raw station lies inside"):
         restrict_to_bounds(index, stations[stations.station_id == "3"], cfg)
+
+
+def test_restrict_to_period_keeps_the_whole_files_inside_it():
+    index = pd.DataFrame(
+        {
+            "source": ["gauge_tips", "gauge_tips", "gauge_daily", "gauge_daily"],
+            "path": ["t/2021-12", "t/2022-01", "d/2021", "d/2022"],
+            "start": ["2021-12-01", "2022-01-01", "2021-01-01", "2022-01-01"],
+            "end": ["2021-12-31", "2022-01-31", "2021-12-31", "2022-12-31"],
+        }
+    )
+    year = {"start": date(2022, 1, 1), "end": date(2022, 12, 31)}
+    assert restrict_to_period(index, year)["path"].tolist() == ["t/2022-01", "d/2022"]
+    # Half a year cuts the 2022 daily file, which covers the whole year.
+    half = {"start": date(2022, 1, 1), "end": date(2022, 6, 30)}
+    with pytest.raises(ValueError, match="cuts through raw file d/2022"):
+        restrict_to_period(index, half)
+    later = {"start": date(2024, 1, 1), "end": date(2024, 12, 31)}
+    with pytest.raises(ValueError, match="no raw file lies inside"):
+        restrict_to_period(index, later)
+
+
+@pytest.mark.parametrize(
+    "period",
+    [{"start": "2022-01-01"}, {"start": "2022-13-01", "end": "2022-12-31"}],
+    ids=["no-end", "bad-date"],
+)
+def test_a_malformed_period_fails_at_startup(tmp_path, period):
+    settings = yaml.safe_load(CONFIG.read_text())
+    settings.update(period=period, restrict_to_bounds=False)
+    path = tmp_path / "standard.yaml"
+    path.write_text(yaml.safe_dump(settings))
+    with pytest.raises(ValueError, match="period"):
+        load_config(path)
