@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from src.canonical.config import load_config
 from src.canonical.gauge import raw
@@ -92,6 +93,31 @@ def _fmt_ts(s: pd.Series) -> pd.Series:
     return out.str.replace(r"\+0000$", "+00:00", regex=True)
 
 
+def restrict_to_bounds(
+    index: pd.DataFrame, stations: pd.DataFrame, cfg: dict
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Keep only stations inside the ingestion config's gauge bounds, and their files.
+
+    Component 01 may have fetched a wider area than the study (the raw directory can
+    hold a national fetch, ISS-11). The study area is the ingestion config's box, so
+    one raw fetch can serve both a regional and a national build.
+    """
+    with open(cfg["ingestion_config"]) as fh:
+        b = yaml.safe_load(fh)["gauge"]["bounds"]
+    inside = stations["latitude"].between(b["min_lat"], b["max_lat"]) & stations[
+        "longitude"
+    ].between(b["min_lon"], b["max_lon"])
+    kept = stations[inside]
+    if kept.empty:
+        raise ValueError(f"no raw station lies inside {b}; check ingestion_config")
+    ids = set(kept["station_id"].astype(str))
+    print(
+        f"restrict_to_bounds: {len(kept)} of {len(stations)} stations inside {b}",
+        flush=True,
+    )
+    return index[index["station_id"].astype(str).isin(ids)], kept
+
+
 def run(cfg: dict) -> dict:
     t0 = time.time()
     raw_dir, out = Path(cfg["raw_dir"]), Path(cfg["output_dir"])
@@ -99,6 +125,8 @@ def run(cfg: dict) -> dict:
 
     index = raw.read_index(raw_dir)
     stations = raw.read_stations(raw_dir)
+    if cfg.get("restrict_to_bounds"):
+        index, stations = restrict_to_bounds(index, stations, cfg)
     tips = raw.read_tips(raw_dir, index)
     daily = raw.read_daily(raw_dir, index)
     start, end = raw.period_from_index(index)
@@ -173,7 +201,12 @@ def write_report(
         "# Standard gauge dataset report",
         "",
         f"- config: `{cfg['_path']}`; code revision `{git_revision()}`; built {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')} in {seconds:.0f} s",
-        f"- source: `{cfg['raw_dir']}` (Component 01 output)",
+        f"- source: `{cfg['raw_dir']}` (Component 01 output)"
+        + (
+            f"; stations restricted to the gauge bounds in `{cfg['ingestion_config']}`"
+            if cfg.get("restrict_to_bounds")
+            else ""
+        ),
         (
             f"- period: {start} to {end}; judgeable window {period_hours:,} hours per "
             "station, derived from the period (rain days fully inside it; the first 9 "
