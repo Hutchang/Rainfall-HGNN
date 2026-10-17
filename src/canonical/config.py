@@ -22,6 +22,20 @@ REQUIRED = (
 )
 
 
+def _check_gauge_bounds(path: Path, ingestion_config: str | None) -> None:
+    """restrict_to_bounds reads the box from the ingestion config's gauge.bounds."""
+    keys = ("min_lat", "max_lat", "min_lon", "max_lon")
+    if not ingestion_config:
+        raise ValueError(f"{path}: restrict_to_bounds needs ingestion_config")
+    with open(ingestion_config) as fh:
+        bounds = ((yaml.safe_load(fh) or {}).get("gauge") or {}).get("bounds") or {}
+    if any(k not in bounds for k in keys):
+        raise ValueError(
+            f"{path}: restrict_to_bounds needs gauge.bounds with {keys} in "
+            f"{ingestion_config}; set restrict_to_bounds: false to build every station"
+        )
+
+
 def load_config(path: str | Path) -> dict:
     path = Path(path)
     with path.open() as fh:
@@ -46,5 +60,7 @@ def load_config(path: str | Path) -> dict:
     for k in ("max_record_mm", "max_hourly_mm", "max_daily_mm"):
         if k not in cfg["plausibility"]:
             raise ValueError(f"{path}: plausibility is missing {k}")
+    if cfg.get("restrict_to_bounds"):
+        _check_gauge_bounds(path, cfg.get("ingestion_config"))
     cfg["_path"] = str(path)
     return cfg

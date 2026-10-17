@@ -121,6 +121,9 @@ def make_fixture(directory):
         # The synthetic fixture observes one complete day in its one-month index.
         # Keep production coverage unchanged while making all fixture stations eligible.
         min_coverage=0.03,
+        # Its raw folder holds only the synthetic stations, so there is no wider fetch
+        # to cut down to the Sydney box.
+        restrict_to_bounds=False,
     )
     configs["canonical"] = canonical
     configs["grids"] = {

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from src.canonical.config import load_config
 from src.canonical.gauge import raw
@@ -552,3 +553,18 @@ def test_period_from_index_fails_loudly_when_there_are_no_tip_rows():
     )
     with pytest.raises(ValueError, match="no gauge_tips rows"):
         raw.period_from_index(index)
+
+
+def test_restrict_to_bounds_needs_the_ingestion_box(tmp_path):
+    """The Sydney-box filter fails at startup, naming the key, without a box to use."""
+    ingestion = tmp_path / "ingestion.yaml"
+    ingestion.write_text("region: synthetic-test\n")
+    settings = yaml.safe_load(CONFIG.read_text())
+    settings.update(ingestion_config=str(ingestion), restrict_to_bounds=True)
+    path = tmp_path / "standard.yaml"
+    path.write_text(yaml.safe_dump(settings))
+    with pytest.raises(ValueError, match=r"restrict_to_bounds needs gauge\.bounds"):
+        load_config(path)
+    settings["restrict_to_bounds"] = False
+    path.write_text(yaml.safe_dump(settings))
+    assert load_config(path)["restrict_to_bounds"] is False
