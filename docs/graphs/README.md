@@ -39,8 +39,19 @@ of the graph config set `input_layers` to `[raingauge, radar]`,
 
 For every sensor, 04 reads `<layer>_hourly.csv` and `<layer>_nodes.csv`. It requires the
 exact gauge timeline, complete coordinate-node rows for each present hour, valid
-coordinate order and unchanged source availability. Missing radar values/hours fail;
-there is no automatic time intersection or dry-zero fill. Source product, units and
+coordinate order and unchanged source availability.
+
+A gauge hour that a timeline layer has no value for is dropped from every graph the
+build writes ([DEC-01](../DECISIONS.md#dec-01)): for radar, an hour missing from
+`radar_hourly.csv` or with any cell that has no value; for satellite, an hour missing
+from `satellite_hourly.csv` (an hour with any image is always written, DEC-02). Grid
+layers in `input_layers` are always timeline layers. `timeline_layers: [radar,
+satellite]` applies the same cut to a build that does not read those layers, so a
+gauge-only run can be scored on exactly the hours of the G+R and G+R+S runs beside it.
+`dropped_hours.csv` in the output folder lists every dropped hour with its layer and
+cause (just a header when nothing is dropped), the report gives the counts, and
+Component 06 removes those hours from every method's targets. Missing values are never
+filled with dry zeros. Source product, units and
 held-out-gauge independence must be established before interpreting fusion scores.
 
 The graph contains gauge `[N,T,6]`, radar `[R,T,1]` and satellite `[S,T,2]` features.
@@ -54,14 +65,22 @@ The setting must be a YAML boolean. Each stored relation keeps its own receiving
 normalization when `edge_normalisation: per_node` is selected. The graph report records
 the effective reverse-edge setting and the counts and weight ranges of every relation.
 
-The direct `GaugeGraphNew.add_heterodata` API also defaults to nine neighbours and accepts
-the keyword `reverse_cross_support=True`. Existing callers with smaller fixtures must
+Each radar or satellite cell also links to its immediate neighbours on its own grid
+(paper §3.2): up to eight, four along the grid and four diagonal, so a cell on the edge
+of the grid gets fewer rather than links to cells two steps away. A neighbour is any of
+a cell's eight nearest cells within 1.9 times its closest spacing; on the D13 sample
+grids that picks exactly the surrounding cells (radar's diagonals sit at 1.42, the
+satellite grid's at up to 1.76, and the next ring out at 2). The links run both ways
+and are weighted by inverse distance, normalized at the receiving cell like every other
+relation. `grid_edges: true` is the default even when the key is absent; `false` leaves
+sensor cells unlinked, as before D09.2. The report records the setting and lists the
+`(<layer>, 'connects', <layer>)` relations.
+
+The direct `GaugeGraphNew.add_heterodata` API also defaults to nine neighbours and grid
+links, and accepts the keywords `reverse_cross_support=True` and `grid_edges=False`. Existing callers with smaller fixtures must
 pass their intended `knn`; an oversized neighbour request fails instead of silently
 clamping it. To reproduce an earlier fusion graph, explicitly set both the previous
-neighbour count and `reverse_cross_support: true`.
-
-This implements the cross-support direction part of D09.2. The remaining grid-topology
-work is tracked by [ISS-38](../ISSUES.md#iss-38); this is not full D09.2 acceptance.
+neighbour count, `reverse_cross_support: true` and `grid_edges: false`.
 
 ## Fully offline integration example
 

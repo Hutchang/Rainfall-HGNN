@@ -69,12 +69,18 @@ layers:
     # not an incidental default; see docs/grids/SATELLITE_SOURCE.md.
     subsample_stride: 1
 
+    # DEC-02 (docs/DECISIONS.md): a cell's hourly value is the mean of the
+    # 10-minute images that have a value there, if at least this many of the
+    # six do (half the hour); otherwise the cell-hour is invalid. A missing
+    # image counts as one with no value anywhere.
+    min_images_per_hour: 3
+
     # Notes for readers, matching the archive files (D13.3): title and
     # product_name="CRRPh"; grid_report.md reads these from every file itself.
     # crrph_intensity is chosen over crrph_accum and crr -- see
     # docs/grids/SATELLITE_SOURCE.md for why.
     product: "Himawari CRRPh crrph_intensity (NWC/GEO v2021.2)"
-    units: "mm/h instantaneous rate; hourly value is the mean of six 10-minute samples"
+    units: "mm/h instantaneous rate; hourly value is the mean of the 10-minute samples with a value (DEC-02)"
     timestamp_convention: hour beginning, UTC
     gauge_correction: "no -- satellite retrieval, not gauge-merged"
     evidence: confirmed via the archive's own OPeNDAP metadata and real sampled data against a known convective cell; see docs/grids/SATELLITE_SOURCE.md

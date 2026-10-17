@@ -8,6 +8,56 @@ from torch.utils.data import Dataset
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.transforms import AddLaplacianEigenvectorPE, ToUndirected
 
+# A grid cell's immediate neighbours (up to eight: four along the grid's two directions
+# and four diagonals) all lie within this multiple of the cell's own closest spacing,
+# and the next ring out starts at twice it. Measured on the D13 sample grids: radar's
+# square 5 km grid has diagonals at 1.42, satellite's stretched 2 km grid at up to 1.76.
+GRID_REACH = 1.9
+
+
+def grid_neighbour_edges(coords):
+    """Link each grid cell to its immediate neighbours on the grid (paper sec 3.2).
+
+    ``coords`` holds latitude and longitude, one row per node in tensor order. A cell
+    at the edge of the grid gets fewer than eight links rather than links to cells two
+    steps away. Returns ``(edge_index, weights)``: ``edge_index`` is ``[2, E]``, source
+    then destination, with both directions of every link; ``weights`` are inverse
+    kilometres (1e6 for cells at the same position), left for the caller to normalise
+    at the receiving node as every other relation is.
+    """
+    points = np.radians(coords[["latitude", "longitude"]].to_numpy(dtype=float))
+    if not np.isfinite(points).all():
+        raise ValueError("grid coordinates must be finite")
+    if len(points) < 2:
+        return torch.empty((2, 0), dtype=torch.long), torch.empty(0)
+    neighbours = NearestNeighbors(
+        n_neighbors=min(9, len(points)), metric="haversine", algorithm="ball_tree"
+    )
+    distances, indices = neighbours.fit(points).kneighbors(points)
+    distances = distances * 6371.0
+    # Each cell's closest spacing to a cell at a different position.
+    spacing = np.array(
+        [row[row > 0].min() if (row > 0).any() else np.inf for row in distances]
+    )
+    links = {}
+    for i, (row_distances, row_indices) in enumerate(
+        zip(distances, indices, strict=True)
+    ):
+        for distance, j in zip(row_distances, row_indices, strict=True):
+            j = int(j)
+            if j != i and distance <= GRID_REACH * min(spacing[i], spacing[j]):
+                links[i, j] = links[j, i] = distance
+    pairs = sorted(links)
+    if not pairs:
+        return torch.empty((2, 0), dtype=torch.long), torch.empty(0)
+    edge_index = torch.tensor(pairs, dtype=torch.long).T.contiguous()
+    weights = torch.tensor(
+        [1 / links[pair] if links[pair] > 0 else 1e6 for pair in pairs],
+        dtype=torch.float32,
+    )
+    return edge_index, weights
+
+
 class RadarGraphNew:
     def __init__(
             self,
@@ -55,8 +105,9 @@ class RadarGraphNew:
                 neighbor_idx = indices[i, j]
                 dist_km = distances[i, j]
                 
-                # Inverse weighting (1/d)
-                weight = 1.0 / dist_km if dist_km > 0 else 1e-6
+                # Inverse weighting (1/d). Cells at the same position are the
+                # strongest link, not the weakest (D09.2).
+                weight = 1.0 / dist_km if dist_km > 0 else 1e6
                 
                 row_neighbors.append(neighbor_idx)
                 row_weights.append(weight)

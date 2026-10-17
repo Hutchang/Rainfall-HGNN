@@ -1,0 +1,27 @@
+# HGNN G+R+S (D09.5) for D09's table on the round-robin split, with IDW and network
+# mean on the same rows. Graphs from config/graphs/d09_round_robin_grs.yaml.
+# Settings match hgnn_round_robin.yaml; device and threads suit one Gadi A100
+# (scripts/nci/train.pbs).
+method: hgnn
+gauge_file: database/standard/gauge_hourly.csv
+stations_file: database/standard/stations.csv
+split_file: config/splits/sydney_5fold_round_robin.json
+seeds_file: config/seeds.yaml
+graphs_dir: database/graphs/d09_round_robin_grs
+input_layers: [raingauge, radar, satellite]
+hidden_channels: 32
+num_layers: 5
+dropout: 0.15
+learning_rate: 0.0003
+weight_decay: 0.0001
+loss: weighted_mse
+weighted_loss_alpha: 0.18
+batch_size: 128
+epochs: 100
+early_stop_patience: 10
+device: cuda
+cpu_threads: 16
+deterministic: true
+input_rainfall_scale: zscore_train
+baselines: [idw, network_mean]
+idw_power: 2.0

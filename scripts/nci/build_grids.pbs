@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# D13 on Gadi: read radar (rq0) and satellite (rv74) in place and write the standard
+# grid tables beside the gauge tables. One CPU; the readers are single-threaded.
+# A trial over a few days: qsub -v NCI_GRID_TRIAL=2022-01-01:2022-01-07 -l walltime=02:00:00
+#PBS -P no50
+#PBS -q normal
+#PBS -N rainflow-grids
+#PBS -l ncpus=1
+#PBS -l mem=32GB
+#PBS -l jobfs=1GB
+#PBS -l walltime=24:00:00
+#PBS -l storage=scratch/no50+gdata/rq0+gdata/rv74
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+cd "$PBS_O_WORKDIR"
+if [[ ! -x .venv/bin/python ]]; then
+    printf 'BLOCKED: missing .venv; run scripts/nci/prepare_environment.pbs first.\n' >&2
+    exit 1
+fi
+export PYTHONDONTWRITEBYTECODE=1
+export MPLBACKEND=Agg
+
+config_file=${NCI_GRID_CONFIG:-config/canonical/grids.yaml}
+if [[ -n ${NCI_GRID_TRIAL:-} ]]; then
+    # Same layers and rules, a shorter period, its own output folder.
+    config_file=$(.venv/bin/python -B scripts/nci/pipeline_config.py trial \
+        "$config_file" "$NCI_GRID_TRIAL" "database/grid-trial-${PBS_JOBID%%.*}")
+fi
+# The build reads the whole archive before it checks its outputs; check them first.
+.venv/bin/python -B scripts/nci/pipeline_config.py check-grids "$config_file"
+output_dir=$(.venv/bin/python -B scripts/nci/pipeline_config.py get "$config_file" output_dir)
+
+printf 'PBS job: %s; host: %s; UTC start: %s; config: %s\n' \
+    "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)" "$config_file"
+git rev-parse HEAD
+git status --short
+started=$(date +%s)
+.venv/bin/python -B -u -m src.canonical.grids "$config_file"
+printf 'GRID_STATUS=READY seconds=%s output=%s\n' "$(( $(date +%s) - started ))" "$output_dir"
+# The lines to read first: coverage, missing payloads and every hour not written.
+grep -E '^(## |Configured period|Missing rain payloads|Source unavailable|### |- )' \
+    "$output_dir/grid_report.md" || true

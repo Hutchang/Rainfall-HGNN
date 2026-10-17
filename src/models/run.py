@@ -17,7 +17,12 @@ import torch_geometric
 import yaml
 
 from src.models.baselines import predict_baseline
-from src.models.contracts import load_inputs, target_rows, validate_predictions
+from src.models.contracts import (
+    load_inputs,
+    target_rows,
+    utc_hours,
+    validate_predictions,
+)
 from src.models.evaluate import write_report
 from src.models.graphs import load_graph, validate_graph
 from src.models.modalities import validate_layer_selection
@@ -108,8 +113,47 @@ def validate_settings(settings):
             raise ValueError("idw_power must be explicitly finite and positive")
 
 
+def dropped_hours_file(settings):
+    """Component 04's list of hours it left out of the graphs (DEC-01), if any.
+
+    Graph folders built before DEC-01 have no such file and drop no hours.
+    """
+    if not isinstance(settings.get("graphs_dir"), str):
+        return None
+    path = Path(settings["graphs_dir"]) / "dropped_hours.csv"
+    return path if path.is_file() else None
+
+
+def drop_hours(gauge, settings):
+    """Remove the hours Component 04 dropped, so every method in the run is
+    scored on the same hours as the graphs (DEC-01)."""
+    path = dropped_hours_file(settings)
+    if path is None:
+        return gauge
+    listed = pd.read_csv(path, dtype=str, keep_default_na=False)
+    if (
+        list(listed.columns) != ["timestamp", "layer", "cause"]
+        or not listed.layer.isin(["radar", "satellite"]).all()
+        or listed.cause.eq("").any()
+    ):
+        raise ValueError(
+            f"{path}: every dropped hour needs a timestamp, a radar or satellite "
+            "layer and a cause"
+        )
+    hours = set(utc_hours(listed.timestamp)) if len(listed) else set()
+    kept = gauge[~gauge.timestamp.isin(hours)].reset_index(drop=True)
+    settings["dropped_hours"] = {
+        "file": str(path),
+        "hours": len(hours),
+        "station_hours_removed": len(gauge) - len(kept),
+    }
+    return kept
+
+
 def input_paths(settings):
     paths = {key: Path(settings[key]) for key in INPUT_KEYS}
+    if dropped_hours_file(settings) is not None:
+        paths["dropped_hours"] = dropped_hours_file(settings)
     if settings["method"] == "hgnn":
         for fold in range(5):
             for role in ROLES:
@@ -132,6 +176,7 @@ def read_inputs(settings):
     gauge, split, stations = load_inputs(
         settings["gauge_file"], settings["split_file"], settings["stations_file"]
     )
+    gauge = drop_hours(gauge, settings)
     with Path(settings["seeds_file"]).open() as stream:
         seeds = yaml.safe_load(stream)
     seed = seeds.get("model_seed") if isinstance(seeds, dict) else None
@@ -417,6 +462,17 @@ def run(settings, output_dir=None, predict_from=None):
                     )
         notes = [
             "Target checker passed: every method predicts exactly the canonical observed test rows across all five folds.",
+            *(
+                [
+                    "Hours dropped by Component 04 (DEC-01): "
+                    f"{settings['dropped_hours']['hours']}, removing "
+                    f"{settings['dropped_hours']['station_hours_removed']} observed "
+                    "station-hours from every method's targets. Each hour and its "
+                    f"cause is listed in {settings['dropped_hours']['file']}."
+                ]
+                if settings.get("dropped_hours")
+                else []
+            ),
             (
                 "Rainfall inputs are z-scored per node type with each fold's training-graph mean and spread, recorded under input_scaling in config.yaml (paper sec 4.3; D08.2). Graph files, targets and predictions stay in physical millimetres; validity and LPE are unscaled. Hidden rainfall and validity are zeroed while LPE is preserved."
                 if settings.get("input_rainfall_scale") == "zscore_train"
@@ -439,7 +495,7 @@ def run(settings, output_dir=None, predict_from=None):
             notes.extend(
                 [
                     f"Selected input layers: {', '.join(layers)}. Feature widths are taken from the validated Component 04 graphs; graph topology and target rows are unchanged.",
-                    "Unavailable satellite payloads are computationally zeroed with the source validity flag kept at 0. Radar missingness is rejected because its prescribed single feature has no validity channel. No rainfall rescaling or automatic timeline intersection occurs.",
+                    "Unavailable satellite payloads are computationally zeroed with the source validity flag kept at 0. Radar has no validity channel, so Component 04 drops any hour with a radar cell that has no value, and this run scores every method without those hours (DEC-01).",
                     "TO VALIDATE: tensor checks do not certify radar/satellite product, units, timestamp meaning, coordinate alignment or gauge correction. Components 01/02/04 must supply that evidence before a fusion score supports scientific claims. Gauge-corrected inputs can contain held-out gauge information even when graph masking is correct.",
                 ]
             )

@@ -13,7 +13,7 @@ from torch_geometric.data import Batch
 
 from src.models.contracts import load_inputs, target_rows, validate_predictions
 from src.models.graphs import HourlyGraphDataset, load_graph, validate_graph
-from src.models.run import check_inputs, read_fold, read_settings, run
+from src.models.run import check_inputs, drop_hours, read_fold, read_settings, run
 from src.models.scaling import rainfall_scaling
 from src.models.trainer import masked_forward, predict_fold, restore_model
 
@@ -325,3 +325,26 @@ def test_readonly_preflight_and_failed_run_keep_error(inputs, tmp_path):
         run(inputs, tmp_path / "failed")
     assert "Status: FAILED" in (tmp_path / "failed/report.md").read_text()
     assert not (tmp_path / "failed/predictions.csv").exists()
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        "timestamp,layer\n2022-01-01T00:00:00+00:00,radar\n",
+        "timestamp,layer,cause\n2022-01-01T00:00:00+00:00,gauge,no gauge\n",
+        "timestamp,layer,cause\n2022-01-01T00:00:00+00:00,radar,\n",
+    ],
+    ids=["no-cause-column", "unknown-layer", "empty-cause"],
+)
+def test_a_dropped_hour_without_its_layer_and_cause_stops_the_run(tmp_path, listing):
+    """DEC-01: no hour leaves the targets without a stated layer and cause."""
+    (tmp_path / "dropped_hours.csv").write_text(listing)
+    gauge = pd.DataFrame(
+        {
+            "station_id": ["a"],
+            "timestamp": pd.to_datetime(["2022-01-01T00:00:00Z"], utc=True),
+            "rainfall_mm": [0.0],
+        }
+    )
+    with pytest.raises(ValueError, match="every dropped hour needs"):
+        drop_hours(gauge, {"graphs_dir": str(tmp_path)})

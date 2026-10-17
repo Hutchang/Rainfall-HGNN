@@ -96,3 +96,36 @@ def test_a_valid_column_must_be_exactly_zero_or_one(tmp_path):
         ValueError, match="satellite: availability must be exactly 0 or 1"
     ):
         load_standard_grid(tmp_path, "satellite")
+
+
+def test_a_radar_hour_with_a_cell_without_a_value_is_set_aside(tmp_path):
+    """DEC-01: radar has no validity flag, so the whole hour is set aside for
+    Component 04 to drop and list, rather than the table being refused."""
+    first, second = "2022-01-05T00:00:00+00:00", "2022-01-05T01:00:00+00:00"
+    _write_table(
+        tmp_path,
+        "radar",
+        [
+            {"node_id": 0, "timestamp": first, "rain_rate": 1.0},
+            {"node_id": 1, "timestamp": first, "rain_rate": None},
+            {"node_id": 0, "timestamp": second, "rain_rate": 0.0},
+            {"node_id": 1, "timestamp": second, "rain_rate": 2.0},
+        ],
+        node_count=2,
+    )
+    grid = load_standard_grid(tmp_path, "radar")
+    assert list(grid.timestamps) == [pd.Timestamp(second)]
+    assert list(grid.hours_without_values) == [pd.Timestamp(first)]
+    np.testing.assert_allclose(grid.values[0, :, 0], [0.0, 2.0])
+
+
+def test_an_infinite_radar_value_is_still_refused(tmp_path):
+    hour = "2022-01-05T00:00:00+00:00"
+    _write_table(
+        tmp_path,
+        "radar",
+        [{"node_id": 0, "timestamp": hour, "rain_rate": float("inf")}],
+        node_count=1,
+    )
+    with pytest.raises(ValueError, match="radar: observed rainfall must be finite"):
+        load_standard_grid(tmp_path, "radar")

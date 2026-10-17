@@ -28,6 +28,10 @@ def build_baseline_graphs(
     config.setdefault("reverse_cross_support", False)
     if type(config["reverse_cross_support"]) is not bool:
         raise ValueError("reverse_cross_support must be a boolean")
+    # On unless switched off: the paper links every grid cell to its neighbours.
+    config.setdefault("grid_edges", True)
+    if type(config["grid_edges"]) is not bool:
+        raise ValueError("grid_edges must be a boolean")
     data_dir = Path(data_dir or config.get("data_dir", "database/standard"))
     output_dir = Path(
         output_dir or config.get("output_dir", "database/graphs/gauge_baseline")
@@ -46,6 +50,18 @@ def build_baseline_graphs(
         raise ValueError(
             "input_layers must select raingauge and optional radar/satellite"
         )
+    # DEC-01: hours a timeline layer has no value for are dropped from the
+    # timeline. Input grid layers always count; timeline_layers adds layers the
+    # run does not read, so a gauge-only run can be scored on the same hours.
+    config.setdefault("timeline_layers", [])
+    timeline_layers = config["timeline_layers"]
+    if (
+        not isinstance(timeline_layers, list)
+        or any(not isinstance(x, str) for x in timeline_layers)
+        or len(timeline_layers) != len(set(timeline_layers))
+        or set(timeline_layers) - {"radar", "satellite"}
+    ):
+        raise ValueError("timeline_layers must list radar and/or satellite")
     if output_dir.exists():
         raise FileExistsError(f"graph output already exists: {output_dir}")
     if output_dir.resolve().is_relative_to(data_dir.resolve()):
@@ -81,7 +97,32 @@ def build_baseline_graphs(
     if set(table.columns) != {"station_id", "timestamp", "rainfall_mm"}:
         raise ValueError("unexpected gauge_hourly columns")
     stamps = sorted(table.timestamp.unique(), key=pd.Timestamp)
-    hours = utc_hours(stamps, "gauge timeline")
+    gauge_hours = utc_hours(stamps, "gauge timeline")
+    grids = {
+        layer: load_standard_grid(data_dir, layer)
+        for layer in ("radar", "satellite")
+        if layer in layers or layer in timeline_layers
+    }
+    dropped = []
+    for layer, grid in grids.items():
+        set_aside = (
+            set(grid.hours_without_values)
+            if grid.hours_without_values is not None
+            else set()
+        )
+        for hour in gauge_hours.difference(grid.timestamps):
+            cause = (
+                f"{layer} cells without a value"
+                if hour in set_aside
+                else f"no {layer} hour in {layer}_hourly.csv"
+            )
+            dropped.append((hour, layer, cause))
+    dropped_set = {hour for hour, _, _ in dropped}
+    hours = gauge_hours[~gauge_hours.isin(dropped_set)]
+    if hours.empty:
+        raise ValueError(
+            f"no gauge hour has values in every timeline layer: {sorted(grids)}"
+        )
     table["timestamp"] = pd.to_datetime(table.timestamp, utc=True)
     if not np.isfinite(table.rainfall_mm).all() or (table.rainfall_mm < 0).any():
         raise ValueError("canonical rainfall must be finite nonnegative millimetres")
@@ -111,11 +152,17 @@ def build_baseline_graphs(
     seeds = load_seed_config(Path(seeds_file))
     np.random.seed(seeds.model_seed)
     torch.manual_seed(seeds.model_seed)
-    sensors = {}
-    for layer in layers:
-        if layer != "raingauge":
-            sensors[layer] = load_standard_grid(data_dir, layer).to_heterodata(hours)
+    sensors = {
+        layer: grids[layer].to_heterodata(hours)
+        for layer in layers
+        if layer != "raingauge"
+    }
     output_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [(hour.isoformat(), layer, cause) for hour, layer, cause in sorted(dropped)],
+        columns=["timestamp", "layer", "cause"],
+    ).to_csv(output_dir / "dropped_hours.csv", index=False, lineterminator="\n")
+    causes = pd.Series([cause for _, _, cause in dropped], dtype=str).value_counts()
     report = [
         "# Component 04 graph build",
         "",
@@ -123,6 +170,15 @@ def build_baseline_graphs(
         "",
         f"Settings: {config}",
         f"Shared model_seed for LPE: {seeds.model_seed}",
+        "",
+        (
+            f"Timeline (DEC-01): {len(hours)} of {len(gauge_hours)} gauge hours kept; "
+            f"{len(dropped_set)} dropped because a timeline layer "
+            f"({', '.join(grids) or 'none'}) has no value for them. Each is listed "
+            "with its cause in dropped_hours.csv, and Component 06 scores every "
+            "method without them."
+        ),
+        *(f"  {cause}: {count} hours" for cause, count in causes.items()),
         "",
         (
             "Numerical fixes: retain directed gauge edges; normalize by receiving "
@@ -140,7 +196,10 @@ def build_baseline_graphs(
             "Sensor topology: each gauge selects the configured nearest sensor nodes; "
             "sensor-to-gauge edges are always stored; "
             f"reverse_cross_support={config['reverse_cross_support']} "
-            "controls gauge-to-sensor edges. Each stored relation is normalized "
+            "controls gauge-to-sensor edges; "
+            f"grid_edges={config['grid_edges']} controls links between each sensor "
+            "cell and its immediate grid neighbours (up to eight). Each stored "
+            "relation is normalized "
             "independently at its receiving nodes when edge_normalisation=per_node. "
             "Source product/"
             "units, coverage and held-out-gauge independence remain subject to review."
@@ -156,7 +215,7 @@ def build_baseline_graphs(
     ]
     paths += [
         data_dir / f"{layer}_{suffix}.csv"
-        for layer in sensors
+        for layer in grids
         for suffix in ("hourly", "nodes")
     ]
     for path in paths:
@@ -181,6 +240,7 @@ def build_baseline_graphs(
                 builder.add_heterodata(
                     features, coords, layer, knn=config["layer_k_neighbours"],
                     reverse_cross_support=config["reverse_cross_support"],
+                    grid_edges=config["grid_edges"],
                 )
             folder = output_dir / f"fold-{fold['fold_index']}"
             folder.mkdir()

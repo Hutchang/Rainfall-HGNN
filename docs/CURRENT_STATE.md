@@ -20,8 +20,9 @@ per milestone. Five rules keep it that way.
    changes.** Take main's version when you branch and again when you rebase, then edit
    only the lines your feature makes untrue. Two people working in parallel therefore
    merge two small paragraphs, not two competing rewrites.
-3. **It records state, not issues.** Anything broken, missing, deferred or undecided goes
-   to [ISSUES.md](ISSUES.md) and gets an id. Cite the id here if the state depends on it.
+3. **It records state, not issues or decisions.** Anything broken, missing, deferred or
+   undecided goes to [ISSUES.md](ISSUES.md) and gets an id; what the project lead has
+   decided goes to [DECISIONS.md](DECISIONS.md). Cite the id here if the state depends on it.
    Never restate an issue's severity, owner or status in this document — there would then
    be two answers and no way to tell which is current.
 4. **It records the present, not history.** When a sprint closes, its state description
@@ -78,6 +79,14 @@ No real Sydney build output exists in this checkout — `database/raw/`,
 `database/standard/` and `database/graphs/` are gitignored and absent. Everything
 verified below runs against committed offline samples and synthetic fixtures.
 
+`database/` is gitignored, so no build output travels with the repository. The Sydney
+gauge tables have been rebuilt from the team's national download (`database.zip`): the
+184 stations in the Sydney box, giving the same `gauge_hourly.csv` and `stations.csv` that
+D08's runs used and the same 127 study stations (see the
+[NCI guide](nci/README.md), section 6). No real grid tables or real graphs exist yet.
+Everything verified below runs against committed offline samples and synthetic
+fixtures.
+
 ## Sprint 2
 
 Sprint 1 is closed. Its component contracts are archived in
@@ -93,11 +102,11 @@ each deliverable's document. State per deliverable:
 | Deliverable | Name | State |
 |---|---|---|
 | D07 | Experiment runner | Not started. The terminal app above already gives each experiment its own folder, config copies and results; D07's runner, provenance record and registry are still to come. Today only Component 06 writes one folder per run with the fingerprints of its inputs; every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
-| D08 | Sydney gauge-only baseline | D08.1 and D08.2 merged, closing the code side of D08's three gaps. Split: `config/splits/sydney_5fold_blocked.yaml` hides two whole location clusters per fold (`fold_assignment: whole_clusters`), and its released `.json` over 127 real stations is committed; `sydney_5fold_round_robin.yaml` is a companion that differs only in dealing each cluster's gauges across the folds, as the first author's code does, and its `.json` is built locally, not committed. `src/study/summary.py` writes the split summary and fold map, and `docs/study/README.md` covers Component 03. Every method reads training and validation gauges at test time (ISS-07). `input_rainfall_scale: zscore_train` scales the rainfall input on each fold's training graph and records the numbers in the run's config (ISS-09). `config/graphs/gauge_{blocked,round_robin}.yaml` and `config/models/hgnn_{blocked,round_robin}.yaml` run each split end to end. Not yet done: D08.3's table, D08.5's correlation plot, D08.6's distance tool and D08.7's before/after measurement, which closes ISS-10 |
-| D09 | Radar fusion | D09.2's cross-support half merged: each gauge links to its nine nearest sensor nodes, edges run sensor-to-gauge only unless `reverse_cross_support: true`, and the HGNN keeps a sensor layer's values across layers when nothing sends to it. Synthetic graph, training and checkpoint-replay tests pass in both modes. The eight-neighbour grid edges and the coincident-node weight are ISS-38. D09.4 and D09.5 need D08.3's gauge-only table and D13's tables built from the real archive (ISS-04); no real-data fusion result is claimed |
+| D08 | Sydney gauge-only baseline | D08.1 and D08.2 merged, closing the code side of D08's three gaps. Split: Sydney uses `config/splits/sydney_5fold_round_robin.yaml` (DEC-03), which deals each location cluster's gauges one at a time across the folds as the first author's code does; its released `.json` over the same 127 stations is committed. `sydney_5fold_blocked.yaml` hides two whole clusters per fold (`fold_assignment: whole_clusters`) and stays as the comparison; its released `.json` over 127 real stations is committed. `src/study/summary.py` writes the split summary and fold map, and `docs/study/README.md` covers Component 03. Every method reads training and validation gauges at test time (ISS-07). `input_rainfall_scale: zscore_train` scales the rainfall input on each fold's training graph and records the numbers in the run's config (ISS-09). `config/graphs/gauge_{blocked,round_robin}.yaml` and `config/models/hgnn_{blocked,round_robin}.yaml` run each split end to end. Not yet done: D08.3's table, D08.5's correlation plot, D08.6's distance tool and D08.7's before/after measurement of the two splits |
+| D09 | Radar fusion | D09.2 done. Each gauge links to its nine nearest sensor nodes in all three graph configs; those edges run sensor-to-gauge only unless `reverse_cross_support: true`; and each radar or satellite cell links to its immediate grid neighbours, up to eight (`grid_edges`, on by default). Synthetic graph, training and checkpoint-replay tests pass. Component 04 drops each hour that has no radar, or a radar cell without a value, lists it in `dropped_hours.csv`, and Component 06 scores every method without it (DEC-01); `timeline_layers: [radar, satellite]` gives a gauge-only run the same hours. D09.4 and D09.5 need D08.3's gauge-only table and D13's tables built from the real archive (ISS-04). `scripts/nci/` now builds the grid tables, the G, G+R and G+R+S graph sets and the training runs on Gadi, with `config/{graphs,models}/d09_round_robin_*.yaml` ([NCI guide](nci/README.md), section 6); none of it has run on Gadi yet. No real-data fusion result is claimed |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
 | D11 | BRAIN paper report | Not started; scope TO CONFIRM |
-| D13 | Source grids from NCI | All five subtasks merged, with the integration review's fixes on top. `config/canonical/grids.yaml` points `layers.radar.root` at site 71's folder and `layers.satellite.root` at the CRRPh archive; `src.canonical.grids.build()` reads both in place. Radar: four 15-minute `prcp-m15` files summed per hour across daily zips, one value per cell-hour as in the paper (ISS-36), cut to the same Sydney study box as satellite (857 nodes for site 71). Satellite: six 10-minute `crrph_intensity` samples averaged per hour, cropped from the full disk, with a `valid` column; an image with no value makes the cell-hour invalid (ISS-37). `grid_report.md` states product, units, site, gauge correction, coordinate system and time step from the files themselves, the hourly, crop and subsample rules, every unwritten hour with its cause, and radar's contributing-gauges cross-reference against Component 02's `stations.csv` (ISS-02, ISS-04). `tests/data/ingestion/{radar,satellite}/` hold real, complete-hour samples, and `python -m src.canonical.grids config/canonical/grids.yaml --sample` runs both readers with no Gadi access. Nothing has been run against the real archive yet |
+| D13 | Source grids from NCI | All five subtasks merged, with the integration review's fixes on top. `config/canonical/grids.yaml` points `layers.radar.root` at site 71's folder and `layers.satellite.root` at the CRRPh archive; `src.canonical.grids.build()` reads both in place. Radar: four 15-minute `prcp-m15` files summed per hour across daily zips, one value per cell-hour as in the paper (ISS-36), cut to the same Sydney study box as satellite (857 nodes for site 71). Satellite: each cell-hour is the mean of the 10-minute `crrph_intensity` images that have a value there, if at least 3 of 6 do (DEC-02), cropped from the full disk, with a `valid` column; so the hours whose 02:40 or 14:40 image the archive never has are written too. `grid_report.md` states product, units, site, gauge correction, coordinate system and time step from the files themselves, the hourly, crop and subsample rules, every unwritten hour with its cause, and radar's contributing-gauges cross-reference against Component 02's `stations.csv` (ISS-02, ISS-04). `tests/data/ingestion/{radar,satellite}/` hold real, complete-hour samples, and `python -m src.canonical.grids config/canonical/grids.yaml --sample` runs both readers with no Gadi access. Nothing has been run against the real archive yet |
 
 Open work that belongs to a component rather than a deliverable:
 
@@ -135,38 +144,38 @@ outputs. See [LEGACY_CODE.md](LEGACY_CODE.md).
 
 ## Verification
 
-Run on 2026-10-17 against the code at `1ec93c6`, in a clean checkout, Windows 11,
-Python 3.14.2, in the environment `uv sync --locked` builds (the D14 merge leaves
-`uv.lock` unchanged):
+Run on 2026-10-12 at `f8f3c26` plus the Gadi pipeline change, Windows 11, Python
+3.14.2, in the environment `uv sync --locked` builds (`uv.lock` unchanged), in a checkout
+that has `database/sydney_gauge_legacy/`:
 
 ```console
 uv run --locked python -m pytest tests -q -rx --cov=src --cov-report=term-missing
 uv run --locked ruff check .
 ```
 
-- `tests/`: **289 passed, 30 skipped, 3 failed**. The skips are the live-API acceptance
-  checks (`BOM_NETWORK=1`, `NCI_NETWORK=1`) and the legacy-data tests, which skip in a
-  checkout without `database/sydney_gauge_legacy/`. The three failures are all in
-  `tests/test_experiment_tui.py` and fail the same way on `main` before this merge on
-  this Windows machine; the earlier macOS run of `main` passed them.
-- With `database/sydney_gauge_legacy/` present, the same code gives **309 passed,
-  3 skipped, 7 xfailed, 3 failed**: the same three failures, and the seven expected
-  failures that document the inherited export's defects, unchanged by the merge.
-- Repository-wide Ruff: **683** findings (ISS-17) on this checkout, the same as `main`
-  before the merge (`ace34b8`) measured the same way; the merge adds none.
-- Coverage, with `--cov=src`: **52 %** over all of `src/`, which includes the inherited
-  review-only code. The D14 merge changes no module under `src/`, so the figures
-  measured at `94c6e74` stand: `src/models/run.py` 80 %, `scaling.py` 89 %,
-  `baselines.py` 86 %, `modalities.py` 97 %, `models.py` 36 % (the inherited
-  architectures count towards it); `src/study/split.py` 93 %, `summary.py` 100 %,
-  `schema.py` 100 %; `src/graph/builder_new.py` 92 %, `gaugegraphnew.py` 84 %,
-  `edge_map.py` 97 %. `run.py` is below its 90 % floor and `split.py` meets its own. The
-  floors are not enforced yet (ISS-33). `scripts/nci/remote.py`, which the merge adds
-  outside the measured packages, is 89 % covered by its own tests.
-- PyTorch and PyG emit Python 3.14 deprecation warnings. PyG also warns that radar and
-  satellite nodes receive no updates; that is expected while edges run sensor-to-gauge
-  only and the grid edges are missing (ISS-38).
+- `tests/`: **316 passed, 3 skipped, 7 xfailed, 3 failed**. The skips are the live-API
+  acceptance checks (`BOM_NETWORK=1`, `NCI_NETWORK=1`). The seven expected failures
+  document the inherited export's defects. The three failures are all in
+  `tests/test_experiment_tui.py` and fail the same way on `main` on this Windows machine;
+  the earlier macOS run of `main` passed them. A checkout without the legacy data skips
+  those tests instead; at `94c6e74` that gave 251 passed, 30 skipped, 3 failed.
+- Ruff (ISS-17): **664** findings, the same as at `1308aec` and one fewer than `main`
+  (665), compared file by file; the change adds none. A Windows checkout reports 17
+  more, one per empty `__init__.py`, from line endings.
+- Coverage, with `--cov=src`: **53 %** over all of `src/`, which includes the inherited
+  review-only code. Modules this change touches: `src/canonical/satellite_archive.py`
+  96 %, `grids.py` 93 %, `grid_tables.py` 91 %, `src/graph/builder_new.py` 92 %,
+  `src/models/run.py` 81 % (below its 90 % floor, as before). D09.2's
+  `src/graph/radargraphnew.py` is 97 % and `gaugegraphnew.py` 86 %. The floors are not
+  enforced yet (ISS-33).
+- PyTorch and PyG emit Python 3.14 deprecation warnings. PyG's warning that a sensor
+  layer is never updated now comes only from `tests/test_model_modalities.py`, whose
+  hand-built graphs leave out grid links on purpose.
+- `python -m src.canonical.grids config/canonical/grids.yaml --sample` on the committed
+  real hour (2022-01-03 00:00 UTC) leaves 463 of 4,712 satellite cells invalid under
+  DEC-02, against 2,455 under the old six-of-six rule.
 - `scripts/nci/test_guards.py` is excluded from `tests/` and fails on a Windows checkout
-  for a line-ending reason (ISS-15). Its original eight tests pass on Linux and macOS; the
-  two the D14 merge adds for `train.pbs` have not been run there yet. Run directly in Git
-  Bash, `train.pbs` refuses each case those two tests cover.
+  for a line-ending reason (ISS-15). It passes on Linux and macOS. Its new cases for
+  `build_grids.pbs`, `build_graphs.pbs`, `train.pbs` and `submit_pipeline.sh` were run by
+  hand through Git Bash here, and `build_grids.pbs` ran end to end on the committed
+  samples with a stand-in `.venv/bin/python`.

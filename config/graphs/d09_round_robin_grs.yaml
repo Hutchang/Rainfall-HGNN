@@ -1,0 +1,25 @@
+# Gauge + radar + satellite (G+R+S) row of D09's table (D09.5) on the
+# round-robin split. Both grid layers are inputs, so both set the timeline (DEC-01).
+k_neighbours: 5
+distance: haversine_km        # or euclidean_degrees for the inherited comparison
+edge_normalisation: per_node  # or global for the inherited comparison
+# both_directions: every pick adds i -> j and j -> i, each weight scaled at its own
+# receiving gauge, so no gauge is left receiving from nothing (ISS-25).
+both_directions: true
+include_lpe: true
+lpe_dimensions: 4
+# Per-node weights are directed because they are normalised by receiving node.
+layer_is_directed: true
+
+data_dir: database/standard
+split_file: config/splits/sydney_5fold_round_robin.json
+output_dir: database/graphs/d09_round_robin_grs
+input_layers: [raingauge, radar, satellite]
+# Used only when radar or satellite is selected in input_layers.
+layer_k_neighbours: 9
+# D09.2: sensor -> gauge only; true explicitly restores gauge -> sensor edges.
+reverse_cross_support: false
+# D09.2: link each radar/satellite cell to its immediate grid neighbours (paper sec 3.2).
+grid_edges: true
+# Grid layers whose missing hours leave the timeline even if not an input (DEC-01).
+timeline_layers: []

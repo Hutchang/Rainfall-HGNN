@@ -26,6 +26,10 @@ don't.
 
 ### Gap 1 — The split doesn't hide whole areas
 
+**Superseded 2026-10-11 by [DEC-03](../DECISIONS.md#dec-03):** Sydney uses the
+round-robin split, which matches the first author's code and the distances the method
+faces in Sydney. The blocked split below stays as the comparison D08.7 scores.
+
 **What the code does.** `src/study/split.py` groups the study stations into 10 clusters
 by location, then hands each cluster's stations out one at a time to fold 0, 1, 2, 3, 4,
 0, 1 and so on (`create_test_folds`; the counter never resets between clusters). Every
@@ -106,8 +110,9 @@ is left is rebuilding the graphs on real data, which is part of D08.2.
   55 km extent; a different box is a different region (D10), not a change to this
   baseline — built into standard tables by Component 02 with the current rules in
   `config/canonical/standard.yaml`.
-- **Split.** Five folds, each hiding whole areas (Gap 1). 15 % of the remaining stations
-  are validation, used only to decide when to stop training.
+- **Split.** Five folds, each hiding about a fifth of every area: the round-robin split
+  ([DEC-03](../DECISIONS.md#dec-03)). 15 % of the remaining stations are validation, used
+  only to decide when to stop training.
 - **Visible gauges at test time.** Training and validation gauges, for every method
   (Gap 2).
 - **Methods.** IDW with power 2.0; network mean; the HGNN with `config/models/hgnn.yaml`
