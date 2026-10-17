@@ -228,7 +228,11 @@ waits for you to type `yes`, then:
    Gadi checks every checksum, then makes the folder read-only. A later run with the
    same inputs reuses it;
 4. checks the inputs on the login node, runs `prepare_environment.pbs` first if the
-   environment is missing or out of date, and submits `scripts/nci/train.pbs`;
+   environment is missing or was built from a different `uv.lock`, and submits
+   `scripts/nci/train.pbs`. Every run uses one shared environment, so while any job
+   sent by this script is still queued or running, a run that needs a different
+   environment is refused before anything is uploaded: rebuilding would change the
+   packages under that job;
 5. checks the jobs every five minutes, then downloads the run into
    `experiments/nci/<date>_<time>_<label>/results/` and records the verdict in
    `state.json`. A job has ended once its log in the run folder ends with Gadi's
@@ -263,6 +267,7 @@ Host gadi.nci.org.au gadi-dm.nci.org.au
 same OpenSSH client for this check and for the script.
 
 **TO VALIDATE on the first real run.** The tests use a stand-in for Gadi. These
-assumptions have not yet been checked on Gadi itself: `qstat -F json` output, `lquota`,
-`nci_account` and `qsub` being on the `PATH` for non-interactive SSH commands, and
-`git worktree` sharing one `.venv` through a symlink.
+assumptions have not yet been checked on Gadi itself: `qstat -F json` output, including
+`PBS_O_WORKDIR` under `Variable_List`; `lquota`, `nci_account`, `qselect` and `qsub`
+being on the `PATH` for non-interactive SSH commands; and `git worktree` sharing one
+`.venv` through a symlink.

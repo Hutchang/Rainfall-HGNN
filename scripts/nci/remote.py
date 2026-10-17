@@ -66,7 +66,9 @@ JOB_STATES = {
 }
 LOG_KEYS = {"prepare": "prepare_log", "train": "log"}  # job name -> remote_paths key
 
-# Read-only facts about the remote side, printed as key=value then two raw reports.
+# Read-only facts about the remote side, printed as key=value then three raw reports.
+# env_lock is the uv.lock the shared environment was last built from: the shared
+# checkout only moves to a revision when that revision's environment job is sent.
 PROBE = r"""
 repo=$1 inputs=$2 revision=$3 project=$4
 git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 \
@@ -76,10 +78,19 @@ git -C "$repo" cat-file -e "$revision^{commit}" 2>/dev/null \
     && echo has_revision=yes || echo has_revision=no
 [[ -f $inputs/COMPLETE ]] && echo inputs=present || echo inputs=absent
 [[ -x $repo/.venv/bin/python ]] && echo venv=present || echo venv=absent
+[[ -f $repo/uv.lock ]] \
+    && echo "env_lock=$(sha256sum < "$repo/uv.lock" | cut -d' ' -f1)" \
+    || echo env_lock=
 echo '--- lquota'
 lquota
 echo '--- nci_account'
 nci_account -P "$project"
+echo '--- jobs'
+if ids=$(qselect -u "$(id -un)" 2>&1); then
+    if [[ -n $ids ]]; then qstat -f -F json $ids || true; else echo '{"Jobs": {}}'; fi
+else
+    echo "qselect failed: $ids"
+fi
 """
 
 
@@ -252,6 +263,7 @@ def remote_paths(cfg, user, run_id, fingerprint):
     scratch = cfg["scratch_root"].format(**fill)
     run = f"{scratch}/runs/{run_id}"
     return {
+        "root": scratch,
         "repo": f"{scratch}/repo",
         "bundles": f"{scratch}/bundles",
         "runs": f"{scratch}/runs",
@@ -371,9 +383,41 @@ def parse_exit_status(text):
 
 def parse_probe(text):
     head, _, rest = text.partition("--- lquota\n")
-    quota, _, account = rest.partition("--- nci_account\n")
+    quota, _, rest = rest.partition("--- nci_account\n")
+    account, _, jobs = rest.partition("--- jobs\n")
     facts = dict(line.split("=", 1) for line in head.splitlines() if "=" in line)
-    return facts, quota, account
+    return facts, quota, account, jobs
+
+
+def jobs_using(text, root):
+    """Your unfinished jobs submitted from under root, from `qstat -f -F json`.
+
+    The runner sends environment jobs from its shared checkout and training jobs
+    from each run's code folder, both under root, and all of them use the one
+    environment in root/repo/.venv.
+    """
+    try:
+        jobs = json.loads(text)["Jobs"]
+    except (json.JSONDecodeError, KeyError):
+        raise BlockedError("could not list your jobs on Gadi:\n" + text) from None
+    found = []
+    for job_id, job in jobs.items():
+        variables = job.get("Variable_List")
+        if not isinstance(variables, dict) or "PBS_O_WORKDIR" not in variables:
+            raise BlockedError(f"qstat does not show where {job_id} was submitted from")
+        folder = variables["PBS_O_WORKDIR"]
+        if job.get("job_state") != "F" and folder.startswith(f"{root}/"):
+            found.append(job_id)
+    return sorted(found)
+
+
+def environment_busy(jobs):
+    return (
+        "this revision needs Gadi's shared environment built or rebuilt (it is "
+        "missing, or was built from a different uv.lock), but these jobs use it and "
+        f"have not finished: {', '.join(jobs)}. Wait for them to finish or qdel "
+        "them, then submit again"
+    )
 
 
 def code_footprint(revision, root=ROOT):
@@ -496,6 +540,8 @@ class Plan:
     su_estimate: float
     su_available: float
     upload_bytes: int
+    needs_setup: bool  # environment missing, or built from another uv.lock
+    busy: list  # unfinished jobs using the shared environment
 
 
 def make_plan(model_config, cfg, ssh, root=ROOT):
@@ -509,7 +555,7 @@ def make_plan(model_config, cfg, ssh, root=ROOT):
     fingerprint = inputs_fingerprint(inputs)
     user = ssh.run(cfg["login_host"], "id -un").strip()
     paths = remote_paths(cfg, user, "probe", fingerprint)
-    facts, quota, account = parse_probe(
+    facts, quota, account, jobs = parse_probe(
         ssh.run(
             cfg["login_host"],
             "bash -s -- "
@@ -517,6 +563,9 @@ def make_plan(model_config, cfg, ssh, root=ROOT):
             data=PROBE.encode(),
         )
     )
+    lock = committed_digest("uv.lock", revision, root)[0]
+    needs_setup = facts["venv"] == "absent" or facts["env_lock"] != lock
+    busy = jobs_using(jobs, paths["root"])
     rows = parse_lquota(quota, cfg["project"])
     uploads = [item for item in inputs if not item.tracked]
     upload_bytes = (
@@ -537,6 +586,8 @@ def make_plan(model_config, cfg, ssh, root=ROOT):
     available = parse_available_su(account)
     if estimate > available:
         problems.append(f"the job can cost {estimate:.0f} SU; {available:.0f} SU left")
+    if needs_setup and busy:
+        problems.append(environment_busy(busy))
     problems = [problem for problem in problems if problem]
     if problems:
         raise BlockedError("Gadi cannot take this run:\n  " + "\n  ".join(problems))
@@ -551,6 +602,8 @@ def make_plan(model_config, cfg, ssh, root=ROOT):
         estimate,
         available,
         upload_bytes,
+        needs_setup,
+        busy,
     )
 
 
@@ -577,10 +630,10 @@ def describe(plan, cfg):
         f"Most it can cost: {plan.su_estimate:.1f} SU "
         f"({plan.su_available:.0f} SU left)",
     ]
-    if plan.facts["venv"] == "absent":
+    if plan.needs_setup:
         lines.append(
-            "Environment missing: a copyq preparation job runs first "
-            "(1 CPU, up to 30 minutes, extra SU)."
+            "Environment missing or built from another uv.lock: a copyq preparation "
+            "job runs first (1 CPU, up to 30 minutes, extra SU)."
         )
     return "\n".join(lines)
 
@@ -719,7 +772,13 @@ def submit(plan, cfg, ssh, run_dir, login_check=True, root=ROOT):
                 f"cd {code} && .venv/bin/python -B -m src.models.run "
                 f"{quote(paths['config'])} --check-inputs --device cpu",
             )
-        if ready != "ready":
+        # A changed uv.lock rebuilds even when the check passes (say, only a dev
+        # tool changed), so the shared checkout's uv.lock keeps naming the
+        # environment's. The plan refused a rebuild while jobs use it; a failed
+        # or unfinished environment job can still leave the check failing here.
+        if ready != "ready" or plan.needs_setup:
+            if plan.busy:
+                raise BlockedError(environment_busy(plan.busy))
             state["jobs"]["prepare"] = ssh.run(
                 login,
                 f"git -C {quote(paths['repo'])} checkout --quiet --detach "

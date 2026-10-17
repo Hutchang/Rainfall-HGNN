@@ -58,10 +58,31 @@ LOG_END = """\
 """
 
 
-def probe_output(venv="present", inputs="absent", account=ACCOUNT):
+LOCK = b"version = 1\n"  # the test repository's uv.lock
+LOCK_SHA256 = hashlib.sha256(LOCK).hexdigest()
+RUNNER = "/scratch/no50/rh0513/rainflow"  # scratch_root for user rh0513
+
+
+def gadi_jobs(*jobs):
+    """`qstat -f -F json` for (job id, state, folder it was submitted from)."""
+    return json.dumps(
+        {
+            "Jobs": {
+                job_id: {"job_state": state, "Variable_List": {"PBS_O_WORKDIR": folder}}
+                for job_id, state, folder in jobs
+            }
+        }
+    )
+
+
+def probe_output(
+    venv="present", inputs="absent", account=ACCOUNT, env_lock=LOCK_SHA256, jobs=None
+):
     return (
         f"repo=absent\nrepo_head=\nhas_revision=no\ninputs={inputs}\nvenv={venv}\n"
+        f"env_lock={env_lock}\n"
         f"--- lquota\n{LQUOTA}--- nci_account\n{account}"
+        f"--- jobs\n{jobs or gadi_jobs()}\n"
     )
 
 
@@ -137,6 +158,7 @@ def repo(tmp_path):
     for name in ("gauge.csv", "stations.csv", "split.json"):
         (root / "data" / name).write_text(f"contents of {name}\n")
     (root / ".gitignore").write_text("data/\nexperiments/\n")
+    (root / "uv.lock").write_bytes(LOCK)
     git(root, "init", "-q")
     git(root, "add", ".")
     git(root, "commit", "-q", "-m", "fixture")
@@ -422,6 +444,61 @@ def test_a_refused_training_job_leaves_the_environment_job_on_record(repo, capsy
     assert state["jobs"] == {"prepare": "100.gadi-pbs"}
     assert "resource limits" in state["error"]
     assert "qdel 100.gadi-pbs" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("job_state", ["Q", "R"])
+def test_a_new_environment_is_refused_before_upload_while_a_job_uses_the_old(
+    repo, capsys, job_state
+):
+    busy = gadi_jobs(("200.gadi-pbs", job_state, f"{RUNNER}/runs/a/code"))
+    ssh = gadi(probe=probe_output(env_lock="0" * 64, jobs=busy))
+    code = remote.main(
+        ["submit", "config/model.yaml", "--yes"], ssh_factory=lambda cfg: ssh, root=repo
+    )
+    assert code == 1
+    assert "200.gadi-pbs" in capsys.readouterr().err
+    assert not ssh.files and not ssh.tars
+    assert not any("qsub" in call or "mkdir" in call for call in ssh.calls)
+    assert not (repo / "experiments").exists()
+
+
+def test_the_same_environment_runs_alongside_unfinished_jobs(repo):
+    busy = gadi_jobs(("200.gadi-pbs", "R", f"{RUNNER}/runs/a/code"))
+    _, state = submitted_run(repo, gadi(probe=probe_output(jobs=busy)))
+    assert state["jobs"] == {"train": "123.gadi-pbs"}
+
+
+def test_a_changed_uv_lock_rebuilds_when_only_other_jobs_are_unfinished(repo):
+    other = gadi_jobs(
+        ("200.gadi-pbs", "R", "/scratch/no50/rh0513/COMP3888-m17-01-p23"),
+        ("201.gadi-pbs", "F", f"{RUNNER}/runs/a/code"),
+    )
+    # The environment check passes (say, only a dev tool changed), but the job runs
+    # anyway, so the shared checkout's uv.lock keeps naming the environment's.
+    ssh = gadi(probe=probe_output(env_lock="0" * 64, jobs=other), check="ready\n")
+    _, state = submitted_run(repo, ssh)
+    assert state["jobs"] == {"prepare": "100.gadi-pbs", "train": "123.gadi-pbs"}
+
+
+def test_an_unfinished_environment_job_blocks_a_second_one(repo):
+    pending = gadi_jobs(("100.gadi-pbs", "Q", f"{RUNNER}/repo"))
+    ssh = gadi(probe=probe_output(jobs=pending), check="prepare\n")
+    code = remote.main(
+        ["submit", "config/model.yaml", "--yes"], ssh_factory=lambda cfg: ssh, root=repo
+    )
+    assert code == 1
+    assert not any("prepare_environment" in call for call in ssh.calls)
+    (run_dir,) = (repo / "experiments/nci").iterdir()
+    state = json.loads((run_dir / "state.json").read_text())
+    assert state["status"] == "SUBMIT_FAILED"
+    assert "100.gadi-pbs" in state["error"]
+
+
+def test_a_job_list_that_cannot_be_read_blocks_the_plan(repo):
+    cfg = remote.load_remote_config(repo / "config/nci/remote.yaml")
+    ssh = gadi(probe=probe_output(jobs="qselect failed: command not found"))
+    with pytest.raises(BlockedError, match="could not list your jobs"):
+        remote.make_plan(Path("config/model.yaml"), cfg, ssh, repo)
 
 
 def results_tar(report="# Model run\n\n| fold | rmse |\n"):
