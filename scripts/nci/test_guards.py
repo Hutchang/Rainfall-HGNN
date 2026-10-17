@@ -117,6 +117,44 @@ def test_training_rejects_a_bad_epoch_count_before_gpu_use(epochs):
     assert "PBS job:" not in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("settings", "message"),
+    [
+        ({"NCI_FOLDS": "5"}, "NCI_FOLDS must be fold numbers"),
+        ({"NCI_FOLDS": "0,1"}, "NCI_FOLDS must be fold numbers"),
+        ({"NCI_MODEL_SEED": "-1"}, "NCI_MODEL_SEED must be a whole number"),
+        (
+            {"NCI_FOLDS": "0", "NCI_PREDICT_FROM": "joined/best.pt"},
+            "do not set NCI_FOLDS",
+        ),
+        ({"NCI_PREDICT_FROM": "no/such/best.pt"}, "is not a file"),
+    ],
+    ids=[
+        "fold-5",
+        "comma-list",
+        "negative-seed",
+        "folds-with-scoring",
+        "no-checkpoint",
+    ],
+)
+def test_training_rejects_bad_fold_seed_or_scoring_settings(settings, message):
+    result = subprocess.run(
+        ["bash", "scripts/nci/train.pbs"],
+        cwd=ROOT,
+        env=training_environment(
+            NCI_MODEL_CONFIG="config/models/d09_round_robin_grs.yaml",
+            NCI_OUTPUT_DIR="experiments/nci/guard-test",
+            **settings,
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert message in result.stderr
+    assert "PBS job:" not in result.stdout
+
+
 def test_the_chain_is_submitted_from_a_login_node_only():
     result = subprocess.run(
         ["bash", "scripts/nci/submit_pipeline.sh"],

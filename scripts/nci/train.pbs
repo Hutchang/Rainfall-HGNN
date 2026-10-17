@@ -3,6 +3,11 @@
 # same rows. The defaults below can be overridden on the qsub command line.
 #   qsub -v NCI_MODEL_CONFIG=config/models/d09_round_robin_grs.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-grs scripts/nci/train.pbs
 # NCI_EPOCHS=1 with a short walltime times one epoch before a full run is booked.
+# Short jobs start sooner, so a full run can be split into one job per fold:
+#   NCI_FOLDS=0 (or 1:3; qsub -v separates its variables with commas) trains only those
+#   folds and writes a PARTIAL report. When every fold has finished, join them with
+#   python -m src.models.combine_folds <joined> <fold run> ... and score all methods with
+#   NCI_PREDICT_FROM=<joined>/best.pt. NCI_MODEL_SEED=<n> replaces seeds_file's model seed.
 #PBS -P no50
 #PBS -q dgxa100
 #PBS -N rainflow-train
@@ -28,7 +33,23 @@ if [[ -n ${NCI_EPOCHS:-} && ! ${NCI_EPOCHS} =~ ^[1-9][0-9]{0,2}$ ]]; then
     printf 'BLOCKED: NCI_EPOCHS must be a whole number from 1 to 999.\n' >&2
     exit 1
 fi
+if [[ -n ${NCI_FOLDS:-} && ! ${NCI_FOLDS} =~ ^[0-4](:[0-4]){0,4}$ ]]; then
+    printf 'BLOCKED: NCI_FOLDS must be fold numbers 0 to 4 joined by colons, e.g. 0 or 1:3.\n' >&2
+    exit 1
+fi
+if [[ -n ${NCI_MODEL_SEED:-} && ! ${NCI_MODEL_SEED} =~ ^[0-9]{1,9}$ ]]; then
+    printf 'BLOCKED: NCI_MODEL_SEED must be a whole number.\n' >&2
+    exit 1
+fi
+if [[ -n ${NCI_PREDICT_FROM:-} && -n ${NCI_FOLDS:-} ]]; then
+    printf 'BLOCKED: NCI_PREDICT_FROM scores all folds; do not set NCI_FOLDS with it.\n' >&2
+    exit 1
+fi
 cd "$PBS_O_WORKDIR"
+if [[ -n ${NCI_PREDICT_FROM:-} && ! -f $NCI_PREDICT_FROM ]]; then
+    printf 'BLOCKED: NCI_PREDICT_FROM=%s is not a file.\n' "$NCI_PREDICT_FROM" >&2
+    exit 1
+fi
 if [[ ${PBS_NGPUS:-0} != 1 ]]; then
     printf 'BLOCKED: training requires exactly one allocated GPU.\n' >&2
     exit 1
@@ -42,9 +63,18 @@ fi
 export PYTHONDONTWRITEBYTECODE=1
 export OMP_NUM_THREADS=${PBS_NCPUS:-1}
 export MPLBACKEND=Agg
-epochs=()
+options=()
 if [[ -n ${NCI_EPOCHS:-} ]]; then
-    epochs=(--epochs "$NCI_EPOCHS")
+    options+=(--epochs "$NCI_EPOCHS")
+fi
+if [[ -n ${NCI_FOLDS:-} ]]; then
+    options+=(--folds "${NCI_FOLDS//:/,}")
+fi
+if [[ -n ${NCI_MODEL_SEED:-} ]]; then
+    options+=(--model-seed "$NCI_MODEL_SEED")
+fi
+if [[ -n ${NCI_PREDICT_FROM:-} ]]; then
+    options+=(--predict-from "$NCI_PREDICT_FROM")
 fi
 
 printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
@@ -54,6 +84,6 @@ nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
 bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
 started=$(date +%s)
 .venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device cuda \
-    --output-dir "$NCI_OUTPUT_DIR" "${epochs[@]}"
+    --output-dir "$NCI_OUTPUT_DIR" "${options[@]}"
 printf 'TRAIN_STATUS=DONE seconds=%s output=%s UTC end: %s\n' \
     "$(( $(date +%s) - started ))" "$NCI_OUTPUT_DIR" "$(date -u +%FT%TZ)"

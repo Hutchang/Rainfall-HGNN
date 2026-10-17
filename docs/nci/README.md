@@ -319,6 +319,28 @@ qsub -l walltime=HH:MM:SS -v NCI_MODEL_CONFIG=config/models/d09_round_robin_grs.
 A run never overwrites an existing output folder. Copy each folder back with
 `rsync -av YOUR_NCI_USERNAME@gadi-dm.nci.org.au:/scratch/no50/YOUR_NCI_USERNAME/COMP3888-m17-01-p23/experiments/nci/ experiments/nci/`.
 
+### One job per fold
+
+A 48-hour request waits longest and holds back the most SU while it waits. Five
+few-hour jobs per configuration start sooner and run side by side. Train each fold on its
+own, then join and score. One A100 epoch of G+R+S takes about 150 s on 2021–2022, so
+100 epochs need about 4.2 hours; book `05:00:00` for 2021–2022, and about half for one
+year of data:
+
+```console
+for f in 0 1 2 3 4; do
+  qsub -l walltime=05:00:00 -v NCI_MODEL_CONFIG=config/models/d09_round_robin_grs.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-grs-fold$f,NCI_FOLDS=$f scripts/nci/train.pbs
+done
+# once all five have ended:
+.venv/bin/python -m src.models.combine_folds experiments/nci/d09-grs-joined experiments/nci/d09-grs-fold{0,1,2,3,4}
+qsub -l walltime=01:00:00 -v NCI_MODEL_CONFIG=config/models/d09_round_robin_grs.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-grs,NCI_PREDICT_FROM=experiments/nci/d09-grs-joined/best.pt scripts/nci/train.pbs
+```
+
+Each fold job writes a `PARTIAL` report with no scores. `combine_folds` refuses a fold
+whose training was cut off, so a fold that hits its walltime must be run again. The
+scoring job predicts every method on every fold and writes the full report.
+`NCI_MODEL_SEED=<n>` repeats a run with another model seed.
+
 ### Cost and space
 
 Charges follow NCI's published rates (check them before booking): `normal` 2 SU per CPU
