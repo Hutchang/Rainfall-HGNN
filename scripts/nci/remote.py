@@ -675,52 +675,67 @@ def submit(plan, cfg, ssh, run_dir, login_check=True, root=ROOT):
         "jobs": {},
     }
     write_state(run_dir, state)
-    ssh.run(
-        cfg["transfer_host"],
-        f"mkdir -p {quote(paths['runs'])} && "
-        f"mkdir {quote(paths['run'])} && "
-        f"cat > {quote(paths['config'])}",
-        config_text.encode(),
-    )
-    ship_code(plan, cfg, ssh, paths, root)
-    ship_inputs(plan, cfg, ssh, paths, run_id)
-    code = quote(paths["code"])
-    ssh.run(
-        login,
-        f"git -C {quote(paths['repo'])} worktree add --quiet --detach "
-        f"{code} {quote(plan.revision)} && "
-        f"ln -s {quote(paths['repo'] + '/.venv', paths['code'] + '/.venv')}",
-    )
-    ready = ssh.run(
-        login,
-        f"cd {code} && [[ -x .venv/bin/python ]] && "
-        ".venv/bin/python -B scripts/nci/check_environment.py "
-        ">/dev/null 2>&1 && echo ready || echo prepare",
-    ).strip()
-    storage = storage_directive(paths["run"], paths["inputs"])
-    if ready == "ready" and login_check:
+    try:
+        ssh.run(
+            cfg["transfer_host"],
+            f"mkdir -p {quote(paths['runs'])} && "
+            f"mkdir {quote(paths['run'])} && "
+            f"cat > {quote(paths['config'])}",
+            config_text.encode(),
+        )
+        ship_code(plan, cfg, ssh, paths, root)
+        ship_inputs(plan, cfg, ssh, paths, run_id)
+        code = quote(paths["code"])
         ssh.run(
             login,
-            f"cd {code} && .venv/bin/python -B -m src.models.run "
-            f"{quote(paths['config'])} --check-inputs --device cpu",
+            f"git -C {quote(paths['repo'])} worktree add --quiet --detach "
+            f"{code} {quote(plan.revision)} && "
+            f"ln -s {quote(paths['repo'] + '/.venv', paths['code'] + '/.venv')}",
         )
-    if ready != "ready":
-        state["jobs"]["prepare"] = ssh.run(
+        ready = ssh.run(
             login,
-            f"git -C {quote(paths['repo'])} checkout --quiet --detach "
-            f"{quote(plan.revision)} && cd {quote(paths['repo'])} && "
-            f"qsub -o {quote(paths['prepare_log'])} "
-            "scripts/nci/prepare_environment.pbs",
+            f"cd {code} && [[ -x .venv/bin/python ]] && "
+            ".venv/bin/python -B scripts/nci/check_environment.py "
+            ">/dev/null 2>&1 && echo ready || echo prepare",
         ).strip()
-    command = qsub_command(
-        cfg,
-        "scripts/nci/train.pbs",
-        {"NCI_MODEL_CONFIG": paths["config"], "NCI_OUTPUT_DIR": paths["output"]},
-        storage,
-        paths["log"],
-        state["jobs"].get("prepare"),
-    )
-    state["jobs"]["train"] = ssh.run(login, f"cd {code} && {quote(*command)}").strip()
+        storage = storage_directive(paths["run"], paths["inputs"])
+        if ready == "ready" and login_check:
+            ssh.run(
+                login,
+                f"cd {code} && .venv/bin/python -B -m src.models.run "
+                f"{quote(paths['config'])} --check-inputs --device cpu",
+            )
+        if ready != "ready":
+            state["jobs"]["prepare"] = ssh.run(
+                login,
+                f"git -C {quote(paths['repo'])} checkout --quiet --detach "
+                f"{quote(plan.revision)} && cd {quote(paths['repo'])} && "
+                f"qsub -o {quote(paths['prepare_log'])} "
+                "scripts/nci/prepare_environment.pbs",
+            ).strip()
+            write_state(run_dir, state)  # on record before the next step can fail
+        command = qsub_command(
+            cfg,
+            "scripts/nci/train.pbs",
+            {"NCI_MODEL_CONFIG": paths["config"], "NCI_OUTPUT_DIR": paths["output"]},
+            storage,
+            paths["log"],
+            state["jobs"].get("prepare"),
+        )
+        state["jobs"]["train"] = ssh.run(
+            login, f"cd {code} && {quote(*command)}"
+        ).strip()
+    except BaseException as error:
+        state.update(status="SUBMIT_FAILED", error=str(error) or type(error).__name__)
+        write_state(run_dir, state)
+        prepare = state["jobs"].get("prepare")
+        if prepare and isinstance(error, BlockedError):
+            raise BlockedError(
+                f"{error}\nThe environment job {prepare} was already submitted and "
+                "stays on Gadi; the next run reuses what it builds. Cancel it with "
+                f"qdel {prepare} if you do not want it."
+            ) from error
+        raise
     state["status"] = "SUBMITTED"
     write_state(run_dir, state)
     return state

@@ -388,6 +388,25 @@ def test_missing_environment_is_prepared_before_training(repo):
     assert not any("--check-inputs" in call for call in ssh.calls)
 
 
+def test_a_refused_training_job_leaves_the_environment_job_on_record(repo, capsys):
+    def refuse(command):
+        raise BlockedError("qsub: Job violates queue and/or server resource limits")
+
+    ssh = gadi(check="prepare\n", qsub=refuse)
+    code = remote.main(
+        ["submit", "config/model.yaml", "--label", "t", "--yes"],
+        ssh_factory=lambda cfg: ssh,
+        root=repo,
+    )
+    assert code == 1
+    (run_dir,) = (repo / "experiments/nci").iterdir()
+    state = json.loads((run_dir / "state.json").read_text())
+    assert state["status"] == "SUBMIT_FAILED"
+    assert state["jobs"] == {"prepare": "100.gadi-pbs"}
+    assert "resource limits" in state["error"]
+    assert "qdel 100.gadi-pbs" in capsys.readouterr().err
+
+
 def results_tar(report="# Model run\n\n| fold | rmse |\n"):
     buffer = io.BytesIO()
     remote.write_tar(

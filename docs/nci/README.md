@@ -242,6 +242,10 @@ the whole walltime) is more than the SU balance. Queue, resources and walltime a
 `status <run folder>` shows the job states and `fetch <run folder>` resumes the wait and
 download. Ctrl-C while waiting only stops the local wait; the job keeps running.
 
+Each job id is written to `state.json` as soon as `qsub` returns it. If a later step
+fails, `state.json` says `SUBMIT_FAILED` with the error, and any job already submitted
+stays listed there, so nothing on Gadi goes unrecorded.
+
 **One-time setup.** The script never handles passwords. Add your NCI public key to
 Gadi's `~/.ssh/authorized_keys` (e.g. `ssh-copy-id`), and put your username in
 `~/.ssh/config`:
