@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `94c6e74` · **Sprint:** 2 · **Updated:** 2026-10-11
+**Latest commit:** `1ec93c6` · **Sprint:** 2 · **Updated:** 2026-10-17
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
@@ -65,6 +65,15 @@ and prints one line per epoch. The Gadi experiment list on the Experiments tab i
 disabled placeholder; it does not connect to NCI. The
 [workbench guide](experiments/README.md) covers its use.
 
+Component 06 training can be sent to Gadi from a clean local checkout with one command,
+`scripts/nci/remote.py` (D14, section 5 of the [Gadi guide](nci/README.md)). It sends the
+committed revision as a git bundle and the inputs git does not carry, checks quota and SU
+balance first, submits `scripts/nci/train.pbs`, and brings the run folder back with a
+verdict in `state.json`. Every run shares one environment on Gadi, so a run needing a
+different `uv.lock` is refused while any of the script's jobs is unfinished. It is tested
+against a stand-in for Gadi only: nothing has run through it on Gadi yet, and the guide
+lists its Gadi-side assumptions as TO VALIDATE.
+
 No real Sydney build output exists in this checkout — `database/raw/`,
 `database/standard/` and `database/graphs/` are gitignored and absent. Everything
 verified below runs against committed offline samples and synthetic fixtures.
@@ -126,34 +135,38 @@ outputs. See [LEGACY_CODE.md](LEGACY_CODE.md).
 
 ## Verification
 
-Run on 2026-10-11 against the code at `94c6e74`, in a clean checkout, Windows 11,
-Python 3.14.2, in the environment `uv sync --locked` builds (the D08 and D09.2 merges
-leave `uv.lock` unchanged):
+Run on 2026-10-17 against the code at `1ec93c6`, in a clean checkout, Windows 11,
+Python 3.14.2, in the environment `uv sync --locked` builds (the D14 merge leaves
+`uv.lock` unchanged):
 
 ```console
 uv run --locked python -m pytest tests -q -rx --cov=src --cov-report=term-missing
 uv run --locked ruff check .
 ```
 
-- `tests/`: **251 passed, 30 skipped, 3 failed**. The skips are the live-API acceptance
+- `tests/`: **289 passed, 30 skipped, 3 failed**. The skips are the live-API acceptance
   checks (`BOM_NETWORK=1`, `NCI_NETWORK=1`) and the legacy-data tests, which skip in a
   checkout without `database/sydney_gauge_legacy/`. The three failures are all in
-  `tests/test_experiment_tui.py` and fail the same way on `main` before these merges on
+  `tests/test_experiment_tui.py` and fail the same way on `main` before this merge on
   this Windows machine; the earlier macOS run of `main` passed them.
-- With `database/sydney_gauge_legacy/` present, the same code gives **271 passed,
+- With `database/sydney_gauge_legacy/` present, the same code gives **309 passed,
   3 skipped, 7 xfailed, 3 failed**: the same three failures, and the seven expected
-  failures that document the inherited export's defects, unchanged by the merges.
-- Repository-wide Ruff: **665** findings (ISS-17), one fewer than `90b91ba` measured the
-  same way; the merges add none.
+  failures that document the inherited export's defects, unchanged by the merge.
+- Repository-wide Ruff: **683** findings (ISS-17) on this checkout, the same as `main`
+  before the merge (`ace34b8`) measured the same way; the merge adds none.
 - Coverage, with `--cov=src`: **52 %** over all of `src/`, which includes the inherited
-  review-only code. Modules the merges change: `src/models/run.py` 80 %, `scaling.py`
-  89 %, `baselines.py` 86 %, `modalities.py` 97 %, `models.py` 36 % (the inherited
+  review-only code. The D14 merge changes no module under `src/`, so the figures
+  measured at `94c6e74` stand: `src/models/run.py` 80 %, `scaling.py` 89 %,
+  `baselines.py` 86 %, `modalities.py` 97 %, `models.py` 36 % (the inherited
   architectures count towards it); `src/study/split.py` 93 %, `summary.py` 100 %,
   `schema.py` 100 %; `src/graph/builder_new.py` 92 %, `gaugegraphnew.py` 84 %,
   `edge_map.py` 97 %. `run.py` is below its 90 % floor and `split.py` meets its own. The
-  floors are not enforced yet (ISS-33).
+  floors are not enforced yet (ISS-33). `scripts/nci/remote.py`, which the merge adds
+  outside the measured packages, is 89 % covered by its own tests.
 - PyTorch and PyG emit Python 3.14 deprecation warnings. PyG also warns that radar and
   satellite nodes receive no updates; that is expected while edges run sensor-to-gauge
   only and the grid edges are missing (ISS-38).
 - `scripts/nci/test_guards.py` is excluded from `tests/` and fails on a Windows checkout
-  for a line-ending reason (ISS-15). It passes on Linux and macOS.
+  for a line-ending reason (ISS-15). Its original eight tests pass on Linux and macOS; the
+  two the D14 merge adds for `train.pbs` have not been run there yet. Run directly in Git
+  Bash, `train.pbs` refuses each case those two tests cover.
