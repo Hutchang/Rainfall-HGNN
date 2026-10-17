@@ -66,7 +66,7 @@ disabled placeholder; it does not connect to NCI. The
 [workbench guide](experiments/README.md) covers its use.
 
 Component 06 training can be sent to Gadi from a clean local checkout with one command,
-`scripts/nci/remote.py` (D14, section 5 of the [Gadi guide](nci/README.md)). It sends the
+`scripts/nci/remote.py` (D14; [automated runs guide](nci/AUTOMATED_RUNS.md)). It sends the
 committed revision as a git bundle and the inputs git does not carry, checks quota and SU
 balance first, submits `scripts/nci/train.pbs`, and brings the run folder back with a
 verdict in `state.json`. Every run shares one environment on Gadi, so a run needing a
