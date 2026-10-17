@@ -23,7 +23,7 @@ I dug through both the splitter and the graph builder. Your instinct is right, a
 
 #### Where the leakage actually lives
 
-Two things to separate first. The active splitter is [src/study/split.py](../src/study/split.py), not [src/sampling/main.py](../src/sampling/main.py) (that's the legacy one-station-per-cluster version). The active one isn't leave-one-out at all — [create_test_folds](../src/study/split.py#L162-L185) round-robins stations *within* each cluster across the 5 folds:
+Two things to separate first. The active splitter is [src/study/split.py](../../src/study/split.py), not [src/sampling/main.py](../../src/sampling/main.py) (that's the legacy one-station-per-cluster version). The active one isn't leave-one-out at all — [create_test_folds](../../src/study/split.py#L162-L185) round-robins stations *within* each cluster across the 5 folds:
 
 ```python
 for cluster in sorted(cluster_assignments):
@@ -35,7 +35,7 @@ for cluster in sorted(cluster_assignments):
 
 So each cluster is deliberately sprayed evenly across all folds. For any test station, ~80% of its own cluster-mates — i.e. its geographically nearest gauges — are sitting in training. That's the exact pathology you described, applied to every test station rather than occasionally.
 
-And the graph path makes it bite. The test graph is built over **all** stations ([gaugegraphnew.py:122](../src/graph/gaugegraphnew.py#L122), `mask = np.ones(...)`), k=5 kNN. At eval the test node's own rainfall is zeroed ([error_analysis.py:927](../src/visualization/error_analysis.py#L927)) — good, that part is correct and inductive — so the prediction is a learned function of exactly the 5 nearest gauges' live observations. If one of those sits 300 m away, the network only has to learn "copy neighbour 1."
+And the graph path makes it bite. The test graph is built over **all** stations ([gaugegraphnew.py:122](../../src/graph/gaugegraphnew.py#L122), `mask = np.ones(...)`), k=5 kNN. At eval the test node's own rainfall is zeroed ([error_analysis.py:927](../../src/visualization/error_analysis.py#L927)) — good, that part is correct and inductive — so the prediction is a learned function of exactly the 5 nearest gauges' live observations. If one of those sits 300 m away, the network only has to learn "copy neighbour 1."
 
 Worth being precise about the failure mode: this isn't overfitting. The model generalises fine to the task it's being scored on. The problem is that the task is "interpolate across 300 m," and you're reporting it as skill at rainfall field reconstruction.
 
@@ -49,7 +49,7 @@ There's a second problem with any rule of the form "only test stations that are 
 
 Invert the loop. Assign **whole clusters to folds** instead of stations to folds — with 10 clusters and 5 folds, two clusters per fold. This is standard spatial block CV, and it's close to a drop-in:
 
-- Every station still appears in test exactly once, so `validate_fold_roles` and its `train | validation | test == eligible_ids` invariant ([split.py:208](../src/study/split.py#L208)) hold unchanged.
+- Every station still appears in test exactly once, so `validate_fold_roles` and its `train | validation | test == eligible_ids` invariant ([split.py:208](../../src/study/split.py#L208)) hold unchanged.
 - Held-out stations are contiguous, so a test station's neighbours are held out *with* it. You get the buffer effect for free, without a radius parameter.
 - Downstream (`sydney_5fold.json`, D06) sees the same schema.
 
@@ -61,7 +61,7 @@ The alternative from the literature is a **buffered holdout**: keep the current 
 
 The cheap diagnostic that decides whether this is worth your time: the nearest-neighbour distance distribution across the Sydney gauges. If the 10th percentile is 8 km, this is theoretical. If there's a knot of gauges under 1 km, it's inflating your headline number right now.
 
-I couldn't run it — `database/standard/stations.csv` isn't in the repo, only a 3-row fixture at [tests/data/study/stations.csv](../tests/data/study/stations.csv). If you point me at the real file I'll compute it.
+I couldn't run it — `database/standard/stations.csv` isn't in the repo, only a 3-row fixture at [tests/data/study/stations.csv](../../tests/data/study/stations.csv). If you point me at the real file I'll compute it.
 
 The stronger version, if you have the compute: evaluate at r = 0, 1, 2, 5 km buffers and plot test RMSE against r. That turns "our RMSE is X" into "our RMSE is X at zero separation and Y at 5 km," which is a much more defensible claim and is a methods result in its own right.
 
@@ -79,7 +79,7 @@ Yes, it makes sense, and the "characteristics, not geography" instinct is the be
 
 #### The compute premise doesn't hold here
 
-Your graph is tiny and your time axis is enormous. From [config/canonical/](../config/canonical/): 152 Sydney stations, k=5 neighbours → ~750 edges. From [config/ingestion/sydney.yaml](../config/ingestion/sydney.yaml): 2021-01-01 to 2022-12-31 hourly → ~17,520 timesteps. And [HeterogeneousWeatherGraphDatasetInductive](../src/graph/gaugegraphnew.py#L426-L465) yields **one graph per timestep**:
+Your graph is tiny and your time axis is enormous. From [config/canonical/](../../config/canonical/): 152 Sydney stations, k=5 neighbours → ~750 edges. From [config/ingestion/sydney.yaml](../../config/ingestion/sydney.yaml): 2021-01-01 to 2022-12-31 hourly → ~17,520 timesteps. And [HeterogeneousWeatherGraphDatasetInductive](../../src/graph/gaugegraphnew.py#L426-L465) yields **one graph per timestep**:
 
 ```python
 def __len__(self):  return self.num_timesteps
@@ -91,7 +91,7 @@ So an epoch is 17,520 forward/backward passes over a 150-node graph. The cost is
 
 Now price your proposal against that. Splitting into R regions leaves total node-work per epoch unchanged (the regions sum to N) but multiplies optimiser steps by R, each step R× smaller. At N=150 a step is dominated by Python and kernel-launch overhead, not FLOPs. **R separate models would run meaningfully slower in wall-clock, not faster.**
 
-The actual win is sitting right there and has nothing to do with clustering: `edge_index` is identical at every timestep ([build_graph](../src/graph/gaugegraphnew.py#L111) reads only lat/lon), so you can batch over time instead of looping one timestep at a time. That's potentially two to three orders of magnitude, and it's methodologically free.
+The actual win is sitting right there and has nothing to do with clustering: `edge_index` is identical at every timestep ([build_graph](../../src/graph/gaugegraphnew.py#L111) reads only lat/lon), so you can batch over time instead of looping one timestep at a time. That's potentially two to three orders of magnitude, and it's methodologically free.
 
 Worth measuring before building anything: profile one epoch and confirm the split between per-step overhead and actual convolution.
 
@@ -125,18 +125,18 @@ It resolves a contradiction between this idea and Part 1. If each region has its
 Three other concrete advantages over the current k-means:
 
 - **Picking k.** Merge heights show you the natural separation scale instead of guessing 8 or 10. Cut at a height tied to something physical — rainfall decorrelation length.
-- **Determinism.** No seed sensitivity. [assign_spatial_clusters](../src/study/split.py#L126-L160) currently has to sort station IDs specifically because k-means++ samples by index; that whole class of fragility disappears.
+- **Determinism.** No seed sensitivity. [assign_spatial_clusters](../../src/study/split.py#L126-L160) currently has to sort station IDs specifically because k-means++ samples by index; that whole class of fragility disappears.
 - **Contiguity on demand.** `AgglomerativeClustering(connectivity=<kNN graph>)` guarantees spatially contiguous clusters, which k-means does not. That's what blocking and partitioning both need. Use Ward linkage — single linkage will chain along the coastline and hand you one 3,000 km "cluster."
 
 #### If you do go regional, the seam problem is real
 
-Nearest-centroid routing is trivial to implement, but it makes predictions discontinuous across boundaries. Since you're producing a gridded field ([grid_prediction.py](../src/visualization/grid_prediction.py)), those seams show up as visible artifacts in the output raster and anyone looking at the map will spot them. The fix is halo overlap — each region's graph includes stations r km past its boundary — plus distance-weighted blending near boundaries. Standard domain decomposition, but real complexity, and it eats the compute saving you were chasing. A single global model has no seams by construction.
+Nearest-centroid routing is trivial to implement, but it makes predictions discontinuous across boundaries. Since you're producing a gridded field ([grid_prediction.py](../../src/visualization/grid_prediction.py)), those seams show up as visible artifacts in the output raster and anyone looking at the map will spot them. The fix is halo overlap — each region's graph includes stations r km past its boundary — plus distance-weighted blending near boundaries. Standard domain decomposition, but real complexity, and it eats the compute saving you were chasing. A single global model has no seams by construction.
 
 #### What I'd actually do
 
 1. **Batch over time.** Biggest win available, zero methodological risk, doesn't touch the split contract.
 2. **Add static/climate features and a regime-cluster embedding to node features.** Cheap, likely moves your numbers, and directly tests whether regional specialisation is needed at all.
-3. **Run the decisive experiment when you get a second region.** Global model scored on region A, versus region-A-only model scored on region A. That single comparison gates the entire architecture decision — and either outcome is a genuine result. [config/ingestion/](../config/ingestion/) is already one-file-per-region, so a second region is a config file, not a refactor. That's the cheapest way to make this question answerable.
+3. **Run the decisive experiment when you get a second region.** Global model scored on region A, versus region-A-only model scored on region A. That single comparison gates the entire architecture decision — and either outcome is a genuine result. [config/ingestion/](../../config/ingestion/) is already one-file-per-region, so a second region is a config file, not a refactor. That's the cheapest way to make this question answerable.
 4. **Separate weights only if 3 says so.**
 
 One scope flag, given where your deadline is: partitioning-by-region touches components 03, 04, and 06 — every contract in the [requirements table](requirements/README.md#L32-L40) — and the committed pipeline is Sydney-only, 152 stations, 2021–2022. As a written-up extension with the reasoning above, this is strong. As something to build now, the compute motivation doesn't hold at your current N and the data to justify the modelling motivation doesn't exist yet.

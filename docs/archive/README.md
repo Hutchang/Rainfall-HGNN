@@ -15,6 +15,9 @@ requirements and should not be assigned directly to a component owner.
   [HANDOFF.md](baseline-reconciliation/HANDOFF.md) preserve the supporting investigation.
 - [run_niramay_smoketest_native.log](baseline-reconciliation/run_niramay_smoketest_native.log)
   is the corresponding historical smoke-run record.
+- [spatial-cv-and-regional-partitioning.md](spatial-cv-and-regional-partitioning.md) is the
+  12 September design discussion of spatial leakage in the k-fold split and of one model
+  per region. Nothing in it was implemented; ISS-10 tracks the split question.
 
 [sprint1/](sprint1/) holds the closed sprint: the five component contracts that Sprint 1
 was built to, [HANDOFF_HISTORY.md](sprint1/HANDOFF_HISTORY.md) recording its state and

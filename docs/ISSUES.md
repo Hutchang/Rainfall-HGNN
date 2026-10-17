@@ -360,9 +360,9 @@ and records the two numbers in each run's config.
 **Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
 
 A design discussion worked through where spatial leakage actually lives in the current
-k-fold split and proposed a fix, but the decision was never taken and the document was
-never committed — `docs/spatial-cv-and-regional-partitioning.md` has never existed on any
-ref. The reasoning therefore exists only in whoever's local notes.
+k-fold split and proposed a fix, but the decision was never taken. The discussion, from
+12 September, is archived at
+[archive/spatial-cv-and-regional-partitioning.md](archive/spatial-cv-and-regional-partitioning.md).
 
 What the code does today, checked by hand: `src/study/split.py:173-178` groups stations
 into 10 clusters by location, then hands each cluster's stations out one at a time to
@@ -372,8 +372,7 @@ clusters, as the paper's sec 4.2 requires.
 
 **Closes when:** D08.1 changes `create_test_folds`, the new split is
 released (subtask D08.1), and D08.7's measurement shows that hidden gauges no longer have
-training gauges next door (D08.7 attaches the figure and the table). Whoever holds the
-original design note should still commit it to `docs/archive/`.
+training gauges next door (D08.7 attaches the figure and the table).
 
 <a id="iss-34"></a>
 
