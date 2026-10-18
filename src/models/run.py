@@ -6,6 +6,7 @@ import json
 import math
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -27,6 +28,12 @@ from src.models.evaluate import write_report
 from src.models.graphs import load_graph, validate_graph
 from src.models.modalities import validate_layer_selection
 from src.models.scaling import apply_rainfall_scaling, rainfall_scaling
+from src.models.scope import (
+    measure_sensor_layers,
+    measure_tables,
+    record_graph_nodes,
+    scope_lines,
+)
 from src.models.trainer import model_spec, predict_fold, restore_model, train_fold
 
 INPUT_KEYS = ("gauge_file", "stations_file", "split_file", "seeds_file")
@@ -281,6 +288,30 @@ def provenance(settings):
     }
 
 
+def copy_upstream_reports(directory, settings):
+    """Copy the reports that state the configured period, region, split and graph
+    settings into the run's inputs/ folder, so the folder still describes its data
+    once it is copied away from the upstream tree (ISS-39)."""
+    standard = Path(settings["gauge_file"]).parent
+    sources = {
+        "standard_report.md": standard / "report.md",
+        "split_summary.md": Path(settings["split_file"]).with_suffix(".md"),
+    }
+    if settings["method"] == "hgnn":
+        sources["graph_report.md"] = Path(settings["graphs_dir"]) / "report.md"
+        if set(settings.get("input_layers", ["raingauge"])) != {"raingauge"}:
+            sources["grid_report.md"] = standard / "grid_report.md"
+    copied = {}
+    for name, source in sources.items():
+        if not source.is_file():
+            copied[name] = {"source": str(source)}
+            continue
+        (directory / "inputs").mkdir(exist_ok=True)
+        shutil.copyfile(source, directory / "inputs" / name)
+        copied[name] = {"source": str(source.resolve()), "sha256": file_digest(source)}
+    settings["data_scope"]["upstream_reports"] = copied
+
+
 def run(settings, output_dir=None, predict_from=None):
     settings = dict(settings)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
@@ -295,6 +326,8 @@ def run(settings, output_dir=None, predict_from=None):
     history, checkpoints = [], {}
     try:
         gauge, split, stations = read_inputs(settings)
+        settings["data_scope"] = measure_tables(gauge, stations, split)
+        copy_upstream_reports(directory, settings)
         if settings["method"] == "hgnn":
             torch.set_num_threads(settings["cpu_threads"])
             if settings["device"] == "cuda" and settings["deterministic"]:
@@ -379,7 +412,9 @@ def run(settings, output_dir=None, predict_from=None):
                 if subset is not None and index not in subset:
                     continue
                 graphs = read_fold(settings, fold, gauge)
-                # Records this fold's input scaling beside the settings it ran with.
+                record_graph_nodes(settings["data_scope"], index, graphs)
+                # Records this fold's input scaling and node counts beside the
+                # settings it ran with.
                 write_config(directory, settings)
 
                 def save_progress(row, best, index=index):
@@ -438,6 +473,10 @@ def run(settings, output_dir=None, predict_from=None):
                     validate="one_to_one",
                 )
                 tables.append(predicted)
+            measure_sensor_layers(
+                settings["data_scope"], settings["gauge_file"], file_digest
+            )
+            write_config(directory, settings)
             if subset is not None:
                 # Training only: src.models.combine_folds joins the fold runs and
                 # --predict-from scores them, so every method still meets the full
@@ -446,7 +485,9 @@ def run(settings, output_dir=None, predict_from=None):
                     "# Model run\n\nStatus: PARTIAL\n\n"
                     f"Trained folds {sorted(subset)} only; no predictions or scores. "
                     "Join the fold runs with src.models.combine_folds, then score the "
-                    "result with --predict-from.\n"
+                    "result with --predict-from.\n\n"
+                    + "\n".join(scope_lines(settings["data_scope"]))
+                    + "\n"
                 )
                 return directory
             hgnn = (

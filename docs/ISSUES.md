@@ -61,6 +61,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-36](#iss-36) | Radar has no validity flag, so an hour with one missing radar cell is dropped | Material | _unassigned_ | Open |
 | [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Closed |
 | [ISS-38](#iss-38) | D09.2 within-grid topology and coincident-node weighting remain | Material | D09 | Closed |
+| [ISS-39](#iss-39) | A run folder does not say which period, region or nodes it covers | Material | Component 06 | Closed |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
 | [ISS-23](#iss-23) | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
@@ -607,6 +608,34 @@ the same position now get the strongest weight (1e6 before normalizing) in both 
 function and `RadarGraphNew`. `RadarGraphNew` itself is no longer on the production path;
 when two of its cells share a position it can still link a cell to itself, because it
 assumes a cell's first neighbour is the cell.
+
+<a id="iss-39"></a>
+
+### ISS-39 — A run folder does not say which period, region or nodes it covers
+**Severity:** Material · **Owner:** Component 06 · **Status:** Closed 2026-10-19
+
+A Component 06 run recorded its training settings and the path and hash of every input,
+but nothing about what those inputs held. The G, G+R and G+R+S round-robin runs copied
+off Gadi could not state their period (2021-01-01 to 2022-12-31), the gauge region
+(lat −34.3 to −33.4, lon 150.4 to 151.4) or their node counts (127 gauges, 857 radar,
+4,712 satellite). Those lived only in `config/ingestion/sydney.yaml`,
+`config/canonical/grids.yaml` and the graph build's `report.md`, none of which reach
+the run folder. Runs launched by PBS call `src.models.run` directly, so no experiment
+folder with config copies exists for them either.
+
+**Closes when:** every run folder states the hours, gauge positions and per-layer node
+counts it was trained and scored on, measured from its own inputs.
+
+**Closed 2026-10-19** by `fix(06): record each run's period, gauge positions and node
+counts (ISS-39)`. `src/models/scope.py` measures the first and last hour and the hour
+count of the gauge table, the number and latitude/longitude range of the split's gauges,
+and every fold's node count per layer per graph. Radar and satellite extents come from
+Component 02's `<layer>_nodes.csv`, and only when its node count matches the graphs;
+otherwise the extent is UNKNOWN with the reason. The result is `data_scope` in
+`config.yaml` and a "Data scope" section in `report.md`, partial fold runs included. The
+canonical, split, graph and grid reports are copied to the run's `inputs/` folder, so
+the configured period and region travel with it; a missing one is named. The configured
+period and region are still not known to Component 06 itself (ISS-32).
 
 <a id="iss-13"></a>
 
