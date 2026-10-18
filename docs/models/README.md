@@ -85,14 +85,24 @@ Existing directories are never overwritten.
 
 - `config.yaml`: effective settings, seed, package/CUDA versions, code revision,
   source hashes and input hashes. Uncommitted local code is identified explicitly.
+  `data_scope` records what the inputs held, measured by the run (ISS-39). It gives the
+  first and last hour and hour count, the split's gauge count and latitude/longitude
+  range, each fold's node count per layer per graph, and the radar and satellite extents
+  from `<layer>_nodes.csv` beside the gauge table (UNKNOWN, with the reason, when that
+  file is missing or its node count differs from the graphs).
+- `inputs/`: copies of the canonical, split, graph and grid reports the run read, which
+  state the configured period, region and graph settings. A report that does not exist
+  is named under `data_scope.upstream_reports` rather than skipped.
 - `history.csv`: fold, epoch, training loss, validation loss, best validation loss,
   accumulated deteriorations, remaining patience and early-stopping status. The same
   progress is printed once per epoch for live runners.
 - `best.pt`: each fold's lowest-validation-loss weights and model construction
   settings. Intermediate checkpoints preserve the completed folds.
 - `predictions.csv`: all requested methods, on exactly the same observed test rows.
-- `report.md`: overall/per-fold RMSE, MAE and Pearson correlation; explicit assumptions
-  and missing-observation counts. Undefined correlations are reported as undefined.
+- `report.md`: overall/per-fold RMSE, MAE and Pearson correlation; a "Data scope"
+  section with the period, gauge and sensor extents and the node-count table; explicit
+  assumptions and missing-observation counts. Undefined correlations are reported as
+  undefined. A `--folds` run's PARTIAL report carries the same "Data scope" section.
 
 A caught failure leaves the run directory and error report in place. A scheduler kill
 may interrupt before the failure report can be written; check PBS exit status and logs

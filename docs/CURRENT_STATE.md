@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `a2a57db` · **Sprint:** 2 · **Updated:** 2026-10-18
+**Latest commit:** `76f0432` · **Sprint:** 2 · **Updated:** 2026-10-19
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
@@ -105,7 +105,7 @@ each deliverable's document. State per deliverable:
 
 | Deliverable | Name | State |
 |---|---|---|
-| D07 | Experiment runner | Not started. The terminal app above already gives each experiment its own folder, config copies and results; D07's runner, provenance record and registry are still to come. Today only Component 06 writes one folder per run with the fingerprints of its inputs; every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
+| D07 | Experiment runner | Not started. The terminal app above already gives each experiment its own folder, config copies and results; D07's runner, provenance record and registry are still to come. Today only Component 06 writes one folder per run with the fingerprints of its inputs, and the period, gauge positions and node counts it measured from them, with copies of the upstream reports (ISS-39); every component before it writes to a fixed path, and 02 overwrites silently (ISS-28, ISS-29, ISS-32) |
 | D08 | Sydney gauge-only baseline | D08.1 and D08.2 merged, closing the code side of D08's three gaps. Split: Sydney uses `config/splits/sydney_5fold_round_robin.yaml` (DEC-03), which deals each location cluster's gauges one at a time across the folds as the first author's code does; its released `.json` over the same 127 stations is committed. `sydney_5fold_blocked.yaml` hides two whole clusters per fold (`fold_assignment: whole_clusters`) and stays as the comparison; its released `.json` over 127 real stations is committed. `src/study/summary.py` writes the split summary and fold map, and `docs/study/README.md` covers Component 03. Every method reads training and validation gauges at test time (ISS-07). `input_rainfall_scale: zscore_train` scales the rainfall input on each fold's training graph and records the numbers in the run's config (ISS-09). `config/graphs/gauge_{blocked,round_robin}.yaml` and `config/models/hgnn_{blocked,round_robin}.yaml` run each split end to end. Not yet done: D08.3's table, D08.5's correlation plot, D08.6's distance tool and D08.7's before/after measurement of the two splits |
 | D09 | Radar fusion | D09.2 done. Each gauge links to its nine nearest sensor nodes in all three graph configs; those edges run sensor-to-gauge only unless `reverse_cross_support: true`; and each radar or satellite cell links to its immediate grid neighbours, up to eight (`grid_edges`, on by default). Synthetic graph, training and checkpoint-replay tests pass. Component 04 drops each hour that has no radar, or a radar cell without a value, lists it in `dropped_hours.csv`, and Component 06 scores every method without it (DEC-01); `timeline_layers: [radar, satellite]` gives a gauge-only run the same hours. D09.4 and D09.5 need D08.3's gauge-only table and D13's tables built from the real archive (ISS-04). `scripts/nci/` now builds the grid tables, the G, G+R and G+R+S graph sets and the training runs on Gadi, with `config/{graphs,models}/d09_round_robin_*.yaml` ([NCI guide](nci/README.md), section 6). Training can run one fold per job (`NCI_FOLDS`), the folds are joined with `src.models.combine_folds` and scored with `NCI_PREDICT_FROM`; one A100 epoch of G+R+S takes about 150 s. None of these scripts has run on Gadi yet; the CPU runs above used the earlier Gadi-only code. No real-data fusion result is claimed |
 | D10 | Australia-wide | Not started, and deliberately last: it only means something once the Sydney baseline is trustworthy. Nobody has measured the national station count yet. Reads D08.6's distance tool per region |
@@ -171,8 +171,8 @@ uv run --locked ruff check .
   and rule by rule, no file has more findings than it has on `main`,
   `feature/gadi-pipeline` or `feature/gadi-sydney-runs`.
 - Coverage, with `--cov=src`: **53 %** over all of `src/`, which includes the inherited
-  review-only code. Modules the integration touches: `src/models/run.py` 81 % (below its
-  90 % floor, as before), `combine_folds.py` 93 %, `modalities.py` 97 %;
+  review-only code. Modules the integration touches: `src/models/run.py` 82 % (below its
+  90 % floor, as before), `scope.py` 100 % (ISS-39), `combine_folds.py` 93 %, `modalities.py` 97 %;
   `src/canonical/config.py` 82 %, `gauge/build.py` 90 % (at `a2a57db`), `grids.py` 93 %,
   `grid_tables.py` 91 %, `satellite_archive.py` 96 %; `src/graph/builder_new.py` 92 %,
   `radargraphnew.py` 97 %, `gaugegraphnew.py` 85 %. The floors are not enforced yet

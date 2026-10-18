@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .contracts import KEY_COLUMNS, validate_prediction_table
+from .scope import scope_lines
 
 
 def score_predictions(df):
@@ -73,6 +74,8 @@ def write_report(path, df, settings, notes=()):
         lines.append(
             f"| {row.method} | {row.fold} | {row.n} | {row.rmse_mm:.6g} | {row.mae_mm:.6g} | {correlation} |"
         )
+    if settings.get("data_scope"):
+        lines += ["", *scope_lines(settings["data_scope"])]
     lines += [
         "",
         "## Settings",
