@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# scripts/nci/train.pbs on one V100 of the gpuvolta queue, with .venv-volta (torch built
+# for CUDA 12.6; see scripts/nci/prepare_volta_environment.pbs). Same variables; one fold
+# per job takes about 4-5 hours for G+R:
+#   qsub -v NCI_MODEL_CONFIG=<config>,NCI_OUTPUT_DIR=<dir>,NCI_FOLDS=0 scripts/nci/train_volta.pbs
+#PBS -P no50
+#PBS -q gpuvolta
+#PBS -N rainflow-train-volta
+#PBS -l ncpus=12
+#PBS -l ngpus=1
+#PBS -l mem=90GB
+#PBS -l jobfs=10GB
+#PBS -l walltime=06:00:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+cd "${PBS_O_WORKDIR:?submit this script through PBS from the repository root}"
+NCI_VENV=.venv-volta exec bash scripts/nci/train.pbs

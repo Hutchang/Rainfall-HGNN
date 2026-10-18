@@ -9,7 +9,9 @@
 #   python -m src.models.combine_folds <joined> <fold run> ... and score all methods with
 #   NCI_PREDICT_FROM=<joined>/best.pt. NCI_MODEL_SEED=<n> replaces seeds_file's model seed.
 # NCI_DEVICE=cpu trains on CPU instead; scripts/nci/train_cpu.pbs requests a CPU node
-# and sets it, for when the dgxa100 queue is backed up.
+# and sets it, for when the dgxa100 queue is backed up. NCI_VENV=.venv-volta uses the
+# V100 environment (scripts/nci/prepare_volta_environment.pbs); scripts/nci/train_volta.pbs
+# requests a gpuvolta GPU and sets it.
 #PBS -P no50
 #PBS -q dgxa100
 #PBS -N rainflow-train
@@ -87,14 +89,28 @@ fi
 printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
 git rev-parse HEAD
 git status --short
+venv=${NCI_VENV:-.venv}
+if [[ ! -x $venv/bin/python ]]; then
+    printf 'BLOCKED: %s/bin/python is missing.\n' "$venv" >&2
+    exit 1
+fi
 if [[ $device == cuda ]]; then
     nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
-    bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+fi
+if [[ $venv == .venv ]]; then
+    if [[ $device == cuda ]]; then
+        bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+    else
+        bash scripts/nci/preflight.sh "$NCI_MODEL_CONFIG"
+    fi
 else
-    bash scripts/nci/preflight.sh "$NCI_MODEL_CONFIG"
+    # Another environment differs from uv.lock on purpose (e.g. torch's CUDA build), so
+    # the lock comparison in preflight.sh does not apply; check the inputs only.
+    "$venv/bin/python" -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+    "$venv/bin/python" -B -m src.models.run "$NCI_MODEL_CONFIG" --check-inputs --device cpu
 fi
 started=$(date +%s)
-.venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device "$device" \
+"$venv/bin/python" -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device "$device" \
     --output-dir "$NCI_OUTPUT_DIR" "${options[@]}"
 printf 'TRAIN_STATUS=DONE seconds=%s output=%s UTC end: %s\n' \
     "$(( $(date +%s) - started ))" "$NCI_OUTPUT_DIR" "$(date -u +%FT%TZ)"
