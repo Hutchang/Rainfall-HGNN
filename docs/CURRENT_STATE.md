@@ -1,6 +1,6 @@
 # Current state
 
-**Latest commit:** `a2a57db` · **Sprint:** 2 · **Updated:** 2026-10-18
+**Latest commit:** `76f0432` · **Sprint:** 2 · **Updated:** 2026-10-19
 
 Where the project actually is right now, and what the current sprint is doing. Read this
 before picking up work; it is the one place that is kept true.
