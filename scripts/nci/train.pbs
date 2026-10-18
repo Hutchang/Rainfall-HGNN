@@ -8,6 +8,8 @@
 #   folds and writes a PARTIAL report. When every fold has finished, join them with
 #   python -m src.models.combine_folds <joined> <fold run> ... and score all methods with
 #   NCI_PREDICT_FROM=<joined>/best.pt. NCI_MODEL_SEED=<n> replaces seeds_file's model seed.
+# NCI_DEVICE=cpu trains on CPU instead; scripts/nci/train_cpu.pbs requests a CPU node
+# and sets it, for when the dgxa100 queue is backed up.
 #PBS -P no50
 #PBS -q dgxa100
 #PBS -N rainflow-train
@@ -50,8 +52,13 @@ if [[ -n ${NCI_PREDICT_FROM:-} && ! -f $NCI_PREDICT_FROM ]]; then
     printf 'BLOCKED: NCI_PREDICT_FROM=%s is not a file.\n' "$NCI_PREDICT_FROM" >&2
     exit 1
 fi
-if [[ ${PBS_NGPUS:-0} != 1 ]]; then
-    printf 'BLOCKED: training requires exactly one allocated GPU.\n' >&2
+device=${NCI_DEVICE:-cuda}
+if [[ $device != cuda && $device != cpu ]]; then
+    printf 'BLOCKED: NCI_DEVICE must be cuda or cpu.\n' >&2
+    exit 1
+fi
+if [[ $device == cuda && ${PBS_NGPUS:-0} != 1 ]]; then
+    printf 'BLOCKED: training requires exactly one allocated GPU (or NCI_DEVICE=cpu).\n' >&2
     exit 1
 fi
 if [[ -e $NCI_OUTPUT_DIR ]]; then
@@ -80,10 +87,14 @@ fi
 printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
 git rev-parse HEAD
 git status --short
-nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
-bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+if [[ $device == cuda ]]; then
+    nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+    bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+else
+    bash scripts/nci/preflight.sh "$NCI_MODEL_CONFIG"
+fi
 started=$(date +%s)
-.venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device cuda \
+.venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device "$device" \
     --output-dir "$NCI_OUTPUT_DIR" "${options[@]}"
 printf 'TRAIN_STATUS=DONE seconds=%s output=%s UTC end: %s\n' \
     "$(( $(date +%s) - started ))" "$NCI_OUTPUT_DIR" "$(date -u +%FT%TZ)"

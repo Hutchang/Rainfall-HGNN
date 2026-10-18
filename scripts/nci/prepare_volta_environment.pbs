@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# A second environment, .venv-volta, for the gpuvolta queue's V100s. The locked torch is
+# built for CUDA 13, which has no Volta support; this environment installs every locked
+# package except torch and its CUDA 13 libraries, then the same torch version built for
+# CUDA 12.6 (torch==2.13.0+cu126), which still supports Volta (sm_70). Everything else is
+# the locked version. Recorded deviation: the CUDA build of torch differs from uv.lock.
+#   qsub -v NCI_PYTHON=<python 3.14> scripts/nci/prepare_volta_environment.pbs
+#PBS -P no50
+#PBS -q copyq
+#PBS -N rainflow-env-volta
+#PBS -l ncpus=1
+#PBS -l mem=8GB
+#PBS -l jobfs=30GB
+#PBS -l walltime=01:00:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+cd "${PBS_O_WORKDIR:?submit this script through PBS from the repository root}"
+uv=/scratch/no50/$(id -un)/.local/bin/uv
+python=${NCI_PYTHON:?pass the Python 3.14 interpreter with qsub -v NCI_PYTHON=...}
+venv=$PWD/.venv-volta
+torch_build=${NCI_TORCH:-torch==2.13.0+cu126}
+export UV_CACHE_DIR=$PBS_JOBFS/uv-cache UV_LINK_MODE=copy PYTHONDONTWRITEBYTECODE=1
+
+"$uv" export --frozen --no-dev --no-hashes --no-emit-project -o "$PBS_JOBFS/locked.txt"
+grep -vE '^(torch==|nvidia-)' "$PBS_JOBFS/locked.txt" > "$PBS_JOBFS/without-torch.txt"
+rm -rf "$venv"
+"$uv" venv --python "$python" "$venv"
+VIRTUAL_ENV=$venv "$uv" pip install -r "$PBS_JOBFS/without-torch.txt"
+VIRTUAL_ENV=$venv "$uv" pip install "$torch_build" \
+    --index-url https://download.pytorch.org/whl/cu126 --extra-index-url https://pypi.org/simple \
+    --index-strategy unsafe-best-match
+"$venv/bin/python" -c "import torch, torch_geometric, numpy, pandas; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'pyg', torch_geometric.__version__)"
+printf 'VOLTA_ENVIRONMENT_STATUS=READY %s\n' "$venv"

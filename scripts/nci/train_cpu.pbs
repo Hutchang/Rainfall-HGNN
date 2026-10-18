@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scripts/nci/train.pbs on a CPU node of the normal queue, for when the dgxa100 queue is
+# backed up. Same variables; NCI_DEVICE=cpu is set here, and the model config's
+# cpu_threads should match ncpus. One fold per job keeps the walltime short:
+#   qsub -v NCI_MODEL_CONFIG=<config>,NCI_OUTPUT_DIR=<dir>,NCI_FOLDS=0 scripts/nci/train_cpu.pbs
+#PBS -P no50
+#PBS -q normal
+#PBS -N rainflow-train-cpu
+#PBS -l ncpus=16
+#PBS -l mem=64GB
+#PBS -l jobfs=10GB
+#PBS -l walltime=12:00:00
+#PBS -l storage=scratch/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+cd "${PBS_O_WORKDIR:?submit this script through PBS from the repository root}"
+NCI_DEVICE=cpu exec bash scripts/nci/train.pbs
