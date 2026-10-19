@@ -148,8 +148,10 @@ committed before results are reported (rules 5 and 6). D08.7 still scores both s
 **Decision.** The baseline Sydney experiments are G, G+R and G+R+S on 2022 alone:
 `config/models/d09_2022_round_robin_{g,gr,grs}.yaml`, reading the tables built by
 `config/canonical/standard_2022.yaml` (published on Gadi as `sydney-2022`) and the 2022
-round-robin split `config/splits/sydney_5fold_round_robin_2022.json` (DEC-03). Every
-other Sydney experiment is an extension of that baseline and is reported against it:
+round-robin split `config/splits/sydney_5fold_round_robin_2022.json` (DEC-03). The
+baseline's radar is the gauge-corrected Rainfields 3 product (`prcp-m15`, "Merged
+Gauge/Radar Accumulation"). Every other Sydney experiment is an extension of that
+baseline and is reported against it:
 
 - **2021-2022**: the same sources over two years
   (`config/models/d09_round_robin_*.yaml`, tables published as `sydney-2021-2022`).
