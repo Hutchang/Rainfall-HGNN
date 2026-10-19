@@ -136,6 +136,8 @@ every job ID and the log each writes, which jobs wait for which, and the outcome
 
 ## TO VALIDATE
 
-- That PBS mail (`-m ae`) reaches the address NCI holds for each user. No email arrived
-  for earlier jobs, which did not ask for any.
+PBS mail (`-m ae`) reaches the address NCI holds for the user. The email for scoring
+job 181547997 confirmed it on 2026-10-19.
+
+
 - A full run through `submit` on Gadi, from `plan` to `fetch`.
