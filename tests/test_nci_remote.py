@@ -449,7 +449,7 @@ def test_fold_walltime_comes_from_the_measured_epoch_time(repo):
     assert remote.epoch_seconds(cfg, "gpuvolta", "raingauge+radar") == (24.2, True)
     # An unmeasured layer set is budgeted at 1.5 times the slowest measured one.
     assert remote.epoch_seconds(cfg, "gpuvolta", "raingauge+satellite") == (
-        pytest.approx(1.5 * 27.1),
+        pytest.approx(1.5 * 102.6),
         False,
     )
     # More than the queue allows is capped and flagged.
@@ -954,3 +954,13 @@ def test_doctor_checks_the_transfer_host_too():
         remote.load_remote_config(ROOT / "config/nci/remote.yaml"), ssh, lambda t: None
     )
     assert "ssh gadi-dm.nci.org.au hostname" in problem
+
+
+def test_auto_takes_the_cpu_queue_when_its_folds_would_finish_sooner(repo):
+    layers = ["raingauge", "radar", "satellite"]
+    commit(repo, "config/models/grs.yaml", model_settings(input_layers=layers))
+    assert plan(repo, model="config/models/grs.yaml").queue == "normal"
+    assert plan(repo).queue == "gpuvolta"  # gauge-only folds are faster on a GPU
+    rich = gadi(probe_output(account=ACCOUNT.replace("5.67 KSU", "50.00 KSU")))
+    asked = plan(repo, rich, queue="gpuvolta", model="config/models/grs.yaml")
+    assert asked.queue == "gpuvolta"  # an explicit choice is kept

@@ -35,7 +35,7 @@ queues:
     su_per_cpu_hour: 4.5
     device: cuda
     max_walltime: "48:00:00"
-  normal:  # CPU only; chosen only when asked for
+  normal:  # CPU only; auto picks it when it would finish a fold sooner than the GPU
     ncpus: 16
     ngpus: 0
     mem: 64GB
@@ -64,19 +64,20 @@ score_job:
 # Seconds per epoch for every 1,000 hours of data, by queue and input layers, from
 # finished Gadi jobs (docs/nci/README.md). A fold's walltime is epochs x this x hours
 # / 1000, times walltime_margin, plus 15 minutes, rounded up to a quarter hour.
-# Measured: dgxa100 G (jobs 181499204-08) and G+R (181499210-14); gpuvolta G+R
-# (181509853); normal G (181355855-57), G+R (181416787-95) and G+R+S (181416788-96).
-# The rest are scaled from those by the measured gpuvolta/dgxa100 and G+R+S/G+R
-# ratios.
+# Measured: dgxa100 G (jobs 181499204-08), G+R (181499210-14) and G+R+S (181499231,
+# 16 epochs in 2.4 hours); gpuvolta G+R (181509853); normal G (181355855-57), G+R
+# (181416787-95) and G+R+S (181416788-96). The rest are scaled from those by the
+# measured gpuvolta/dgxa100 ratio. G+R+S is slower on a GPU than on 16 CPUs, because
+# every training gauge's pass recomputes all 4,712 satellite nodes.
 epoch_seconds_per_1000_hours:
   dgxa100:
     raingauge: 4.4
     raingauge+radar: 14.2
-    raingauge+radar+satellite: 15.9
+    raingauge+radar+satellite: 60.0
   gpuvolta:
     raingauge: 7.5
     raingauge+radar: 24.2
-    raingauge+radar+satellite: 27.1
+    raingauge+radar+satellite: 102.6
   normal:
     raingauge: 21.9
     raingauge+radar: 31.6

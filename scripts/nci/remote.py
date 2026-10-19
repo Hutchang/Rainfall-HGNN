@@ -800,6 +800,13 @@ def make_plan(model_config, cfg, ssh, root=ROOT, queue="auto"):
     load = parse_queue_load(queues)
     chosen = choose_queue(queue, load, cfg)
     layers = layer_key(settings)
+    if queue == "auto" and "normal" in cfg["queues"]:
+        # A GPU is not always faster: take the CPU queue when its folds would finish
+        # sooner, as they do for G+R+S.
+        gpu = fold_walltime(cfg, chosen, layers, inputs.hours, settings["epochs"])[0]
+        cpu = fold_walltime(cfg, "normal", layers, inputs.hours, settings["epochs"])[0]
+        if cpu < gpu:
+            chosen = "normal"
     hours, capped = fold_walltime(cfg, chosen, layers, inputs.hours, settings["epochs"])
     walltime = format_walltime(hours)
     jobs = plan_jobs(
