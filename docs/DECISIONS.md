@@ -169,4 +169,3 @@ half the training hours of 2021-2022.
 
 **Changes.** Results tables lead with the 2022 runs. Extensions name the baseline run
 they are compared with.
-
