@@ -1,0 +1,88 @@
+# 2022 only, as the paper's Sydney testbed (sec 4.1). Identical to config/canonical/grids.yaml except
+# for output_dir, start and end.
+# Paths resolve from the repository root. Each input needs an ok index.csv row.
+raw_dir: database/raw
+output_dir: database/standard_2022
+
+# Study period the archive roots below are checked against, inclusive. Matches
+# config/ingestion/sydney.yaml's period for the same region.
+start: 2022-01-01
+end: 2022-12-31
+
+layers:
+  radar:
+    # Where the NCI archive lives (D13.1). `null` means "not checked yet": on
+    # Gadi this is the mounted rq0 project directory; locally it can point at a
+    # sample tree such as tests/data/ingestion/radar/. Read in place, never
+    # downloaded -- see docs/grids/README.md, "Where the data is".
+    #
+    # Path confirmed by browsing the public THREDDS catalog (mirrors the Gadi
+    # mount 1:1 for this archive) on 2026-09-26; not yet verified against an
+    # actual Gadi shell -- see docs/grids/RADAR_SOURCE.md. Only exists on Gadi
+    # with project rq0 membership; --check-inputs names that if it's missing.
+    # One site's folder, not rainfields3/ itself: that holds every radar in
+    # Australia. Site 71 is Terrey Hills (Sydney).
+    root: /g/data/rq0/rainfields3/71
+
+    # D13.2: subsample the native 512x512, 0.5 km grid to the cell nearest
+    # each point of a stride*0.5 km grid -- stride 10 gives ~5 km spacing,
+    # matching the paper's radar spacing (sec 4.1), and 2,704 nodes over the
+    # site's whole 256 km square. A scientific choice, not an incidental
+    # default; see docs/grids/README.md.
+    subsample_stride: 10
+
+    # Keep only the subsampled nodes inside this lat/lon box: the paper's radar
+    # covers Greater Sydney (sec 4.1), not the site's whole square. The box is
+    # config/ingestion/sydney.yaml's gauge box padded by 0.25 degrees, and
+    # satellite below uses the same one (`*study_box`). 857 of the 2,704 nodes
+    # for site 71.
+    crop: &study_box
+      min_lat: -34.3
+      max_lat: -33.4
+      min_lon: 150.4
+      max_lon: 151.4
+      pad_degrees: 0.25
+
+    # Notes for readers, matching the archive files (D13.2):
+    # title="Merged Gauge/Radar Accumulation (15 min)" and the presence of
+    # contributing_gauges. grid_report.md reads these from every file itself.
+    product: prcp-m15
+    units: mm accumulated per hour (native files are mm per 15-minute window; summed here)
+    timestamp_convention: hour beginning, UTC
+    gauge_correction: "yes -- see each file's contributing_gauges attribute"
+    evidence: confirmed against tests/data/ingestion/radar/71_20220103.prcp-m15.zip and the fetcher's earlier work; see docs/grids/RADAR_SOURCE.md
+  satellite:
+    # D13.3: path confirmed via the public THREDDS catalog and OPeNDAP
+    # metadata on 2026-09-26; not yet verified against an actual Gadi shell
+    # -- see docs/grids/SATELLITE_SOURCE.md. Only exists on Gadi with project
+    # rv74 membership; --check-inputs names that if it's missing.
+    root: /g/data/rv74/satellite-products/arc/der/himawari-ahi/precip/crrph/v2.1
+
+    # D13.3: crop the full 5500x5500 Himawari disk to this lat/lon box before
+    # subsampling. Reuses config/ingestion/sydney.yaml's Sydney box, padded so
+    # edge nodes near the boundary keep real neighbours rather than being
+    # starved by the crop itself. A recorded choice, not the paper's: the
+    # paper does not crop a full disk, since its own product export already
+    # arrived pre-cropped. The same box as radar above.
+    crop: *study_box
+
+    # The paper used satellite's native 2 km spacing (sec 4.1) -- stride 1
+    # keeps every cropped cell, no further subsampling. A recorded choice,
+    # not an incidental default; see docs/grids/SATELLITE_SOURCE.md.
+    subsample_stride: 1
+
+    # DEC-02 (docs/DECISIONS.md): a cell's hourly value is the mean of the
+    # 10-minute images that have a value there, if at least this many of the
+    # six do (half the hour); otherwise the cell-hour is invalid. A missing
+    # image counts as one with no value anywhere.
+    min_images_per_hour: 3
+
+    # Notes for readers, matching the archive files (D13.3): title and
+    # product_name="CRRPh"; grid_report.md reads these from every file itself.
+    # crrph_intensity is chosen over crrph_accum and crr -- see
+    # docs/grids/SATELLITE_SOURCE.md for why.
+    product: "Himawari CRRPh crrph_intensity (NWC/GEO v2021.2)"
+    units: "mm/h instantaneous rate; hourly value is the mean of the 10-minute samples with a value (DEC-02)"
+    timestamp_convention: hour beginning, UTC
+    gauge_correction: "no -- satellite retrieval, not gauge-merged"
+    evidence: confirmed via the archive's own OPeNDAP metadata and real sampled data against a known convective cell; see docs/grids/SATELLITE_SOURCE.md

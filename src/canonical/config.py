@@ -4,6 +4,7 @@ Every key the build reads is checked here, so a missing or nonsensical setting f
 at startup with the key named rather than as a KeyError halfway through a run.
 """
 
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -62,5 +63,17 @@ def load_config(path: str | Path) -> dict:
             raise ValueError(f"{path}: plausibility is missing {k}")
     if cfg.get("restrict_to_bounds"):
         _check_gauge_bounds(path, cfg.get("ingestion_config"))
+    if cfg.get("period") is not None:
+        period = cfg["period"]
+        if not isinstance(period, dict) or set(period) != {"start", "end"}:
+            raise ValueError(f"{path}: period needs exactly start and end dates")
+        try:
+            start, end = (date.fromisoformat(str(period[k])) for k in ("start", "end"))
+        except ValueError:
+            raise ValueError(
+                f"{path}: period start and end must be YYYY-MM-DD"
+            ) from None
+        if end < start:
+            raise ValueError(f"{path}: period ends before it starts")
     cfg["_path"] = str(path)
     return cfg

@@ -118,6 +118,35 @@ def restrict_to_bounds(
     return index[index["station_id"].astype(str).isin(ids)], kept
 
 
+def restrict_to_period(index: pd.DataFrame, period: dict) -> pd.DataFrame:
+    """Keep only the raw files that lie wholly inside the configured period.
+
+    Component 01's files cover one month (tips) or one year (daily records), so a
+    period of whole months selects whole files. A file that crosses the period's
+    start or end is refused rather than cut, because Component 02 takes its period
+    from the files it reads (raw.period_from_index).
+    """
+    start, end = pd.Timestamp(period["start"]), pd.Timestamp(period["end"])
+    file_start, file_end = pd.to_datetime(index["start"]), pd.to_datetime(index["end"])
+    inside = (file_start >= start) & (file_end <= end)
+    crossing = ~inside & (file_start <= end) & (file_end >= start)
+    if crossing.any():
+        first = index[crossing].iloc[0]
+        raise ValueError(
+            f"period {start.date()} to {end.date()} cuts through raw file "
+            f"{first['path']} ({first['start']} to {first['end']}); choose a period "
+            "of whole months that matches whole years for daily files"
+        )
+    if not inside.any():
+        raise ValueError(f"no raw file lies inside {start.date()} to {end.date()}")
+    print(
+        f"restrict_to_period: {int(inside.sum())} of {len(index)} raw files inside "
+        f"{start.date()} to {end.date()}",
+        flush=True,
+    )
+    return index[inside]
+
+
 def run(cfg: dict) -> dict:
     t0 = time.time()
     raw_dir, out = Path(cfg["raw_dir"]), Path(cfg["output_dir"])
@@ -127,6 +156,8 @@ def run(cfg: dict) -> dict:
     stations = raw.read_stations(raw_dir)
     if cfg.get("restrict_to_bounds"):
         index, stations = restrict_to_bounds(index, stations, cfg)
+    if cfg.get("period"):
+        index = restrict_to_period(index, cfg["period"])
     tips = raw.read_tips(raw_dir, index)
     daily = raw.read_daily(raw_dir, index)
     start, end = raw.period_from_index(index)
@@ -205,6 +236,12 @@ def write_report(
         + (
             f"; stations restricted to the gauge bounds in `{cfg['ingestion_config']}`"
             if cfg.get("restrict_to_bounds")
+            else ""
+        )
+        + (
+            f"; files restricted to the configured period {cfg['period']['start']} to "
+            f"{cfg['period']['end']}"
+            if cfg.get("period")
             else ""
         ),
         (
