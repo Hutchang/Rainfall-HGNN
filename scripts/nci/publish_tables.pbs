@@ -37,9 +37,13 @@ umask 027
 mkdir -p "$shared/data"
 
 cd "$source"
-# Every file directly in the folder; sub-folders are not tables.
-mapfile -t files < <(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)
+# Every file directly in the folder, following links, so a folder that links some
+# tables from another one is published whole; sub-folders are not tables.
+mapfile -t files < <(find -L . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)
 sums=$(sha256sum -- "${files[@]}")
+# Distinct hours in the gauge table, which the run planner uses to estimate walltime.
+# Worked out before anything is copied, so a failure publishes nothing.
+hours=$(tail -n +2 gauge_hourly.csv | cut -d, -f2 | LC_ALL=C sort -u | wc -l)
 fingerprint=$(printf '%s\n' "$sums" | sha256sum | cut -c1-16)
 target="$shared/data/$name-$fingerprint"
 if [[ -f $target/READY ]]; then
@@ -47,7 +51,7 @@ if [[ -f $target/READY ]]; then
 else
     partial="$target.partial-${PBS_JOBID%%.*}"
     mkdir "$partial"
-    cp -p -- "${files[@]}" "$partial/"
+    cp -pL -- "${files[@]}" "$partial/"
     printf '%s\n' "$sums" > "$partial/SHA256SUMS"
     (cd "$partial" && sha256sum --check --quiet SHA256SUMS)
     touch "$partial/READY"
@@ -55,8 +59,6 @@ else
     mv -T "$partial" "$target"
     printf 'Published %s files to %s\n' "${#files[@]}" "$target"
 fi
-# Distinct hours in the gauge table, which the run planner uses to estimate walltime.
-hours=$(tail -n +2 "$target/gauge_hourly.csv" | cut -d, -f2 | LC_ALL=C sort -u | wc -l)
 printf '\nAdd this to config/nci/datasets.yaml, under the folder your configs read:\n'
 printf '  path: %s\n  sha256sums: %s\n  hours: %s\n' \
     "$target" "$(sha256sum < "$target/SHA256SUMS" | cut -d' ' -f1)" "$hours"
