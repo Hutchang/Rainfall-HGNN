@@ -943,3 +943,14 @@ def test_space_for_a_graph_build_is_checked(repo):
     with pytest.raises(BlockedError, match=r"scratch: .* size quota"):
         plan(repo, gadi(probe_output(graph="absent").replace(LQUOTA, tight)))
     plan(repo, gadi(probe_output(graph="ready").replace(LQUOTA, tight)))
+
+
+def test_doctor_checks_the_transfer_host_too():
+    def refuse(command):
+        raise remote.ConnectionLostError("ssh to gadi-dm failed: Host key verification")
+
+    ssh = FakeSsh([(r"^bash -s", doctor_output()), (r"^true$", refuse)])
+    (problem,) = remote.doctor(
+        remote.load_remote_config(ROOT / "config/nci/remote.yaml"), ssh, lambda t: None
+    )
+    assert "ssh gadi-dm.nci.org.au hostname" in problem

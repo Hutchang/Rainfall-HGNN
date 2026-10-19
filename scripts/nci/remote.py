@@ -1348,6 +1348,14 @@ def doctor(cfg, ssh, say=print):
     except ConnectionLostError as error:
         return [f"{error}\nSet up an SSH key for Gadi; see docs/nci/ONBOARDING.md"]
     say(f"Gadi user: {facts.get('user')}")
+    try:
+        ssh.run(cfg["transfer_host"], "true")
+    except ConnectionLostError as error:
+        problems.append(
+            f"{error}\n{cfg['transfer_host']} carries uploads and downloads; log in "
+            f"to it once with `ssh {cfg['transfer_host']} hostname` to check and "
+            "accept its host key"
+        )
     if facts.get("member") != "yes":
         problems.append(
             f"you are not in project {cfg['project']}; ask its lead on MyNCI"

@@ -34,8 +34,16 @@ The tool never handles passwords, so SSH must log in by key.
        IdentityFile ~/.ssh/id_ed25519
    ```
 
-4. Check: `ssh gadi.nci.org.au hostname` should print a login node's name with no
-   prompt.
+4. Log in once to each of the two hosts the tool uses, and accept each host key when
+   asked, after checking it against [NCI's published fingerprints](https://opus.nci.org.au/spaces/Help/pages/12583143/How+to+login+to+Gadi):
+
+   ```console
+   ssh gadi.nci.org.au hostname
+   ssh gadi-dm.nci.org.au hostname
+   ```
+
+   `gadi-dm` is NCI's data mover, which carries uploads and downloads. Each command
+   should then print a host name with no prompt.
 
 ## 3. Set up the repository
 
