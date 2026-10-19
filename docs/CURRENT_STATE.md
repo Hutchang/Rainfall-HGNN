@@ -72,7 +72,8 @@ Component 06 experiments are sent to Gadi from a clean local checkout with
 `gpuvolta`, `dgxa100` or `normal`, with a walltime set from measured epoch times, then a
 scoring job that waits for all five and is followed by an email from PBS. Nothing is
 uploaded: tables are published once on Gadi under `/g/data/no50/rainflow/data/` and
-listed in `config/nci/datasets.yaml` (the Sydney 2021-2022 tables so far), graphs are
+listed in `config/nci/datasets.yaml`: the Sydney 2022 tables, the baseline (DEC-04), and
+the 2021-2022 extension, graphs are
 built on Gadi into a shared cache named by their fingerprint, and every checkout links
 to one shared environment per `uv.lock` under `/g/data/no50/rainflow/envs/`. The locked
 Linux torch is CUDA 12.6, which runs on both the V100s and the A100s. A run stopped at
