@@ -240,16 +240,19 @@ checkpoint recovery or A100 speed has yet been verified on Gadi.
 
 ## 5. Run from your own machine with one command
 
-`scripts/nci/remote.py` does sections 2 to 4 for you from a clean local checkout, and
-brings the results back:
+`scripts/nci/remote.py` does sections 2 to 4 for you from a clean local checkout: one
+job per fold on whichever GPU queue has the shorter wait, a scoring job once every fold
+has finished, and an email from PBS when it ends.
 
 ```console
-uv run python -m scripts.nci.remote plan config/models/hgnn.yaml
-uv run python -m scripts.nci.remote run  config/models/hgnn.yaml --label sydney-baseline
+uv run python -m scripts.nci.remote plan   config/models/d09_round_robin_gr.yaml
+uv run python -m scripts.nci.remote submit config/models/d09_round_robin_gr.yaml --label gr
+uv run python -m scripts.nci.remote fetch
 ```
 
-[AUTOMATED_RUNS.md](AUTOMATED_RUNS.md) covers the one-time ssh setup, every command, what
-happens at each step, where everything is kept, and what to do when something fails.
+New teammates start with [ONBOARDING.md](ONBOARDING.md). [AUTOMATED_RUNS.md](AUTOMATED_RUNS.md)
+covers every command, what happens at each step, where everything is kept, and what to
+do when something fails.
 
 ## 6. The Sydney fusion runs (D09), end to end
 

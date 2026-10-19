@@ -1,181 +1,132 @@
-# Automated Gadi runs
+# Running experiments on Gadi
 
-`scripts/nci/remote.py` sends one Component 06 training run from your own machine to
-NCI's Gadi supercomputer and brings the results back. You do not log in to Gadi or copy
-files by hand: the script checks that Gadi can take the run, uploads what it needs,
-submits the jobs, waits for them and downloads the run folder. It automates sections 2
-to 4 of the [Gadi guide](README.md).
-
-It has been tested against a stand-in for Gadi only. Nothing has run through it on Gadi
-yet; what still needs checking is listed under [TO VALIDATE](#to-validate).
-
-## One-time setup
-
-The script never handles passwords, so ssh must log in on its own.
-
-1. Add your public key to Gadi's `~/.ssh/authorized_keys` (for example with
-   `ssh-copy-id`).
-2. Put your NCI username in `~/.ssh/config`:
-
-   ```text
-   Host gadi.nci.org.au gadi-dm.nci.org.au
-       User YOUR_NCI_USERNAME
-       IdentityFile ~/.ssh/id_ed25519
-   ```
-
-3. Check that `ssh gadi.nci.org.au hostname` works without a prompt. On Windows, use the
-   same OpenSSH client for this check and for the script.
-
-The project, hosts, folders, job resources and charge rate are in
-[`config/nci/remote.yaml`](../../config/nci/remote.yaml); your username is not, because
-the script asks Gadi for it. The committed job is one A100 on `dgxa100` with 16 CPUs,
-48 GB and a one-hour walltime, so it can cost at most 72 SU. Raise `walltime` there for a
-real training run.
+`scripts/nci/remote.py` sends a committed model config from your own machine to NCI's
+Gadi supercomputer as one job per fold, scores the run when every fold has finished, and
+brings the results back. You never log in to Gadi, write a PBS script, or copy data. If
+you have not set up your account yet, start with [ONBOARDING.md](ONBOARDING.md).
 
 ## Commands
 
-```console
-uv run python -m scripts.nci.remote plan   config/models/hgnn.yaml
-uv run python -m scripts.nci.remote run    config/models/hgnn.yaml --label sydney-baseline
-uv run python -m scripts.nci.remote submit config/models/hgnn.yaml --label sydney-baseline
-uv run python -m scripts.nci.remote status experiments/nci/<run folder>
-uv run python -m scripts.nci.remote fetch  experiments/nci/<run folder>
-```
-
 | Command | What it does |
 |---|---|
-| `plan` | Runs every check and prints the plan. Changes nothing, locally or on Gadi. |
-| `run` | Checks, prints the plan, asks you to type `yes`, submits, then waits and downloads. |
-| `submit` | The same as `run`, but returns once the jobs are submitted. |
-| `status` | Shows each job's state for a run folder. |
-| `fetch` | Waits for a submitted run's jobs to end, then downloads it: after `submit`, after Ctrl-C, or days later. |
+| `uv run python -m scripts.nci.remote plan config/models/<run>.yaml` | Runs every check and prints what would be submitted and what it can cost. Changes nothing. |
+| `uv run python -m scripts.nci.remote submit config/models/<run>.yaml --label <name>` | The same checks, then asks for `yes` and submits. |
+| `uv run python -m scripts.nci.remote status` | Shows every job of every run you have not fetched yet. Name a run folder to see only that run. |
+| `uv run python -m scripts.nci.remote fetch` | Downloads every finished run you have not fetched yet into its `results/` folder. Unfinished runs are left alone and reported. |
+| `uv run python -m scripts.nci.remote resume experiments/nci/<run>` | Resubmits the folds of a run that did not all succeed, continuing each from where it stopped, then scores again. |
+| `uv run python -m scripts.nci.remote doctor` | Checks your SSH login, project membership, the shared environment and the project's quotas. |
 
-`--label` names the run folder (letters, digits, `.`, `_` and `-`). `--yes` skips the
-confirmation. `--skip-login-check` skips the input check on the login node
-([step 4](#4-submit)).
+`plan` and `submit` take `--queue gpuvolta`, `--queue dgxa100` or `--queue normal`; the
+default, `auto`, picks the GPU queue with fewer jobs waiting for each job running.
+`submit --wait` waits for the run and fetches it. `fetch --with-predictions` also
+downloads each run's `predictions.csv`, which is several hundred MB.
 
-## What happens in a run
+Your run folder is `experiments/nci/<date>_<time>_<label>/` on your machine. Git ignores
+it.
 
-### 1. Checks, before anything changes
+## What a run does
 
-- Gadi runs the committed revision exactly, so uncommitted edits to tracked files are
-  refused. Untracked files are ignored.
-- Every input the model config names must exist on your machine.
-- One ssh call asks Gadi whether its copy of the code already has this commit, whether
-  these inputs are already uploaded, whether the shared Python environment exists and
-  which `uv.lock` it was built from, the project's storage quota (`lquota`) and SU
-  balance (`nci_account`), and which of your jobs have not finished.
+`plan` and `submit` read only committed files on your machine; no data needs to be on
+your machine at all.
 
-The plan is refused if the upload would pass the size or file-count quota, if the job's
-most expensive case (every CPU for the whole walltime, at the queue's charge rate) is
-more than the SU left, or if the run needs a different environment while a job this
-script sent is unfinished ([step 3](#3-the-environment)).
+1. **Checks.** Your tracked files must be committed, because Gadi runs exactly that
+   commit. The split and seeds files must be committed too. The tables the config reads
+   must be listed in [`config/nci/datasets.yaml`](../../config/nci/datasets.yaml), and
+   the folder on Gadi must hold the same files, checked by checksum. `graphs_dir` must
+   be the `output_dir` of exactly one committed `config/graphs/*.yaml`, built for the
+   same split. The project must have enough SU and space.
+2. **Code.** The commit goes to Gadi as a git bundle, into your checkout under
+   `/scratch/no50/<you>/rainflow/repo`, and the run gets its own copy of it.
+3. **Environment.** Every run uses the project's shared environment for its `uv.lock`.
+   If nobody has built that one yet, a `copyq` job builds it first.
+4. **Graphs.** Graphs are built on Gadi into a cache the project shares, named by a
+   fingerprint of everything that decides them: the graph config, split, seeds, tables
+   and the code in `src/graph`, `src/canonical` and `src/study`. A run that finds its
+   graphs already built reuses them; otherwise a CPU job builds them before the folds
+   start. Changing a model setting, such as `hidden_channels`, reuses the same graphs.
+5. **Folds.** Each of the five folds is its own job, so each can start as soon as a GPU
+   is free. The folds do not wait for each other.
+6. **Scoring.** One CPU job waits for all five folds, joins them and scores the HGNN,
+   IDW and network mean on the full set of test rows. PBS emails you when it ends.
 
-### 2. Upload
+## Queues and walltime
 
-- **Code.** Sent as a git bundle of the commits Gadi's copy lacks (nothing, if it already
-  has this one), then checked out into a new folder for this run. Every run has its own
-  copy of the code at its own commit.
-- **Inputs git does not carry:** the Component 02 tables, the Component 03 split and the
-  Component 04 graphs. They are uploaded once, into a folder named by a fingerprint of
-  their contents. Gadi checks every file's checksum, then makes the folder read-only,
-  and a later run with the same inputs reuses it. Inputs that git does carry travel with
-  the code. Raw source data is never sent.
-- **The run's config.** The model config is rewritten as `run.yaml`, pointing at the
-  uploaded inputs and at this run's output folder, with `device: cuda`.
+| Queue | GPU | Per fold job | Charge |
+|---|---|---|---|
+| `gpuvolta` | V100 32 GB | 12 CPUs, 1 GPU, 90 GB | 36 SU per hour |
+| `dgxa100` | A100 80 GB | 16 CPUs, 1 GPU, 128 GB | 72 SU per hour |
+| `normal` | none | 16 CPUs, 64 GB | 32 SU per hour |
 
-### 3. The environment
+A fold's walltime is set from the measured time per epoch for that queue and input
+layers, in [`config/nci/remote.yaml`](../../config/nci/remote.yaml), for the config's
+full number of epochs, plus 30 % and 15 minutes. Shorter, accurate requests start sooner,
+because the scheduler fits them into gaps before larger jobs. Most folds stop early, so
+they finish well inside it. The plan says when a layer set has no measured time on the
+chosen queue.
 
-Every run uses one shared Python environment on Gadi (`.venv`), built by
-`uv sync --locked` from `uv.lock`. Each run's code folder links to it.
+## When a fold runs out of time
 
-If the environment is missing, or was built from a different `uv.lock`, a setup job
-(`prepare_environment.pbs`: `copyq`, 1 CPU, up to 30 minutes) is submitted first, and the
-training job waits for it to succeed. If the setup job fails, PBS drops the training job.
+A fold saves `last.pt` after every epoch: the weights, the optimizer, the early-stopping
+count and every random generator's state. If PBS stops the job at its walltime, the
+scoring job never starts, and `fetch` reports the run as failed. Then run
 
-**The rule:** while any job this script sent is still queued or running, a run that needs
-a different environment is refused before anything is uploaded, because rebuilding the
-environment would change the packages under that job. Wait for the jobs the message
-names, or cancel them with `qdel`, then submit again. A run whose `uv.lock` matches the
-environment's goes ahead alongside unfinished jobs. If an earlier setup job failed or has
-not run yet, a second one is refused in the same way, though that refusal comes after
-the upload.
+```console
+uv run python -m scripts.nci.remote resume experiments/nci/<run>
+```
 
-### 4. Submit
+It resubmits only the folds that did not succeed. A fold with a `last.pt` carries on
+from its last finished epoch, and the result is the same as if it had never stopped,
+which `tests/test_model_resume.py` checks. A fold that never started runs from the
+beginning. A new scoring job follows. `--queue` moves the remaining folds to another
+queue.
 
-When the environment is ready, Component 06's input check (`--check-inputs`) runs on the
-login node first, so a missing or malformed input fails before any GPU time is booked.
-Then `scripts/nci/train.pbs` is submitted with the queue and resources from
-`config/nci/remote.yaml`. On the GPU node it checks the environment and CUDA, then runs
-`python -m src.models.run`.
+## Shared data
 
-Each job id is written to `state.json` as soon as `qsub` returns it.
+Nothing a run reads is uploaded from your machine.
 
-### 5. Wait and download
-
-Every `poll_seconds` (five minutes in the committed config) the script reads the end of
-each job's log in the run folder. Gadi closes every job log with a "Resource Usage" block
-that includes `Exit Status`; once that block is there, the job has ended with that
-status. Until then, `qstat` reports whether the job is queued or running. The log stays on
-Gadi after `qstat` has forgotten the job, so `fetch` works days later. A dropped
-connection is tried again three times before the wait stops, and `fetch` resumes it.
-
-When every job has ended, the run folder (`output/`, `pbs.log`, `prepare.log` and
-`run.yaml`) is downloaded into `results.partial/`, which is renamed `results/` only once
-the download is complete. An existing `results/` is never overwritten.
-
-The run is `DONE` only if every job exited 0, `predictions.csv` and `report.md` are
-there, and the report does not say `FAILED` or `RUNNING`. Anything else is
-`FAILED: <reason>`.
+- **Tables** are published once into `/g/data/no50/rainflow/data/<name>-<fingerprint>/`
+  by [`publish_tables.pbs`](../../scripts/nci/publish_tables.pbs), then listed in
+  `config/nci/datasets.yaml` under the folder configs read locally, such as
+  `database/standard`. A published folder is read-only and never changed; new tables
+  get a new folder.
+- **Environments** live in `/g/data/no50/rainflow/envs/<uv.lock hash>/`
+  ([README section 3](README.md#3-prepare-the-exact-environment-before-the-gpu-job)).
+- **Graphs** live in `/scratch/no50/rainflow/graphs/<fingerprint>/`. Scratch deletes
+  files nobody has read for 100 days; a run that finds its graphs incomplete builds
+  them again.
 
 ## Where things are
 
-| Where | Path | Holds |
+| What | On your machine | On Gadi |
 |---|---|---|
-| Your machine | `experiments/nci/<date>_<time>_<label>/` | `state.json`, `run.yaml`, and `results/` after `fetch` |
-| Gadi scratch | `/scratch/<project>/<user>/rainflow/repo/` | Gadi's copy of the code and the shared `.venv` |
-| Gadi scratch | `/scratch/<project>/<user>/rainflow/runs/<run>/` | the run's `code/`, `run.yaml`, `output/`, `pbs.log` and `prepare.log` |
-| Gadi gdata | `/g/data/<project>/<user>/rainflow-inputs/<fingerprint>/` | uploaded inputs, read-only, shared by runs with the same inputs |
-
-`<project>` is `no50` in the committed config. A run folder is named by the local time it
-was created; seconds are added if that name is taken.
+| Run state | `experiments/nci/<run>/state.json` | |
+| Run config | `experiments/nci/<run>/run.yaml` | `/scratch/no50/<you>/rainflow/runs/<run>/run.yaml` |
+| Code | your checkout | `.../runs/<run>/code/` |
+| Fold results | `experiments/nci/<run>/results/output/fold-<n>/` | `.../runs/<run>/output/fold-<n>/` |
+| Scored run | `experiments/nci/<run>/results/output/scored/` | `.../runs/<run>/output/scored/` |
+| Job logs | `experiments/nci/<run>/results/logs/` | `.../runs/<run>/logs/<job>.log` |
 
 ## `state.json`
 
-| `status` | Meaning |
-|---|---|
-| `UPLOADING` | Submit started and has not finished. `jobs` lists anything already submitted. |
-| `SUBMIT_FAILED` | A step failed and `error` says which. `jobs` lists anything already submitted, which may still be on Gadi. |
-| `SUBMITTED` | Every job was accepted; `jobs` holds their ids. |
-| `DONE` | Fetched, and the run completed ([step 5](#5-wait-and-download)). |
-| `FAILED: <reason>` | Fetched, but a job failed or the outputs do not show a completed run. |
-
-It also records the revision; every input with its sha256 (for files git carries, the
-committed copy's, which is what Gadi reads); the inputs' fingerprint; every Gadi path;
-the job resources; the most the job can cost in SU; and, after `fetch`, each job's exit
-status.
+It records the commit, the queue and walltime, the shared environment and graph folders,
+every job ID and the log each writes, which jobs wait for which, and the outcome:
+`SUBMITTED`, `RESUMED`, `SUBMIT_FAILED`, then after `fetch` either `DONE` or
+`FAILED: <job> ...`. `previous` keeps the job IDs of earlier attempts after a `resume`.
 
 ## When something goes wrong
 
-- **`BLOCKED: ...`** The message says what to fix. At the plan stage nothing was uploaded
-  or submitted; after that, `Run folder:` points at the `state.json` that says what was.
-- **`SUBMIT_FAILED` with a setup job listed.** The setup job stays queued and builds the
-  environment that the next run reuses. Cancel it with the `qdel` command the message
-  gives if you do not want it.
-- **Ctrl-C while waiting** stops only the local wait; the jobs keep running. Resume with
-  `fetch <run folder>`.
-- **"may never have started"** from `fetch` or `status`: neither the job's log nor
-  `qstat` knows the job, for example because it was removed while still queued.
-- **Environment refused.** Wait for the jobs named, or `qdel` them, then submit again.
+- **`BLOCKED` before submitting.** Nothing was sent. The message names what to fix.
+- **`SUBMIT_FAILED`.** The message lists the jobs that were already submitted and the
+  `qdel` command to cancel them.
+- **A fold failed.** Read its log in `results/logs/` after `fetch`, or on Gadi under the
+  run's `logs/`. Exit status 271 means PBS stopped it, usually at its walltime; use
+  `resume`.
+- **The environment or graph job failed.** The folds never start. Read that job's log,
+  fix the cause, commit, and submit a new run.
+- **A teammate's run uses the same graphs.** That is expected: the cache is shared.
 
 ## TO VALIDATE
 
-The tests use a stand-in for Gadi. These have not been checked on Gadi itself:
-
-- `qstat -F json` output, including `PBS_O_WORKDIR` under `Variable_List`;
-- `lquota`, `nci_account`, `qselect` and `qsub` being on the `PATH` for non-interactive
-  ssh commands;
-- `git worktree` sharing one `.venv` through a symlink.
-
-Checked on Gadi on 2026-10-17: job logs end with the "Resource Usage" block and its
-`Exit Status`, on both a failed and a successful job.
+- That PBS mail (`-m ae`) reaches the address NCI holds for each user. No email arrived
+  for earlier jobs, which did not ask for any.
+- A full run through `submit` on Gadi, from `plan` to `fetch`.
