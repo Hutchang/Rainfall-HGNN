@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Build one graph set for scripts/nci/remote.py into the project's shared graph cache.
+# It builds into a .partial folder, checks every role graph against Component 06, then
+# writes READY, makes the set read-only and moves it into place. A set someone else
+# finished first is kept and this build is dropped. Variables, all required:
+#   NCI_GRAPH_CONFIG  committed graph config, e.g. config/graphs/d09_round_robin_gr.yaml
+#   NCI_DATA_DIR      published table folder (config/nci/datasets.yaml)
+#   NCI_SPLIT_FILE    committed split the graphs follow
+#   NCI_SEEDS         committed seeds file
+#   NCI_GRAPH_DIR     where the finished set goes, <graph_cache>/<fingerprint>
+#PBS -P no50
+#PBS -q normal
+#PBS -N rainflow-graph
+#PBS -l ncpus=24
+#PBS -l mem=96GB
+#PBS -l jobfs=1GB
+#PBS -l walltime=01:00:00
+#PBS -l storage=scratch/no50+gdata/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+for name in NCI_GRAPH_CONFIG NCI_DATA_DIR NCI_SPLIT_FILE NCI_SEEDS NCI_GRAPH_DIR; do
+    if [[ -z ${!name:-} ]]; then
+        printf 'BLOCKED: %s must be passed with qsub -v.\n' "$name" >&2
+        exit 1
+    fi
+done
+cd "$PBS_O_WORKDIR"
+if [[ ! -x .venv/bin/python ]]; then
+    printf 'BLOCKED: missing .venv; run scripts/nci/prepare_environment.pbs first.\n' >&2
+    exit 1
+fi
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg OMP_NUM_THREADS=${PBS_NCPUS:-1}
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+
+if [[ -f $NCI_GRAPH_DIR/READY ]]; then
+    printf 'GRAPH_STATUS=READY %s (already built)\n' "$NCI_GRAPH_DIR"
+    exit 0
+fi
+cache=$(dirname "$NCI_GRAPH_DIR")
+if [[ ! -d $cache ]]; then
+    # Shared by the project: group-writable, and new folders keep the project group.
+    (umask 007 && mkdir -p "$cache")
+    chmod 2770 "$cache"
+    chmod 2770 "$(dirname "$cache")" 2>/dev/null || true
+fi
+umask 027
+partial="$NCI_GRAPH_DIR.partial-${PBS_JOBID%%.*}"
+.venv/bin/python -B -m src.graph.builder_new "$NCI_GRAPH_CONFIG" \
+    --data-dir "$NCI_DATA_DIR" --output-dir "$partial" \
+    --split-file "$NCI_SPLIT_FILE" --seeds "$NCI_SEEDS"
+for fold in 0 1 2 3 4; do
+    for role in train validation test; do
+        if [[ ! -f $partial/fold-$fold/$role.pt ]]; then
+            printf 'BLOCKED: the build wrote no %s/fold-%s/%s.pt.\n' "$partial" "$fold" "$role" >&2
+            exit 1
+        fi
+    done
+done
+touch "$partial/READY"
+chmod -R a-w "$partial"
+if mv -T "$partial" "$NCI_GRAPH_DIR" 2>/dev/null; then
+    printf 'GRAPH_STATUS=READY %s\n' "$NCI_GRAPH_DIR"
+elif [[ -f $NCI_GRAPH_DIR/READY ]]; then
+    chmod -R u+w "$partial" && rm -rf "$partial"
+    printf 'GRAPH_STATUS=READY %s (another job finished it first)\n' "$NCI_GRAPH_DIR"
+else
+    printf 'BLOCKED: could not move %s to %s.\n' "$partial" "$NCI_GRAPH_DIR" >&2
+    exit 1
+fi

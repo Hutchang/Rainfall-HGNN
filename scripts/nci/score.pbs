@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Join a run's five fold jobs and score every method on the full target set, on CPU.
+# scripts/nci/remote.py submits it to start only once all five folds have finished.
+# Variables, all required:
+#   NCI_MODEL_CONFIG  the run's model config
+#   NCI_FOLD_RUNS     the five fold output folders, joined by colons
+#   NCI_OUTPUT_DIR    the run's output folder; writes joined/ and scored/ inside it
+# PBS emails the job owner when this job ends, which is when the run's results are
+# ready to fetch.
+#PBS -P no50
+#PBS -q normal
+#PBS -N rainflow-score
+#PBS -l ncpus=8
+#PBS -l mem=64GB
+#PBS -l jobfs=1GB
+#PBS -l walltime=01:00:00
+#PBS -l storage=scratch/no50+gdata/no50
+#PBS -l wd
+#PBS -j oe
+#PBS -m ae
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS from the repository root.\n' >&2
+    exit 1
+fi
+for name in NCI_MODEL_CONFIG NCI_FOLD_RUNS NCI_OUTPUT_DIR; do
+    if [[ -z ${!name:-} ]]; then
+        printf 'BLOCKED: %s must be passed with qsub -v.\n' "$name" >&2
+        exit 1
+    fi
+done
+cd "$PBS_O_WORKDIR"
+export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg OMP_NUM_THREADS=${PBS_NCPUS:-1}
+printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
+git rev-parse HEAD
+# A failed earlier attempt's folders are kept, renamed, so this attempt starts clean.
+for folder in joined scored; do
+    if [[ -e $NCI_OUTPUT_DIR/$folder ]]; then
+        mv "$NCI_OUTPUT_DIR/$folder" "$NCI_OUTPUT_DIR/$folder.before-${PBS_JOBID%%.*}"
+    fi
+done
+IFS=: read -r -a folds <<< "$NCI_FOLD_RUNS"
+.venv/bin/python -B -m src.models.combine_folds "$NCI_OUTPUT_DIR/joined" "${folds[@]}"
+.venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device cpu \
+    --predict-from "$NCI_OUTPUT_DIR/joined/best.pt" --output-dir "$NCI_OUTPUT_DIR/scored"
+printf 'SCORE_STATUS=DONE output=%s/scored UTC end: %s\n' "$NCI_OUTPUT_DIR" "$(date -u +%FT%TZ)"
