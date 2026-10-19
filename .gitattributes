@@ -1,0 +1,6 @@
+# Shell and PBS scripts run under bash, locally and on Gadi, and must keep LF line
+# endings in every checkout, Windows included. A CRLF copy fails at its first line
+# ("set: pipefail: invalid option name"), and a CRLF commit would break the job on
+# Gadi (ISS-15).
+*.sh text eol=lf
+*.pbs text eol=lf
