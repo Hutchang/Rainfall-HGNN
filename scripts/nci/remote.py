@@ -70,6 +70,13 @@ GRAPH_CODE = ("src/graph", "src/canonical", "src/study", "uv.lock")
 SIZE_UNITS = {"B": 1, "KiB": 2**10, "MiB": 2**20, "GiB": 2**30, "TiB": 2**40}
 SU_UNITS = {"SU": 1, "KSU": 1e3, "MSU": 1e6}
 ENVIRONMENT_FILES = 32000  # files a new shared environment adds to gdata
+GRAPH_BYTES = 15 * 2**30  # the largest graph set so far (G+R+S, 2021-2022) is 12 GB
+# When the plan warns: a run that could use more than this share of the SU left, a
+# filesystem fuller than this, a queue with more than this many jobs waiting for
+# each one running.
+SU_SHARE_WARNING = 0.25
+QUOTA_WARNING = 0.9
+QUEUE_WARNING = 2
 JOB_STATES = {
     "Q": "queued",
     "H": "held",
@@ -658,6 +665,32 @@ class Plan:
     jobs: list
     su_estimate: float
     su_available: float
+    warnings: list
+
+
+def plan_warnings(rows, estimate, available, queue, load):
+    """What could go wrong even though Gadi can take the run."""
+    warnings = []
+    if available and estimate > SU_SHARE_WARNING * available:
+        warnings.append(
+            f"this run can use {estimate:.0f} of the {available:.0f} SU the project "
+            f"has left ({estimate / available:.0%}); everyone shares that balance"
+        )
+    for fs, row in sorted(rows.items()):
+        if row["files"] > QUOTA_WARNING * row["file_quota"]:
+            warnings.append(
+                f"{fs} holds {row['files']:,} of the {row['file_quota']:,} files it "
+                "may; any job that writes fails once it is full"
+            )
+        if row["used"] > QUOTA_WARNING * row["quota"]:
+            warnings.append(f"{fs} is {row['used'] / row['quota']:.0%} full by size")
+    queued, running = load.get(queue, (0, 0))
+    if queued > QUEUE_WARNING * max(running, 1):
+        warnings.append(
+            f"{queue} has {queued} jobs waiting for {running} running, so the folds "
+            "may wait a long time; --queue chooses another queue"
+        )
+    return warnings
 
 
 def fold_dir(output, fold):
@@ -776,7 +809,12 @@ def make_plan(model_config, cfg, ssh, root=ROOT, queue="auto"):
     code_bytes, code_files = code_footprint(revision, root)
     problems = [
         *dataset_problems(inputs, found),
-        headroom_problem(rows, "scratch", code_bytes, code_files + 100),
+        headroom_problem(
+            rows,
+            "scratch",
+            code_bytes + (GRAPH_BYTES if facts["graph"] != "ready" else 0),
+            code_files + 100,
+        ),
     ]
     if facts["env"] != "ready":
         problems.append(headroom_problem(rows, "gdata", 6 * 2**30, ENVIRONMENT_FILES))
@@ -787,6 +825,7 @@ def make_plan(model_config, cfg, ssh, root=ROOT, queue="auto"):
     problems = [problem for problem in problems if problem]
     if problems:
         raise BlockedError("Gadi cannot take this run:\n  " + "\n  ".join(problems))
+    warnings = plan_warnings(rows, estimate, available, chosen, load)
     return Plan(
         str(model_config),
         settings,
@@ -804,6 +843,7 @@ def make_plan(model_config, cfg, ssh, root=ROOT, queue="auto"):
         jobs,
         estimate,
         available,
+        warnings,
     )
 
 
@@ -845,6 +885,7 @@ def describe(plan, cfg):
         "Then one CPU job joins the folds and scores every method; PBS emails you "
         "when it ends, or if any job is aborted.",
         "Jobs: " + ", ".join(job.name for job in plan.jobs),
+        *(f"WARNING: {warning}" for warning in plan.warnings),
         f"Most it can cost: {plan.su_estimate:.0f} SU "
         f"({plan.su_available:.0f} SU left)",
     ]

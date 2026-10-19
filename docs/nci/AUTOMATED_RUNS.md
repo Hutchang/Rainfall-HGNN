@@ -34,7 +34,13 @@ your machine at all.
    must be listed in [`config/nci/datasets.yaml`](../../config/nci/datasets.yaml), and
    the folder on Gadi must hold the same files, checked by checksum. `graphs_dir` must
    be the `output_dir` of exactly one committed `config/graphs/*.yaml`, built for the
-   same split. The project must have enough SU and space.
+   same split. The project must have enough SU and space, counting a graph build if
+   one is needed. Anything that fails stops the plan before anything is sent.
+
+   The plan also warns, without stopping, when the run could use more than a quarter of
+   the SU the project has left, when scratch or `/g/data` is more than 90 % full by size
+   or by file count, or when the chosen queue has more than twice as many jobs waiting
+   as running. Read the warnings before typing `yes`.
 2. **Code.** The commit goes to Gadi as a git bundle, into your checkout under
    `/scratch/no50/<you>/rainflow/repo`, and the run gets its own copy of it.
 3. **Environment.** Every run uses the project's shared environment for its `uv.lock`.
@@ -66,6 +72,7 @@ chosen queue.
 
 ## When a fold runs out of time
 
+Resuming is never automatic: nothing continues a stopped fold unless you run `resume`.
 A fold saves `last.pt` after every epoch: the weights, the optimizer, the early-stopping
 count and every random generator's state. If PBS stops the job at its walltime, the
 scoring job never starts, and `fetch` reports the run as failed. Then run

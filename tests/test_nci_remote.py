@@ -909,3 +909,37 @@ def test_resume_waits_for_unfinished_jobs_and_refuses_a_failed_graph_build(tmp_p
     run_dir, answers = stopped_run(tmp_path, [None] * 5, graph_exit=1)
     with pytest.raises(BlockedError, match="the graph job failed"):
         remote.resume(run_dir, cfg, FakeSsh(by_job(answers)))
+
+
+# --- warnings: Gadi can take the run, but something deserves a second look --------
+
+
+def test_a_comfortable_run_has_no_warnings(repo):
+    assert plan(repo).warnings == []
+
+
+def test_a_run_that_would_use_much_of_the_su_left_is_flagged(repo):
+    account = ACCOUNT.replace("5.67 KSU", "1.20 KSU")
+    (warning,) = plan(repo, gadi(probe_output(account=account))).warnings
+    assert "of the 1200 SU the project has left" in warning
+
+
+def test_a_nearly_full_filesystem_is_flagged(repo):
+    full = LQUOTA.replace("106239   202000", "195000   202000")
+    (warning,) = plan(repo, gadi(probe_output().replace(LQUOTA, full))).warnings
+    assert warning.startswith("scratch holds 195,000 of the 202,000 files")
+
+
+def test_a_crowded_queue_is_flagged(repo):
+    result = plan(repo, queue="dgxa100")
+    assert any(
+        "dgxa100 has 33 jobs waiting for 8 running" in w for w in result.warnings
+    )
+    assert "WARNING: dgxa100 has 33" in remote.describe(result, config(repo))
+
+
+def test_space_for_a_graph_build_is_checked(repo):
+    tight = LQUOTA.replace("192.37 GiB   1.00 TiB", "1015.00 GiB   1.00 TiB")
+    with pytest.raises(BlockedError, match=r"scratch: .* size quota"):
+        plan(repo, gadi(probe_output(graph="absent").replace(LQUOTA, tight)))
+    plan(repo, gadi(probe_output(graph="ready").replace(LQUOTA, tight)))
