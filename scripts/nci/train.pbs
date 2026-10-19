@@ -11,6 +11,8 @@
 #   NCI_PREDICT_FROM=<joined>/best.pt. NCI_MODEL_SEED=<n> replaces seeds_file's model seed.
 # NCI_DEVICE=cpu trains on CPU instead; scripts/nci/train_cpu.pbs requests a normal-queue
 # CPU node and sets it, and scripts/nci/train_volta.pbs requests a gpuvolta V100.
+# NCI_RESUME=1 continues a run that stopped (for example at its walltime) in its own
+# NCI_OUTPUT_DIR from last.pt, exactly where it stopped.
 # PBS emails the job owner when the job ends or is aborted (-m ae).
 #PBS -P no50
 #PBS -q dgxa100
@@ -64,7 +66,16 @@ if [[ $device == cuda && ${PBS_NGPUS:-0} != 1 ]]; then
     printf 'BLOCKED: training requires exactly one allocated GPU (or NCI_DEVICE=cpu).\n' >&2
     exit 1
 fi
-if [[ -e $NCI_OUTPUT_DIR ]]; then
+if [[ -n ${NCI_RESUME:-} && $NCI_RESUME != 1 ]]; then
+    printf 'BLOCKED: NCI_RESUME must be 1 or unset.\n' >&2
+    exit 1
+fi
+if [[ ${NCI_RESUME:-} == 1 ]]; then
+    if [[ ! -f $NCI_OUTPUT_DIR/last.pt ]]; then
+        printf 'BLOCKED: NCI_RESUME=1 needs %s/last.pt from the stopped run.\n' "$NCI_OUTPUT_DIR" >&2
+        exit 1
+    fi
+elif [[ -e $NCI_OUTPUT_DIR ]]; then
     printf 'BLOCKED: %s already exists; runs are never overwritten.\n' "$NCI_OUTPUT_DIR" >&2
     exit 1
 fi
@@ -85,6 +96,9 @@ if [[ -n ${NCI_MODEL_SEED:-} ]]; then
 fi
 if [[ -n ${NCI_PREDICT_FROM:-} ]]; then
     options+=(--predict-from "$NCI_PREDICT_FROM")
+fi
+if [[ ${NCI_RESUME:-} == 1 ]]; then
+    options+=(--resume)
 fi
 
 printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"

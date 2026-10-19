@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def environment_without_pbs():
-    return {key: value for key, value in os.environ.items() if not key.startswith("PBS_")}
+    return {
+        key: value for key, value in os.environ.items() if not key.startswith("PBS_")
+    }
 
 
 def test_job_refuses_execution_without_pbs():
@@ -41,7 +43,9 @@ def test_gpu_preflight_refuses_login_node_probe():
     assert "Python:" not in result.stdout
 
 
-@pytest.mark.parametrize("epochs", ["0", "3", "100", "-1", "two", "18446744073709551617"])
+@pytest.mark.parametrize(
+    "epochs", ["0", "3", "100", "-1", "two", "18446744073709551617"]
+)
 def test_smoke_rejects_unbounded_or_invalid_epochs_before_gpu_use(epochs):
     environment = environment_without_pbs()
     environment.update(
@@ -183,12 +187,44 @@ def test_the_lock_names_one_linux_torch_build_that_runs_on_v100_and_a100():
     assert locked_cuda_build(records) == "12.6"
 
 
-@pytest.mark.parametrize(
-    "versions", [["2.13.0"], ["2.13.0+cu126", "2.13.0+cu130"]]
-)
+@pytest.mark.parametrize("versions", [["2.13.0"], ["2.13.0+cu126", "2.13.0+cu130"]])
 def test_a_lock_without_exactly_one_cuda_build_is_refused(versions):
     from scripts.nci.check_environment import locked_cuda_build
 
     records = {"torch": [{"version": version} for version in versions]}
     with pytest.raises(SystemExit, match="one CUDA build"):
         locked_cuda_build(records)
+
+
+def test_resuming_needs_the_stopped_runs_checkpoint(tmp_path):
+    result = subprocess.run(
+        ["bash", "scripts/nci/train.pbs"],
+        cwd=ROOT,
+        env=training_environment(
+            NCI_MODEL_CONFIG="config/models/d09_round_robin_grs.yaml",
+            NCI_OUTPUT_DIR=str(tmp_path / "fold-0"),
+            NCI_RESUME="1",
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "needs" in result.stderr and "last.pt" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "script",
+    ["build_graph.pbs", "score.pbs", "publish_tables.pbs", "prepare_python.pbs"],
+)
+def test_new_jobs_refuse_to_run_outside_pbs(script):
+    result = subprocess.run(
+        ["bash", f"scripts/nci/{script}"],
+        cwd=ROOT,
+        env=environment_without_pbs(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "BLOCKED" in result.stderr
