@@ -504,6 +504,9 @@ def test_folds_on_the_cpu_queue_train_on_cpu(repo):
     fold = result.jobs[0]
     assert fold.variables["NCI_DEVICE"] == "cpu"
     assert fold.job["ngpus"] == 0
+    # train.pbs's header asks for a GPU, which the normal queue refuses.
+    assert fold.script == "scripts/nci/train_cpu.pbs"
+    assert plan(repo).jobs[0].script == "scripts/nci/train.pbs"
 
 
 @pytest.mark.parametrize(

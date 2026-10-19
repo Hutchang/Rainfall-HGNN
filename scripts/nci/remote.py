@@ -693,6 +693,14 @@ def plan_warnings(rows, estimate, available, queue, load):
     return warnings
 
 
+def train_script(profile):
+    """train.pbs asks for a GPU in its header, and a qsub -l without ngpus does not
+    take that away, so CPU folds go through train_cpu.pbs, which asks for none."""
+    if profile["device"] == "cpu":
+        return "scripts/nci/train_cpu.pbs"
+    return "scripts/nci/train.pbs"
+
+
 def fold_dir(output, fold):
     return f"{output}/fold-{fold}"
 
@@ -742,7 +750,7 @@ def plan_jobs(cfg, settings, inputs, paths, env_dir, graph_dir, facts, queue, wa
         jobs.append(
             Job(
                 f"fold-{fold}",
-                "scripts/nci/train.pbs",
+                train_script(profile),
                 profile,
                 variables,
                 list(before),
@@ -1144,7 +1152,7 @@ def resume(run_dir, cfg, ssh, queue=None):
         command = qsub_command(
             cfg["project"],
             profile,
-            "scripts/nci/train.pbs",
+            train_script(profile),
             variables,
             state["storage"],
             state["logs"][fold],
