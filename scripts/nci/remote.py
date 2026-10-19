@@ -1361,7 +1361,12 @@ def doctor(cfg, ssh, say=print):
             )
         )
     except ConnectionLostError as error:
-        return [f"{error}\nSet up an SSH key for Gadi; see docs/nci/ONBOARDING.md"]
+        return [
+            f"{error}\nSSH could not log in without a password. Check that "
+            "~/.ssh/config gives your NCI username (User ab1234) for "
+            "gadi.nci.org.au and gadi-dm.nci.org.au, and that your key is on Gadi; "
+            "see docs/nci/ONBOARDING.md, step 2"
+        ]
     say(f"Gadi user: {facts.get('user')}")
     try:
         ssh.run(cfg["transfer_host"], "true")

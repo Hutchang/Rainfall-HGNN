@@ -841,7 +841,7 @@ def test_doctor_explains_a_failed_login():
     (problem,) = remote.doctor(
         remote.load_remote_config(ROOT / "config/nci/remote.yaml"), ssh, lambda t: None
     )
-    assert "SSH key" in problem
+    assert "~/.ssh/config gives your NCI username" in problem
 
 
 # --- resuming a run whose folds did not all finish ---------------------------------
