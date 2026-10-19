@@ -19,19 +19,25 @@ and Component 04 validated graphs. Code in Git does not include those generated
 artifacts. The input preflight reports missing files; it never creates substitutes.
 A synthetic fixture checks software only and is labelled in its run configuration.
 
-**The default queue is `dgxa100`.** The current lock pins PyTorch 2.13.0 with CUDA 13
-dependencies on Linux. CUDA 13 does not support Volta/V100 GPUs, so the usual
-`gpuvolta` example is incompatible. The supplied smoke job requests one A100 with
-16 CPUs, 48 GB RAM and ten minutes. Its estimated maximum charge is 12 SU
-(`16 × 4.5 × 10/60`), assuming the published charging rules. This is shared project
-usage, not a personal allowance. [NCI queue limits](https://opus.nci.org.au/spaces/Help/pages/90308823/Queue+Limits),
-[PyTorch 2.13](https://pytorch.org/blog/pytorch-2-13-release-blog/),
-[NVIDIA CUDA 13 release notes](https://docs.nvidia.com/cuda/archive/13.0.0/cuda-toolkit-release-notes/index.html).
+**Both GPU queues run the same environment.** `pyproject.toml` takes PyTorch 2.13.0's
+CUDA 12.6 build on Linux (`[tool.uv.sources]`), which has kernels for the V100 (sm_70)
+and the A100 (sm_80). PyPI's default Linux build is CUDA 13, which dropped the V100.
+macOS and Windows keep PyPI's build. One `.venv`, prepared by
+`scripts/nci/prepare_environment.pbs`, therefore serves:
 
-The actual A100 driver and queue access still need checking. A CUDA 12 build for V100
-would require a separately reviewed dependency/index/lock change. Loading an older
-NCI PyTorch module or replacing torch with pip would bypass repository dependency
-authority; neither is part of this setup.
+| Queue | GPU | Per GPU | Charge | Measured, G+R on the 2022 tables |
+|---|---|---|---|---|
+| `gpuvolta` | V100 32 GB | 12 CPUs | 3 SU per CPU-hour (36 SU per GPU-hour) | ~212 s per epoch (raw-radar G+R) |
+| `dgxa100` | A100 80 GB | 16 CPUs | 4.5 SU per CPU-hour (72 SU per GPU-hour) | ~124 s per epoch |
+| `normal` | none | 16 CPUs | 2 SU per CPU-hour (32 SU per job-hour) | ~277 s per epoch |
+
+`gpuvolta` is the much larger pool and usually starts sooner; `dgxa100` jobs have
+waited more than a day for a node. `scripts/nci/check_environment.py` checks that the
+environment's CUDA build matches `uv.lock` and, inside a GPU job, that the build has
+kernels for the allocated GPU. Loading an NCI PyTorch module or replacing torch with
+pip would bypass `uv.lock`; neither is part of this setup.
+[NCI queue limits](https://opus.nci.org.au/spaces/Help/pages/90308823/Queue+Limits),
+[PyTorch 2.13](https://pytorch.org/blog/pytorch-2-13-release-blog/).
 
 ## 1. Establish access and check the project
 
@@ -233,7 +239,7 @@ built on your own machine and uploaded; they are small.
 | Gauge tables | your machine | Component 02, then upload | `database/standard/gauge_hourly.csv`, `stations.csv` |
 | Grid tables | `normal`, 1 CPU, 32 GB | `build_grids.pbs` | `database/standard/{radar,satellite}_{hourly,nodes}.csv`, `grid_report.md` |
 | Graphs | `normal`, 24 CPUs, 96 GB | `build_graphs.pbs` | `database/graphs/d09_round_robin_{g,gr,grs}/` |
-| Training | `dgxa100`, 1 A100 | `train.pbs` | `experiments/nci/<run>/` |
+| Training | `gpuvolta` (1 V100) or `dgxa100` (1 A100); `normal` on CPU | `train_volta.pbs`, `train.pbs`, `train_cpu.pbs` | `experiments/nci/<run>/` |
 
 The three runs are G, G+R and G+R+S on the round-robin split
 ([DEC-03](../DECISIONS.md#dec-03)), configured in `config/graphs/d09_round_robin_*.yaml`

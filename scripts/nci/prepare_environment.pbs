@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Link this checkout's .venv to the project's shared environment for its uv.lock,
+# building that environment first if no one has yet. Environments live in
+# $NCI_SHARED_ROOT/envs/<hash of uv.lock>/ (default
+# /g/data/no50/rainflow), are built once, then made read-only, so every teammate and
+# every running job reads the same files and a new lock never rebuilds one in use.
+# The interpreter is the shared conda-forge Python 3.14 that
+# scripts/nci/prepare_python.pbs installs once; NCI_PYTHON=<python> overrides it.
+#   qsub scripts/nci/prepare_environment.pbs
 #PBS -P no50
 #PBS -q copyq
 #PBS -N rainflow-env
@@ -6,7 +14,7 @@
 #PBS -l mem=8GB
 #PBS -l jobfs=20GB
 #PBS -l walltime=00:30:00
-#PBS -l storage=scratch/no50
+#PBS -l storage=scratch/no50+gdata/no50
 #PBS -l wd
 #PBS -j oe
 set -euo pipefail
@@ -82,24 +90,53 @@ if [[ ! -e $task_uv ]]; then
 fi
 "$task_uv" --version
 
-task_stage=locked-python-environment
-export UV_PYTHON_INSTALL_DIR="$task_scratch/.local/share/uv/python"
-export UV_CACHE_DIR="$PBS_JOBFS/rainflow-uv-cache"
-export UV_PROJECT_ENVIRONMENT="$task_repo/.venv"
-export UV_LINK_MODE=copy
-export PYTHONDONTWRITEBYTECODE=1
-export OMP_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export MPLBACKEND=Agg
+task_stage=shared-environment
+task_shared=${NCI_SHARED_ROOT:-/g/data/no50/rainflow}
+task_key=$(sha256sum < uv.lock | cut -c1-16)
+task_env="$task_shared/envs/$task_key"
 # uv's own Python 3.14 builds segfault on Gadi: numpy's temporary-elision check calls
 # glibc backtrace(), which crashes unwinding through those binaries on RHEL 8. A
-# conda-forge Python 3.14 does not. Pass its path with qsub -v NCI_PYTHON=<python>.
-"$task_uv" sync --locked --python "${NCI_PYTHON:-3.14.3}"
-if [[ $(sha256sum pyproject.toml uv.lock) != "$task_locked_files" ]]; then
-    printf 'BLOCKED: dependency authority files changed during preparation.\n' >&2
+# conda-forge Python 3.14 does not.
+task_python=${NCI_PYTHON:-$task_shared/python/py314/bin/python3.14}
+if [[ -L .venv ]]; then
+    :
+elif [[ -e .venv ]]; then
+    printf 'BLOCKED: %s/.venv is this checkout'"'"'s own environment. Remove it once no job uses it (it holds ~30,000 files of scratch quota), then submit this job again.\n' "$task_repo" >&2
     exit 1
 fi
+if [[ ! -f $task_env/READY ]]; then
+    if [[ ! -x $task_python ]]; then
+        printf 'BLOCKED: no Python at %s; run scripts/nci/prepare_python.pbs once, or pass NCI_PYTHON.\n' "$task_python" >&2
+        exit 1
+    fi
+    umask 027
+    mkdir -p "$task_shared/envs"
+    # mkdir is the lock: only one job builds a given environment.
+    if ! mkdir "$task_env" 2>/dev/null; then
+        printf 'BLOCKED: %s exists without READY: another job is building it, or a build failed. If no job is building it, remove the folder and submit again.\n' "$task_env" >&2
+        exit 1
+    fi
+    export UV_PYTHON_INSTALL_DIR="$PBS_JOBFS/rainflow-uv-python"
+    export UV_CACHE_DIR="$PBS_JOBFS/rainflow-uv-cache"
+    export UV_PROJECT_ENVIRONMENT="$task_env"
+    export UV_LINK_MODE=copy
+    export PYTHONDONTWRITEBYTECODE=1
+    export OMP_NUM_THREADS=1
+    export OPENBLAS_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export MPLBACKEND=Agg
+    "$task_uv" sync --locked --python "$task_python"
+    if [[ $(sha256sum pyproject.toml uv.lock) != "$task_locked_files" ]]; then
+        printf 'BLOCKED: dependency authority files changed during preparation.\n' >&2
+        exit 1
+    fi
+    sha256sum pyproject.toml uv.lock > "$task_env/LOCK"
+    touch "$task_env/READY"
+    chmod -R a-w "$task_env"
+    printf 'Built the shared environment %s.\n' "$task_env"
+fi
+ln -sfn "$task_env" .venv
+printf 'Linked %s/.venv to %s.\n' "$task_repo" "$task_env"
 
 task_stage=environment-check
 .venv/bin/python -B scripts/nci/check_environment.py
@@ -109,7 +146,7 @@ task_fixture="$task_repo/experiments/nci-fixture-$PBS_JOBID"
 task_stage=synthetic-input-preflight
 bash scripts/nci/preflight.sh "$task_fixture/config.yaml"
 
-printf 'ENVIRONMENT_STATUS=READY\n'
+printf 'ENVIRONMENT_STATUS=READY %s\n' "$task_env"
 printf 'NCI_FIXTURE_CONFIG=%s/config.yaml\n' "$task_fixture"
 printf 'UV_EXECUTABLE=%s\n' "$task_uv"
 printf 'PRODUCTION_STATUS=PENDING: real Component 02/03/04 inputs are separate from this synthetic software check.\n'

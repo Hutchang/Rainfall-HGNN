@@ -166,3 +166,29 @@ def test_the_chain_is_submitted_from_a_login_node_only():
     )
     assert result.returncode == 1
     assert "not inside a job" in result.stderr
+
+
+def test_the_lock_names_one_linux_torch_build_that_runs_on_v100_and_a100():
+    import tomllib
+
+    from packaging.utils import canonicalize_name
+
+    from scripts.nci.check_environment import locked_cuda_build
+
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    records = {}
+    for package in lock["package"]:
+        records.setdefault(canonicalize_name(package["name"]), []).append(package)
+    # CUDA 12.x still ships V100 (sm_70) kernels; CUDA 13 dropped them.
+    assert locked_cuda_build(records) == "12.6"
+
+
+@pytest.mark.parametrize(
+    "versions", [["2.13.0"], ["2.13.0+cu126", "2.13.0+cu130"]]
+)
+def test_a_lock_without_exactly_one_cuda_build_is_refused(versions):
+    from scripts.nci.check_environment import locked_cuda_build
+
+    records = {"torch": [{"version": version} for version in versions]}
+    with pytest.raises(SystemExit, match="one CUDA build"):
+        locked_cuda_build(records)

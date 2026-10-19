@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check .venv-volta on one V100: torch sees the GPU, is built for sm_70, runs a CUDA
+# Check .venv on one V100: torch sees the GPU, is built for sm_70, runs a CUDA
 # operation, then times NCI_EPOCHS (default 1) of NCI_MODEL_CONFIG on fold NCI_FOLDS.
 #   qsub -v NCI_MODEL_CONFIG=<config>,NCI_FOLDS=0 scripts/nci/volta_check.pbs
 #PBS -P no50
@@ -10,12 +10,12 @@
 #PBS -l mem=90GB
 #PBS -l jobfs=10GB
 #PBS -l walltime=00:45:00
-#PBS -l storage=scratch/no50
+#PBS -l storage=scratch/no50+gdata/no50
 #PBS -l wd
 #PBS -j oe
 set -euo pipefail
 cd "${PBS_O_WORKDIR:?submit this script through PBS from the repository root}"
-py=.venv-volta/bin/python
+py=.venv/bin/python
 export PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg OMP_NUM_THREADS=${PBS_NCPUS:-1}
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
 "$py" - <<'EOF'
