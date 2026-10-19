@@ -964,13 +964,17 @@ def test_doctor_checks_the_transfer_host_too():
     assert "ssh gadi-dm.nci.org.au hostname" in problem
 
 
-def test_auto_takes_the_cpu_queue_when_its_folds_would_finish_sooner(repo):
+def test_auto_takes_the_cpu_queue_only_when_its_folds_would_finish_sooner(repo):
     layers = ["raingauge", "radar", "satellite"]
     commit(repo, "config/models/grs.yaml", model_settings(input_layers=layers))
-    assert plan(repo, model="config/models/grs.yaml").queue == "normal"
-    assert plan(repo).queue == "gpuvolta"  # gauge-only folds are faster on a GPU
-    rich = gadi(probe_output(account=ACCOUNT.replace("5.67 KSU", "50.00 KSU")))
-    asked = plan(repo, rich, queue="gpuvolta", model="config/models/grs.yaml")
+    rich = probe_output(account=ACCOUNT.replace("5.67 KSU", "50.00 KSU"))
+    # Measured G+R+S epochs are far slower on CPUs, so auto keeps it on a GPU.
+    assert plan(repo, gadi(rich), model="config/models/grs.yaml").queue == "gpuvolta"
+    cfg = yaml.safe_load((repo / "config/nci/remote.yaml").read_text())
+    cfg["epoch_seconds_per_1000_hours"]["normal"]["raingauge+radar+satellite"] = 10.0
+    commit(repo, "config/nci/remote.yaml", cfg)
+    assert plan(repo, gadi(rich), model="config/models/grs.yaml").queue == "normal"
+    asked = plan(repo, gadi(rich), queue="gpuvolta", model="config/models/grs.yaml")
     assert asked.queue == "gpuvolta"  # an explicit choice is kept
 
 

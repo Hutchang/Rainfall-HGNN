@@ -80,8 +80,13 @@ epoch_seconds_per_1000_hours:
     raingauge+radar+satellite: 102.6
   normal:
     raingauge: 21.9
+    # G+R and G+R+S on normal were measured on graphs built before D09.2 linked each
+    # radar and satellite cell to its grid neighbours. Run 2026-10-19_1335_grs2022
+    # showed G+R+S on today's graphs takes over 53 minutes an epoch on 16 CPUs (over
+    # 364 s per 1,000 hours), so that figure is a lower bound and G+R is likely an
+    # underestimate too. Remeasure both before trusting a CPU walltime.
     raingauge+radar: 31.6
-    raingauge+radar+satellite: 35.3
+    raingauge+radar+satellite: 400.0
 walltime_margin: 1.3
 
 poll_seconds: 300

@@ -22,8 +22,9 @@ with.
 
 `plan` and `submit` take `--queue gpuvolta`, `--queue dgxa100` or `--queue normal`. The
 default, `auto`, picks the GPU queue with fewer jobs waiting for each job running, then
-switches to `normal` if a fold would finish sooner on CPUs. That is the case for G+R+S,
-whose folds take about 60 seconds per 1,000 hours on an A100 and 35 on 16 CPUs.
+switches to `normal` if `remote.yaml`'s timings say a fold would finish sooner on CPUs.
+On today's graphs that is never the case for G+R+S, whose epochs take about 60 seconds
+per 1,000 hours on an A100 and over 360 on 16 CPUs.
 `submit --wait` waits for the run and fetches it. `fetch --with-predictions` also
 downloads each run's `predictions.csv`, which is several hundred MB.
 
