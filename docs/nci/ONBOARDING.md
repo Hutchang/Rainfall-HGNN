@@ -26,20 +26,12 @@ The tool never handles passwords, so SSH must log in by key.
    On Windows, where `ssh-copy-id` is missing, log in with
    `ssh ab1234@gadi.nci.org.au` and paste the contents of `id_ed25519.pub` as a new line
    of `~/.ssh/authorized_keys` there.
-3. Add this to `~/.ssh/config` on your machine:
-
-   ```text
-   Host gadi.nci.org.au gadi-dm.nci.org.au
-       User ab1234
-       IdentityFile ~/.ssh/id_ed25519
-   ```
-
-4. Log in once to each of the two hosts the tool uses, and accept each host key when
+3. Log in once to each of the two hosts the tool uses, and accept each host key when
    asked, after checking it against [NCI's published fingerprints](https://opus.nci.org.au/spaces/Help/pages/12583143/How+to+login+to+Gadi):
 
    ```console
-   ssh gadi.nci.org.au hostname
-   ssh gadi-dm.nci.org.au hostname
+   ssh ab1234@gadi.nci.org.au hostname
+   ssh ab1234@gadi-dm.nci.org.au hostname
    ```
 
    `gadi-dm` is NCI's data mover, which carries uploads and downloads. Each command
@@ -53,6 +45,11 @@ cd COMP3888-m17-01-p23
 uv sync --locked
 uv run python -m scripts.nci.remote doctor
 ```
+
+Every command asks for your NCI username, so the same checkout works for whoever uses
+it. To skip the question, add `--user ab1234` to the command or set the variable
+`NCI_USERNAME=ab1234` in your shell. `status` and `fetch` reuse the username each run
+was submitted with.
 
 `doctor` checks your login, your membership of no50, that you can read the shared
 environment, and the project's SU and file quotas. It prints `Ready to submit.` or says

@@ -22,6 +22,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import shlex
 import shutil
@@ -588,8 +589,9 @@ def write_tar(stream, files):
 class Ssh:
     """Commands on Gadi through the local ssh client. It never asks for passwords."""
 
-    def __init__(self, cfg):
-        self.base = [str(part) for part in cfg["ssh"]]
+    def __init__(self, cfg, user):
+        # -l: log in as the NCI username the user gave, whatever ~/.ssh/config says.
+        self.base = [*(str(part) for part in cfg["ssh"]), "-l", user]
 
     def _argv(self, host, command):
         # bash explicitly: the remote login shell may not be bash
@@ -997,6 +999,7 @@ def submit(plan, cfg, ssh, run_dir, root=ROOT):
         "status": "UPLOADING",
         "model_config": plan.model_config,
         "revision": plan.revision,
+        "nci_user": plan.user,
         "login_host": login,
         "transfer_host": cfg["transfer_host"],
         "remote": paths,
@@ -1362,10 +1365,9 @@ def doctor(cfg, ssh, say=print):
         )
     except ConnectionLostError as error:
         return [
-            f"{error}\nSSH could not log in without a password. Check that "
-            "~/.ssh/config gives your NCI username (User ab1234) for "
-            "gadi.nci.org.au and gadi-dm.nci.org.au, and that your key is on Gadi; "
-            "see docs/nci/ONBOARDING.md, step 2"
+            f"{error}\nSSH could not log in without a password. Check the NCI "
+            "username you gave and that your SSH key is on Gadi; see "
+            "docs/nci/ONBOARDING.md, step 2"
         ]
     say(f"Gadi user: {facts.get('user')}")
     try:
@@ -1400,15 +1402,37 @@ def doctor(cfg, ssh, say=print):
     return problems
 
 
+def nci_username(given, ask, runs=()):
+    """The NCI username to log in as: the one runs were submitted with, else
+    --user, else $NCI_USERNAME, else asked for."""
+    saved = {read_state(run).get("nci_user") for run in runs}
+    if len(saved) == 1 and None not in saved:
+        return saved.pop()
+    name = given or os.environ.get("NCI_USERNAME") or ask("NCI username: ")
+    name = name.strip()
+    if not re.fullmatch(r"[a-z][a-z0-9]{1,15}", name):
+        raise BlockedError(
+            f"{name!r} is not an NCI username (lower-case letters and digits, "
+            "such as ab1234)"
+        )
+    return name
+
+
 def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
     root = root or ROOT
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--remote-config", type=Path, default=DEFAULT_CONFIG)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--user",
+        help="your NCI username; asked for when neither this nor $NCI_USERNAME "
+        "gives it",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("plan", "submit"):
-        sub = commands.add_parser(name)
+        sub = commands.add_parser(name, parents=[common])
         sub.add_argument("model_config", type=Path)
         sub.add_argument(
             "--queue",
@@ -1422,9 +1446,9 @@ def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
             sub.add_argument(
                 "--wait", action="store_true", help="wait for the jobs, then fetch"
             )
-    status = commands.add_parser("status")
+    status = commands.add_parser("status", parents=[common])
     status.add_argument("run_dirs", type=Path, nargs="*")
-    fetch_parser = commands.add_parser("fetch")
+    fetch_parser = commands.add_parser("fetch", parents=[common])
     fetch_parser.add_argument("run_dirs", type=Path, nargs="*")
     fetch_parser.add_argument("--wait", action="store_true")
     fetch_parser.add_argument(
@@ -1432,15 +1456,20 @@ def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
         action="store_true",
         help="also download predictions.csv (hundreds of MB per run)",
     )
-    resume_parser = commands.add_parser("resume")
+    resume_parser = commands.add_parser("resume", parents=[common])
     resume_parser.add_argument("run_dir", type=Path)
     resume_parser.add_argument("--queue", help="run the remaining folds on this queue")
-    commands.add_parser("doctor")
+    commands.add_parser("doctor", parents=[common])
     args = parser.parse_args(argv)
     run_dir = None
     try:
         cfg = load_remote_config(root / args.remote_config)
-        ssh = ssh_factory(cfg)
+        runs = []
+        if args.command in ("status", "fetch"):
+            runs = args.run_dirs or unfetched_runs(root)
+        elif args.command == "resume":
+            runs = [args.run_dir]
+        ssh = ssh_factory(cfg, nci_username(args.user, confirm, runs))
         if args.command == "resume":
             state = resume(args.run_dir, cfg, ssh, args.queue)
             print(f"Resubmitted {state['jobs']}")
@@ -1452,7 +1481,6 @@ def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
             print("Ready to submit." if not problems else "Fix the problems above.")
             return 1 if problems else 0
         if args.command in ("status", "fetch"):
-            runs = args.run_dirs or unfetched_runs(root)
             if not runs:
                 print("No submitted runs waiting to be fetched.")
             for run_dir in runs:

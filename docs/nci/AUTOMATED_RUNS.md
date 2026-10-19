@@ -16,6 +16,10 @@ you have not set up your account yet, start with [ONBOARDING.md](ONBOARDING.md).
 | `uv run python -m scripts.nci.remote resume experiments/nci/<run>` | Resubmits the folds of a run that did not all succeed, continuing each from where it stopped, then scores again. |
 | `uv run python -m scripts.nci.remote doctor` | Checks your SSH login, project membership, the shared environment and the project's quotas. |
 
+Every command asks for your NCI username, or takes it from `--user` or
+`$NCI_USERNAME`. `status`, `fetch` and `resume` use the username a run was submitted
+with.
+
 `plan` and `submit` take `--queue gpuvolta`, `--queue dgxa100` or `--queue normal`. The
 default, `auto`, picks the GPU queue with fewer jobs waiting for each job running, then
 switches to `normal` if a fold would finish sooner on CPUs. That is the case for G+R+S,

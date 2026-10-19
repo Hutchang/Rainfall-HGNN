@@ -537,8 +537,8 @@ def test_only_hgnn_runs_are_sent(repo):
 def test_declining_the_plan_submits_nothing(repo):
     ssh = gadi()
     code = remote.main(
-        ["submit", "config/models/model.yaml"],
-        ssh_factory=lambda cfg: ssh,
+        ["submit", "config/models/model.yaml", "--user", "rh0513"],
+        ssh_factory=lambda cfg, user: ssh,
         confirm=lambda prompt: "no",
         root=repo,
     )
@@ -553,8 +553,13 @@ def test_declining_the_plan_submits_nothing(repo):
 
 def submitted(repo, ssh, *extra):
     code = remote.main(
-        ["submit", "config/models/model.yaml", "--label", "t", "--yes", *extra],
-        ssh_factory=lambda cfg: ssh,
+        [
+            "submit",
+            "config/models/model.yaml",
+            *("--label", "t", "--yes", "--user", "rh0513"),
+            *extra,
+        ],
+        ssh_factory=lambda cfg, user: ssh,
         root=repo,
     )
     (run_dir,) = (repo / "experiments/nci").iterdir()
@@ -792,7 +797,7 @@ def test_fetch_with_no_run_named_takes_every_submitted_unfetched_run(tmp_path):
 
 
 def test_ssh_failures_are_told_apart_from_failed_commands():
-    ssh = remote.Ssh({"ssh": ["ssh"]})
+    ssh = remote.Ssh({"ssh": ["ssh"]}, "ab1234")
     with pytest.raises(remote.ConnectionLostError):
         ssh._check("gadi", "qstat", 255, "Connection reset by peer")
     with pytest.raises(BlockedError) as error:
@@ -841,7 +846,7 @@ def test_doctor_explains_a_failed_login():
     (problem,) = remote.doctor(
         remote.load_remote_config(ROOT / "config/nci/remote.yaml"), ssh, lambda t: None
     )
-    assert "~/.ssh/config gives your NCI username" in problem
+    assert "Check the NCI username you gave" in problem
 
 
 # --- resuming a run whose folds did not all finish ---------------------------------
@@ -967,3 +972,51 @@ def test_auto_takes_the_cpu_queue_when_its_folds_would_finish_sooner(repo):
     rich = gadi(probe_output(account=ACCOUNT.replace("5.67 KSU", "50.00 KSU")))
     asked = plan(repo, rich, queue="gpuvolta", model="config/models/grs.yaml")
     assert asked.queue == "gpuvolta"  # an explicit choice is kept
+
+
+# --- whose account a run uses ---------------------------------------------------------
+
+
+def test_ssh_logs_in_as_the_username_given():
+    ssh = remote.Ssh({"ssh": ["ssh", "-o", "BatchMode=yes"]}, "ab1234")
+    assert ssh._argv("gadi.nci.org.au", "hostname")[:5] == [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-l",
+        "ab1234",
+    ]
+
+
+def test_the_username_comes_from_the_flag_the_environment_or_a_prompt(monkeypatch):
+    def never(prompt):
+        raise AssertionError("asked although the username was given")
+
+    monkeypatch.delenv("NCI_USERNAME", raising=False)
+    assert remote.nci_username("ab1234", never) == "ab1234"
+    monkeypatch.setenv("NCI_USERNAME", "cd5678")
+    assert remote.nci_username(None, never) == "cd5678"
+    monkeypatch.delenv("NCI_USERNAME")
+    asked = []
+    assert remote.nci_username(None, lambda p: asked.append(p) or " ef9012\n") == (
+        "ef9012"
+    )
+    assert asked == ["NCI username: "]
+    with pytest.raises(BlockedError, match="not an NCI username"):
+        remote.nci_username("AB 1234", never)
+
+
+def test_a_run_is_checked_and_fetched_as_the_user_who_submitted_it(tmp_path):
+    run_dir = write_run(tmp_path, {"score": "2.gadi-pbs"})
+    state = json.loads((run_dir / "state.json").read_text())
+    (run_dir / "state.json").write_text(json.dumps(dict(state, nci_user="ab1234")))
+
+    def never(prompt):
+        raise AssertionError("asked although the run records its user")
+
+    assert remote.nci_username("zz9999", never, [run_dir]) == "ab1234"
+
+
+def test_submit_records_who_submitted_the_run(repo):
+    _, _, state = submitted(repo, gadi())
+    assert state["nci_user"] == "rh0513"

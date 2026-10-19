@@ -1,6 +1,6 @@
-# Settings for scripts/nci/remote.py. Your NCI username is not stored here: put it in
-# ~/.ssh/config (see docs/nci/ONBOARDING.md) so `ssh gadi.nci.org.au` logs in without
-# a password prompt.
+# Settings for scripts/nci/remote.py, shared by the whole team. Nobody's NCI username
+# is stored here: the tool asks for it (or takes --user or $NCI_USERNAME) and logs in
+# with your SSH key (see docs/nci/ONBOARDING.md).
 project: no50
 login_host: gadi.nci.org.au      # commands and job submission
 transfer_host: gadi-dm.nci.org.au  # uploads and downloads (NCI's data movers)
