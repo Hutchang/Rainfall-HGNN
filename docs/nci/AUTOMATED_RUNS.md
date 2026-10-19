@@ -144,4 +144,6 @@ PBS mail (`-m ae`) reaches the address NCI holds for the user. The email for sco
 job 181547997 confirmed it on 2026-10-19.
 
 
-- A full run through `submit` on Gadi, from `plan` to `fetch`.
+Nothing else. A full run went through `submit`, `status` and `fetch` on Gadi on
+2026-10-19 (one epoch of 2022 G: a graph build, five gpuvolta folds and scoring, all
+exit 0, about 13 SU).

@@ -77,8 +77,9 @@ the 2021-2022 extension, graphs are
 built on Gadi into a shared cache named by their fingerprint, and every checkout links
 to one shared environment per `uv.lock` under `/g/data/no50/rainflow/envs/`. The locked
 Linux torch is CUDA 12.6, which runs on both the V100s and the A100s. A run stopped at
-its walltime continues from `last.pt` with `resume`. The planner has been checked
-against Gadi read-only; no run has yet gone through it from submit to fetch (ISS-40).
+its walltime continues from `last.pt` with `resume`. A one-epoch 2022 G run went through
+it on Gadi from `submit` to `fetch` on 2026-10-19, all jobs exit 0; ISS-40 stays open
+until a teammate other than the project lead has run one.
 
 `database/` is gitignored, so no build output travels with the repository. The Sydney
 gauge tables have been rebuilt from the team's national download (`database.zip`): the

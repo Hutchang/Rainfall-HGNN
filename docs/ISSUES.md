@@ -662,6 +662,13 @@ committed config with one command as one job per fold on whichever queue suits, 
 fetch the scored run, using shared environment and tables, with no file edited by
 hand on Gadi.
 
+**Progress, 2026-10-19.** Gaps 1 to 6 are addressed on `feature/gadi-fold-jobs`: one
+CUDA 12.6 environment shared on `/g/data`, tables published once
+(`config/nci/datasets.yaml`), one job per fold with a shared graph cache and a scoring
+job, walltimes from measured epoch times, `resume` from `last.pt`, and
+`docs/nci/ONBOARDING.md` with `doctor`. A one-epoch run went from `submit` to `fetch`
+on Gadi with every job exiting 0. Still to show: a teammate's own run.
+
 <a id="iss-13"></a>
 
 ### ISS-13 — `train_homo.py` and `train_st.py` cannot import
