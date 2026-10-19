@@ -62,6 +62,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Closed |
 | [ISS-38](#iss-38) | D09.2 within-grid topology and coincident-node weighting remain | Material | D09 | Closed |
 | [ISS-39](#iss-39) | A run folder does not say which period, region or nodes it covers | Material | Component 06 | Closed |
+| [ISS-40](#iss-40) | Teammates cannot run Gadi experiments without hand-written jobs and one person's setup | Material | Component 06 | Open |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
 | [ISS-23](#iss-23) | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
@@ -636,6 +637,30 @@ otherwise the extent is UNKNOWN with the reason. The result is `data_scope` in
 canonical, split, graph and grid reports are copied to the run's `inputs/` folder, so
 the configured period and region travel with it; a missing one is named. The configured
 period and region are still not known to Component 06 itself (ISS-32).
+
+<a id="iss-40"></a>
+
+### ISS-40 — Teammates cannot run Gadi experiments without hand-written jobs and one person's setup
+**Severity:** Material · **Owner:** Component 06 · **Status:** Open
+
+Gadi runs so far were submitted by hand from one person's scratch checkout. Six gaps
+stop the rest of the team from running experiments the same way:
+
+1. The locked torch (CUDA 13) does not run on the V100s of `gpuvolta`, the larger GPU
+   pool. A second, unlocked environment was built by hand to use it.
+2. Each checkout builds a private environment of about 30,000 files. Project scratch
+   allows 202,000 files and was at 198,975 on 2026-10-19.
+3. `scripts/nci/remote.py` submits one job for all five folds, cannot submit one job
+   per fold or join and score them, and has never run against Gadi.
+4. Inputs are uploaded per user, and each teammate would upload the same tables again.
+5. Walltime is fixed, not set from measured time per epoch, and a fold that runs out of
+   walltime is lost.
+6. There is no setup guide or check for a new teammate's account, key and quota.
+
+**Closes when:** a teammate with an NCI account in no50 can follow one guide, submit a
+committed config with one command as one job per fold on whichever queue suits, and
+fetch the scored run, using shared environment and tables, with no file edited by
+hand on Gadi.
 
 <a id="iss-13"></a>
 

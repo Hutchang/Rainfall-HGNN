@@ -131,19 +131,43 @@ host/job, then run the input preflight. Do not install or resolve packages insid
 GPU training script. Gadi's `copyq` provides external networking for batch work;
 ordinary compute queues do not. [NCI queue structure](https://opus.nci.org.au/spaces/Help/pages/90308824/Queue+Structure).
 
-The supplied [preparation job](../../scripts/nci/prepare_environment.pbs) requests
-one CPU, 8 GB RAM, 20 GB temporary job storage and 30 minutes in `copyq`:
+The project shares one environment per `uv.lock`, so a teammate links to it instead of
+building their own. A private environment holds about 30,000 files, and project
+scratch allows 202,000 files in total. The supplied
+[preparation job](../../scripts/nci/prepare_environment.pbs) requests one CPU, 8 GB
+RAM, 20 GB temporary job storage and 30 minutes in `copyq`:
 
 ```console
 qsub scripts/nci/prepare_environment.pbs
 ```
 
 It verifies the pinned official uv 0.10.5 Linux archive against its published checksum
-and reviewed digest, installs uv only under the user's personal scratch directory,
-and runs `uv sync --locked --python 3.14.3`. The interpreter and environment persist
-on scratch; the download cache is temporary job storage. It preserves an existing,
-different uv binary and does not change shell profiles or dependency authority files.
-The Python pin matches the local validation environment.
+and reviewed digest, and installs uv under the user's personal scratch directory. It
+then looks for `/g/data/no50/rainflow/envs/<first 16 characters of uv.lock's
+SHA-256>/`, set by `NCI_SHARED_ROOT`:
+
+- If that environment exists and holds `READY`, the job only links the checkout's
+  `.venv` to it.
+- Otherwise it builds it with `uv sync --locked`, writes `READY`, and makes the whole
+  folder read-only. Two jobs never build the same environment, because the folder is
+  created as a lock. A failed build leaves the folder without `READY`; remove it and
+  submit again.
+
+A changed `uv.lock` gets a new folder beside the old one, so an environment a job is
+using is never rebuilt underneath it. A checkout that still has its own `.venv`
+directory is refused rather than replaced; remove it once no job uses it.
+
+The interpreter is a conda-forge Python 3.14, because uv's own Python 3.14 segfaults on
+Gadi. It is installed once for the project at `/g/data/no50/rainflow/python/py314` by
+[`prepare_python.pbs`](../../scripts/nci/prepare_python.pbs), which takes a
+micromamba binary:
+
+```console
+qsub -v NCI_MICROMAMBA=/path/to/micromamba scripts/nci/prepare_python.pbs
+```
+
+Every job script mounts `gdata/no50` (`#PBS -l storage=scratch/no50+gdata/no50`)
+so it can reach the shared environment.
 
 After installation it checks the environment, generates a new explicitly synthetic
 fixture for that job, and validates its inputs. Successful output includes
