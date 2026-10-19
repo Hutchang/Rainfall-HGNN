@@ -43,7 +43,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-10](#iss-10) | Spatial-block cross-validation decision unresolved | Material | _unassigned_ | Closed |
 | [ISS-12](#iss-12) | Plausibility caps, tolerance and coverage threshold need a client decision | Material | _unassigned_ | Blocked |
 | [ISS-14](#iss-14) | Inherited-baseline graph fingerprint test missing | Material | Component 04 | Open |
-| [ISS-15](#iss-15) | No `.gitattributes`; NCI guard tests fail on Windows checkouts | Material | _unassigned_ | Open |
+| [ISS-15](#iss-15) | No `.gitattributes`; NCI guard tests fail on Windows checkouts | Material | _unassigned_ | Closed |
 | [ISS-16](#iss-16) | Failed raw downloads are excluded but not reported | Material | Component 02 | Open |
 | [ISS-18](#iss-18) | Component 03 split summary and plot are not produced | Material | Component 03 | Open |
 | [ISS-19](#iss-19) | Component 03 has no component README | Material | Component 03 | Open |
@@ -698,7 +698,7 @@ Nothing replaced it. Shared graph code is currently unprotected against silent b
 <a id="iss-15"></a>
 
 ### ISS-15 — No `.gitattributes`; NCI guard tests fail on Windows checkouts
-**Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
+**Severity:** Material · **Owner:** _unassigned_ · **Status:** Closed 2026-10-19
 
 The repository has no `.gitattributes`, so Git converts `scripts/nci/*.sh` and `*.pbs` to
 CRLF on Windows. Bash then reads `set -o pipefail<CR>` and aborts before any assertion:
@@ -714,6 +714,13 @@ green suite and a broken NCI path.
 
 **Closes when:** a `.gitattributes` pins `*.sh` and `*.pbs` to LF and the guards pass on a
 fresh Windows clone.
+
+**Closed 2026-10-19** by `fix: keep shell and PBS scripts at LF on every checkout
+(ISS-15)`. `.gitattributes` sets `*.sh` and `*.pbs` to `text eol=lf`. A clone made with
+Windows' conversion turned on (`core.autocrlf=true`) checked `README.md` out with CRLF
+and every `scripts/nci/*.sh` and `*.pbs` with LF, and `bash -n` parses them. This was
+checked on macOS with Git's Windows conversion setting, not on a Windows machine; reopen
+if a Windows clone still fails the guards.
 
 <a id="iss-16"></a>
 
