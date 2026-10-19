@@ -1,6 +1,6 @@
-# Settings for scripts/nci/remote.py. Your NCI username is not stored here: put it in
-# ~/.ssh/config (see docs/nci/README.md) so `ssh gadi.nci.org.au` logs in without a
-# password prompt.
+# Settings for scripts/nci/remote.py, shared by the whole team. Nobody's NCI username
+# is stored here: the tool asks for it (or takes --user or $NCI_USERNAME) and logs in
+# with your SSH key (see docs/nci/ONBOARDING.md).
 project: no50
 login_host: gadi.nci.org.au      # commands and job submission
 transfer_host: gadi-dm.nci.org.au  # uploads and downloads (NCI's data movers)
@@ -8,18 +8,80 @@ transfer_host: gadi-dm.nci.org.au  # uploads and downloads (NCI's data movers)
 ssh: [ssh, -o, BatchMode=yes]
 
 # {project} and {user} are filled in; {user} is your NCI username as Gadi reports it.
-scratch_root: /scratch/{project}/{user}/rainflow           # code, environment, runs
-inputs_root: /g/data/{project}/{user}/rainflow-inputs      # uploaded inputs, reused
+scratch_root: /scratch/{project}/{user}/rainflow  # your code checkout and run folders
+# Shared by the project: environments (scripts/nci/prepare_environment.pbs) and
+# published tables (scripts/nci/publish_tables.pbs, listed in config/nci/datasets.yaml).
+shared_root: /g/data/{project}/rainflow
+# Graphs built by runs, shared by the project and named by everything that decides
+# them. Scratch removes files nobody has read for 100 days; a run rebuilds what is gone.
+graph_cache: /scratch/{project}/rainflow/graphs
 
-job:
-  queue: dgxa100
-  ncpus: 16
-  ngpus: 1
-  mem: 48GB
-  jobfs: 10GB
+# One fold per job. Charge rates are NCI's published ones (docs/nci/README.md);
+# gpuvolta's was confirmed by job 181507760 (12 CPUs, 5.3 minutes, 3.18 SU).
+queues:
+  gpuvolta:  # V100 32 GB, the larger GPU pool
+    ncpus: 12
+    ngpus: 1
+    mem: 90GB
+    jobfs: 10GB
+    su_per_cpu_hour: 3.0
+    device: cuda
+    max_walltime: "48:00:00"
+  dgxa100:  # A100 80 GB
+    ncpus: 16
+    ngpus: 1
+    mem: 128GB
+    jobfs: 10GB
+    su_per_cpu_hour: 4.5
+    device: cuda
+    max_walltime: "48:00:00"
+  normal:  # CPU only; auto picks it when it would finish a fold sooner than the GPU
+    ncpus: 16
+    ngpus: 0
+    mem: 64GB
+    jobfs: 10GB
+    su_per_cpu_hour: 2.0
+    device: cpu
+    max_walltime: "48:00:00"
+
+# Builds a missing graph set into graph_cache before the folds start.
+graph_job:
+  queue: normal
+  ncpus: 24
+  mem: 96GB
+  jobfs: 1GB
   walltime: "01:00:00"
-# Charge rate for the queue above, from NCI's published rules (docs/nci/README.md).
-# The plan multiplies it by ncpus and walltime to show the most a job can cost.
-su_per_cpu_hour: 4.5
+  su_per_cpu_hour: 2.0
+# Joins the five folds and scores every method once they have all finished.
+score_job:
+  queue: normal
+  ncpus: 8
+  mem: 64GB
+  jobfs: 1GB
+  walltime: "01:00:00"
+  su_per_cpu_hour: 2.0
+
+# Seconds per epoch for every 1,000 hours of data, by queue and input layers, from
+# finished Gadi jobs (docs/nci/README.md). A fold's walltime is epochs x this x hours
+# / 1000, times walltime_margin, plus 15 minutes, rounded up to a quarter hour.
+# Measured: dgxa100 G (jobs 181499204-08), G+R (181499210-14) and G+R+S (181499231,
+# 16 epochs in 2.4 hours); gpuvolta G+R (181509853); normal G (181355855-57), G+R
+# (181416787-95) and G+R+S (181416788-96). The rest are scaled from those by the
+# measured gpuvolta/dgxa100 ratio. G+R+S is slower on a GPU than on 16 CPUs, because
+# every training gauge's pass recomputes all 4,712 satellite nodes.
+epoch_seconds_per_1000_hours:
+  dgxa100:
+    raingauge: 4.4
+    raingauge+radar: 14.2
+    raingauge+radar+satellite: 60.0
+  gpuvolta:
+    raingauge: 7.5
+    raingauge+radar: 24.2
+    raingauge+radar+satellite: 102.6
+  normal:
+    raingauge: 21.9
+    raingauge+radar: 31.6
+    raingauge+radar+satellite: 35.3
+walltime_margin: 1.3
 
 poll_seconds: 300

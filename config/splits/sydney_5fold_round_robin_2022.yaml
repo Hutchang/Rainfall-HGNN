@@ -1,0 +1,45 @@
+# 2022 only, as the paper's Sydney testbed (sec 4.1). Identical to config/splits/sydney_5fold_round_robin.yaml except
+# for stations_file and output: the station set is whatever Component 02 marks
+# use_in_study over 2022.
+# Component 03 split settings: the companion to sydney_5fold_blocked.yaml (D08).
+#
+# Identical to sydney_5fold_blocked.yaml except for one setting, fold_assignment, so
+# the two runs differ only in which gauges each fold hides.
+#
+# Why this split exists. The paper's text (§4.2) says folds are "spatially coherent
+# ... so that held-out stations are not adjacent to training stations"; the blocked
+# split follows that text. The first author's code does the opposite:
+# stratified_spatial_kfold_dual (jylow-clone branch, src/sampling/main.py:232, called
+# from train.py:45 and run_idw.py:43) hides exactly one gauge per location cluster per
+# fold, so every hidden gauge keeps its clustermates visible. This split is the
+# closest our pipeline gets to that code without changing the shared rule that every
+# station is hidden exactly once: round_robin deals each cluster's gauges one at a
+# time across the folds, so each fold hides about a fifth of every cluster.
+#
+# Remaining differences from the first author's code, all left as in the blocked
+# split so the two runs stay comparable: 10 clusters on projected kilometres (theirs:
+# 8 on raw degrees); every station is hidden exactly once (theirs: 5 per cluster,
+# about 40 in total, the rest always train); 15 % validation drawn at random (theirs:
+# 20 % per cluster); IDW reads training and validation gauges (theirs: training only).
+#
+# Station set: as in sydney_5fold_blocked.yaml, every station Component 02 marks
+# use_in_study (127 on the 2026-09-20 build); the paper's list was never published
+# (ISS-23).
+
+stations_file: database/standard_2022/stations.csv
+output: config/splits/sydney_5fold_round_robin_2022.json
+
+# Paper §4.2: "We evaluate every method under five-fold spatial cross-validation".
+n_folds: 5
+
+# The first author's code: hidden gauges are spread across every cluster. round_robin
+# is the inherited rule that does this; see the header for how it differs from theirs.
+fold_assignment: round_robin
+
+# Paper silent; same as the blocked split.
+n_clusters: 10
+
+# Paper silent on the share; same as the blocked split. See ISS-34.
+validation_fraction: 0.15
+
+# Seed: config/seeds.yaml split_seed (requirements rule 5).

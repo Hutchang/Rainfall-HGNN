@@ -1,0 +1,20 @@
+# Component 02 table folders published on Gadi by scripts/nci/publish_tables.pbs.
+# A model or graph config that reads a file in one of these folders on your machine
+# reads it from `path` on Gadi; runs never upload tables. `sha256sums` is the SHA-256
+# of the folder's SHA256SUMS file, which the run planner checks on Gadi before
+# submitting, and `hours` is the number of distinct hours in gauge_hourly.csv, which it
+# uses to estimate walltime. To add a folder, publish it and paste the job's output here.
+datasets:
+  # Sydney 2021-2022: gauges, radar (Rainfields3 site 71) and satellite (Himawari
+  # CRRPh) tables from Component 02 and D13, built on Gadi on 2026-10-15 and -16.
+  # Published 2026-10-19 by job 181543780.
+  database/standard:
+    path: /g/data/no50/rainflow/data/sydney-2021-2022-7417ebd1b74e9683
+    sha256sums: 7417ebd1b74e9683b1e042b0f059f4a789e0b77d036c93c3d3e88a00a57758b7
+    hours: 17496
+  # Sydney 2022 only, the paper's period: the same sources cut to 2022 by
+  # config/canonical/standard_2022.yaml. Published 2026-10-19 by job 181546734.
+  database/standard_2022:
+    path: /g/data/no50/rainflow/data/sydney-2022-179097c97473857b
+    sha256sums: 179097c97473857b6195201a46c69ee53f47099834a120a292ad2dc48926a2f7
+    hours: 8736

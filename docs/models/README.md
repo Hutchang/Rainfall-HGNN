@@ -98,6 +98,10 @@ Existing directories are never overwritten.
   progress is printed once per epoch for live runners.
 - `best.pt`: each fold's lowest-validation-loss weights and model construction
   settings. Intermediate checkpoints preserve the completed folds.
+- `last.pt`: each fold's state at the end of its latest epoch, written after every
+  epoch: weights, optimizer, early-stopping count, training history and every random
+  generator. `--resume --output-dir <run>` continues a stopped run from it, and the
+  result matches a run that never stopped (`tests/test_model_resume.py`).
 - `predictions.csv`: all requested methods, on exactly the same observed test rows.
 - `report.md`: overall/per-fold RMSE, MAE and Pearson correlation; a "Data scope"
   section with the period, gauge and sensor extents and the node-count table; explicit

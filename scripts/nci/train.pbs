@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Component 06 training on one Gadi A100: the HGNN plus IDW and network mean on the
-# same rows. The defaults below can be overridden on the qsub command line.
+# Component 06 training on one Gadi GPU: the HGNN plus IDW and network mean on the same
+# rows. The locked torch is built for CUDA 12.6, so the same .venv runs on gpuvolta
+# (V100) and dgxa100 (A100); pick the queue with qsub -q and matching -l resources.
 #   qsub -v NCI_MODEL_CONFIG=config/models/d09_round_robin_grs.yaml,NCI_OUTPUT_DIR=experiments/nci/d09-grs scripts/nci/train.pbs
 # NCI_EPOCHS=1 with a short walltime times one epoch before a full run is booked.
 # Short jobs start sooner, so a full run can be split into one job per fold:
@@ -8,6 +9,11 @@
 #   folds and writes a PARTIAL report. When every fold has finished, join them with
 #   python -m src.models.combine_folds <joined> <fold run> ... and score all methods with
 #   NCI_PREDICT_FROM=<joined>/best.pt. NCI_MODEL_SEED=<n> replaces seeds_file's model seed.
+# NCI_DEVICE=cpu trains on CPU instead; scripts/nci/train_cpu.pbs requests a normal-queue
+# CPU node and sets it, and scripts/nci/train_volta.pbs requests a gpuvolta V100.
+# NCI_RESUME=1 continues a run that stopped (for example at its walltime) in its own
+# NCI_OUTPUT_DIR from last.pt, exactly where it stopped.
+# PBS emails the job owner when the job ends or is aborted (-m ae).
 #PBS -P no50
 #PBS -q dgxa100
 #PBS -N rainflow-train
@@ -16,9 +22,10 @@
 #PBS -l mem=128GB
 #PBS -l jobfs=10GB
 #PBS -l walltime=48:00:00
-#PBS -l storage=scratch/no50
+#PBS -l storage=scratch/no50+gdata/no50
 #PBS -l wd
 #PBS -j oe
+#PBS -m ae
 set -euo pipefail
 
 if [[ -z ${PBS_JOBID:-} || -z ${PBS_O_WORKDIR:-} ]]; then
@@ -50,11 +57,25 @@ if [[ -n ${NCI_PREDICT_FROM:-} && ! -f $NCI_PREDICT_FROM ]]; then
     printf 'BLOCKED: NCI_PREDICT_FROM=%s is not a file.\n' "$NCI_PREDICT_FROM" >&2
     exit 1
 fi
-if [[ ${PBS_NGPUS:-0} != 1 ]]; then
-    printf 'BLOCKED: training requires exactly one allocated GPU.\n' >&2
+device=${NCI_DEVICE:-cuda}
+if [[ $device != cuda && $device != cpu ]]; then
+    printf 'BLOCKED: NCI_DEVICE must be cuda or cpu.\n' >&2
     exit 1
 fi
-if [[ -e $NCI_OUTPUT_DIR ]]; then
+if [[ $device == cuda && ${PBS_NGPUS:-0} != 1 ]]; then
+    printf 'BLOCKED: training requires exactly one allocated GPU (or NCI_DEVICE=cpu).\n' >&2
+    exit 1
+fi
+if [[ -n ${NCI_RESUME:-} && $NCI_RESUME != 1 ]]; then
+    printf 'BLOCKED: NCI_RESUME must be 1 or unset.\n' >&2
+    exit 1
+fi
+if [[ ${NCI_RESUME:-} == 1 ]]; then
+    if [[ ! -f $NCI_OUTPUT_DIR/last.pt ]]; then
+        printf 'BLOCKED: NCI_RESUME=1 needs %s/last.pt from the stopped run.\n' "$NCI_OUTPUT_DIR" >&2
+        exit 1
+    fi
+elif [[ -e $NCI_OUTPUT_DIR ]]; then
     printf 'BLOCKED: %s already exists; runs are never overwritten.\n' "$NCI_OUTPUT_DIR" >&2
     exit 1
 fi
@@ -76,14 +97,25 @@ fi
 if [[ -n ${NCI_PREDICT_FROM:-} ]]; then
     options+=(--predict-from "$NCI_PREDICT_FROM")
 fi
+if [[ ${NCI_RESUME:-} == 1 ]]; then
+    options+=(--resume)
+fi
 
 printf 'PBS job: %s; host: %s; UTC start: %s\n' "$PBS_JOBID" "$(hostname)" "$(date -u +%FT%TZ)"
 git rev-parse HEAD
 git status --short
-nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
-bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+if [[ ! -x .venv/bin/python ]]; then
+    printf 'BLOCKED: .venv/bin/python is missing; run scripts/nci/prepare_environment.pbs.\n' >&2
+    exit 1
+fi
+if [[ $device == cuda ]]; then
+    nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+    bash scripts/nci/preflight.sh --cuda "$NCI_MODEL_CONFIG"
+else
+    bash scripts/nci/preflight.sh "$NCI_MODEL_CONFIG"
+fi
 started=$(date +%s)
-.venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device cuda \
+.venv/bin/python -B -u -m src.models.run "$NCI_MODEL_CONFIG" --device "$device" \
     --output-dir "$NCI_OUTPUT_DIR" "${options[@]}"
 printf 'TRAIN_STATUS=DONE seconds=%s output=%s UTC end: %s\n' \
     "$(( $(date +%s) - started ))" "$NCI_OUTPUT_DIR" "$(date -u +%FT%TZ)"

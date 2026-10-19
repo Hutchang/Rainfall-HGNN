@@ -66,14 +66,20 @@ and prints one line per epoch. The Gadi experiment list on the Experiments tab i
 disabled placeholder; it does not connect to NCI. The
 [workbench guide](experiments/README.md) covers its use.
 
-Component 06 training can be sent to Gadi from a clean local checkout with one command,
-`scripts/nci/remote.py` (D14; [automated runs guide](nci/AUTOMATED_RUNS.md)). It sends the
-committed revision as a git bundle and the inputs git does not carry, checks quota and SU
-balance first, submits `scripts/nci/train.pbs`, and brings the run folder back with a
-verdict in `state.json`. Every run shares one environment on Gadi, so a run needing a
-different `uv.lock` is refused while any of the script's jobs is unfinished. It is tested
-against a stand-in for Gadi only: nothing has run through it on Gadi yet, and the guide
-lists its Gadi-side assumptions as TO VALIDATE.
+Component 06 experiments are sent to Gadi from a clean local checkout with
+`scripts/nci/remote.py` (D14; [onboarding](nci/ONBOARDING.md),
+[automated runs guide](nci/AUTOMATED_RUNS.md)). It submits each fold as its own job on
+`gpuvolta`, `dgxa100` or `normal`, with a walltime set from measured epoch times, then a
+scoring job that waits for all five and is followed by an email from PBS. Nothing is
+uploaded: tables are published once on Gadi under `/g/data/no50/rainflow/data/` and
+listed in `config/nci/datasets.yaml`: the Sydney 2022 tables, the baseline (DEC-04), and
+the 2021-2022 extension, graphs are
+built on Gadi into a shared cache named by their fingerprint, and every checkout links
+to one shared environment per `uv.lock` under `/g/data/no50/rainflow/envs/`. The locked
+Linux torch is CUDA 12.6, which runs on both the V100s and the A100s. A run stopped at
+its walltime continues from `last.pt` with `resume`. A one-epoch 2022 G run went through
+it on Gadi from `submit` to `fetch` on 2026-10-19, all jobs exit 0; ISS-40 stays open
+until a teammate other than the project lead has run one.
 
 `database/` is gitignored, so no build output travels with the repository. The Sydney
 gauge tables have been rebuilt from the team's national download (`database.zip`): the
@@ -176,7 +182,7 @@ uv run --locked ruff check .
   `src/canonical/config.py` 82 %, `gauge/build.py` 90 % (at `a2a57db`), `grids.py` 93 %,
   `grid_tables.py` 91 %, `satellite_archive.py` 96 %; `src/graph/builder_new.py` 92 %,
   `radargraphnew.py` 97 %, `gaugegraphnew.py` 85 %. The floors are not enforced yet
-  (ISS-33). `scripts/nci/remote.py` is 89 % covered by its own tests.
+  (ISS-33). `scripts/nci/remote.py` is 90 % covered by its own tests.
 - `tests/test_combine_folds.py` trains the synthetic fixture as folds 0-1 and 2-4, joins
   and scores them, and gets exactly the predictions of one five-fold run.
 - PyTorch and PyG emit Python 3.14 deprecation warnings. PyG's warning that a sensor

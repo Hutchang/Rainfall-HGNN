@@ -14,6 +14,22 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 
+def locked_cuda_build(records: dict) -> str:
+    """CUDA version of the one Linux torch build in uv.lock (2.13.0+cu126 -> 12.6)."""
+    builds = {
+        entry["version"].partition("+cu")[2]
+        for entry in records.get("torch", [])
+        if "+cu" in entry["version"]
+    }
+    if len(builds) != 1:
+        raise SystemExit(
+            "BLOCKED: uv.lock should lock one CUDA build of torch for Linux; "
+            f"found {sorted(builds) or 'none'}."
+        )
+    digits = builds.pop()
+    return f"{digits[:-1]}.{digits[-1]}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cuda", action="store_true")
@@ -66,23 +82,15 @@ def main() -> None:
     print(f"PyTorch: {torch.__version__}; CUDA build: {torch.version.cuda}")
     print(f"Compiled CUDA architectures: {torch.cuda.get_arch_list()}")
     if platform.system() == "Linux":
-        linux_cuda13 = any(
-            dependency["name"].endswith("-cu13")
-            for entry in records.get("torch", [])
-            for dependency in entry.get("dependencies", [])
-        )
-        if linux_cuda13 and (
-            torch.version.cuda is None or not torch.version.cuda.startswith("13.")
-        ):
+        locked_cuda = locked_cuda_build(records)
+        if torch.version.cuda != locked_cuda:
             raise SystemExit(
-                "BLOCKED: uv.lock selects a CUDA 13 Linux build, but this environment "
-                "does not provide it. Reconcile the environment through uv; do not "
-                "silently replace torch with a module or pip install."
+                f"BLOCKED: uv.lock selects torch built for CUDA {locked_cuda}, but "
+                f"this environment has CUDA {torch.version.cuda}. Reconcile the "
+                "environment through uv; do not silently replace torch with a module "
+                "or pip install."
             )
-        if linux_cuda13:
-            print(
-                "Gadi queue choice: dgxa100; gpuvolta/V100 is incompatible with this lock."
-            )
+        print(f"Locked Linux torch build: CUDA {locked_cuda}.")
 
     if not args.cuda:
         print(
@@ -102,12 +110,12 @@ def main() -> None:
     print(
         f"GPU: {torch.cuda.get_device_name(0)}; capability: {torch.cuda.get_device_capability(0)}"
     )
-    if torch.version.cuda.startswith("13.") and torch.cuda.get_device_capability(0) < (
-        7,
-        5,
-    ):
+    major, minor = torch.cuda.get_device_capability(0)
+    if f"sm_{major}{minor}" not in torch.cuda.get_arch_list():
         raise SystemExit(
-            "BLOCKED: CUDA 13 cannot run on Volta/V100; use the reviewed A100 queue."
+            f"BLOCKED: this torch build has no kernels for sm_{major}{minor} "
+            f"({torch.cuda.get_device_name(0)}); it supports "
+            f"{torch.cuda.get_arch_list()}."
         )
     # Device discovery can succeed even when kernels do not support the GPU/driver.
     try:

@@ -19,19 +19,25 @@ and Component 04 validated graphs. Code in Git does not include those generated
 artifacts. The input preflight reports missing files; it never creates substitutes.
 A synthetic fixture checks software only and is labelled in its run configuration.
 
-**The default queue is `dgxa100`.** The current lock pins PyTorch 2.13.0 with CUDA 13
-dependencies on Linux. CUDA 13 does not support Volta/V100 GPUs, so the usual
-`gpuvolta` example is incompatible. The supplied smoke job requests one A100 with
-16 CPUs, 48 GB RAM and ten minutes. Its estimated maximum charge is 12 SU
-(`16 × 4.5 × 10/60`), assuming the published charging rules. This is shared project
-usage, not a personal allowance. [NCI queue limits](https://opus.nci.org.au/spaces/Help/pages/90308823/Queue+Limits),
-[PyTorch 2.13](https://pytorch.org/blog/pytorch-2-13-release-blog/),
-[NVIDIA CUDA 13 release notes](https://docs.nvidia.com/cuda/archive/13.0.0/cuda-toolkit-release-notes/index.html).
+**Both GPU queues run the same environment.** `pyproject.toml` takes PyTorch 2.13.0's
+CUDA 12.6 build on Linux (`[tool.uv.sources]`), which has kernels for the V100 (sm_70)
+and the A100 (sm_80). PyPI's default Linux build is CUDA 13, which dropped the V100.
+macOS and Windows keep PyPI's build. One `.venv`, prepared by
+`scripts/nci/prepare_environment.pbs`, therefore serves:
 
-The actual A100 driver and queue access still need checking. A CUDA 12 build for V100
-would require a separately reviewed dependency/index/lock change. Loading an older
-NCI PyTorch module or replacing torch with pip would bypass repository dependency
-authority; neither is part of this setup.
+| Queue | GPU | Per GPU | Charge | Measured, G+R on the 2022 tables |
+|---|---|---|---|---|
+| `gpuvolta` | V100 32 GB | 12 CPUs | 3 SU per CPU-hour (36 SU per GPU-hour) | ~212 s per epoch (raw-radar G+R) |
+| `dgxa100` | A100 80 GB | 16 CPUs | 4.5 SU per CPU-hour (72 SU per GPU-hour) | ~124 s per epoch |
+| `normal` | none | 16 CPUs | 2 SU per CPU-hour (32 SU per job-hour) | ~277 s per epoch |
+
+`gpuvolta` is the much larger pool and usually starts sooner; `dgxa100` jobs have
+waited more than a day for a node. `scripts/nci/check_environment.py` checks that the
+environment's CUDA build matches `uv.lock` and, inside a GPU job, that the build has
+kernels for the allocated GPU. Loading an NCI PyTorch module or replacing torch with
+pip would bypass `uv.lock`; neither is part of this setup.
+[NCI queue limits](https://opus.nci.org.au/spaces/Help/pages/90308823/Queue+Limits),
+[PyTorch 2.13](https://pytorch.org/blog/pytorch-2-13-release-blog/).
 
 ## 1. Establish access and check the project
 
@@ -125,19 +131,43 @@ host/job, then run the input preflight. Do not install or resolve packages insid
 GPU training script. Gadi's `copyq` provides external networking for batch work;
 ordinary compute queues do not. [NCI queue structure](https://opus.nci.org.au/spaces/Help/pages/90308824/Queue+Structure).
 
-The supplied [preparation job](../../scripts/nci/prepare_environment.pbs) requests
-one CPU, 8 GB RAM, 20 GB temporary job storage and 30 minutes in `copyq`:
+The project shares one environment per `uv.lock`, so a teammate links to it instead of
+building their own. A private environment holds about 30,000 files, and project
+scratch allows 202,000 files in total. The supplied
+[preparation job](../../scripts/nci/prepare_environment.pbs) requests one CPU, 8 GB
+RAM, 20 GB temporary job storage and 30 minutes in `copyq`:
 
 ```console
 qsub scripts/nci/prepare_environment.pbs
 ```
 
 It verifies the pinned official uv 0.10.5 Linux archive against its published checksum
-and reviewed digest, installs uv only under the user's personal scratch directory,
-and runs `uv sync --locked --python 3.14.3`. The interpreter and environment persist
-on scratch; the download cache is temporary job storage. It preserves an existing,
-different uv binary and does not change shell profiles or dependency authority files.
-The Python pin matches the local validation environment.
+and reviewed digest, and installs uv under the user's personal scratch directory. It
+then looks for `/g/data/no50/rainflow/envs/<first 16 characters of uv.lock's
+SHA-256>/`, set by `NCI_SHARED_ROOT`:
+
+- If that environment exists and holds `READY`, the job only links the checkout's
+  `.venv` to it.
+- Otherwise it builds it with `uv sync --locked`, writes `READY`, and makes the whole
+  folder read-only. Two jobs never build the same environment, because the folder is
+  created as a lock. A failed build leaves the folder without `READY`; remove it and
+  submit again.
+
+A changed `uv.lock` gets a new folder beside the old one, so an environment a job is
+using is never rebuilt underneath it. A checkout that still has its own `.venv`
+directory is refused rather than replaced; remove it once no job uses it.
+
+The interpreter is a conda-forge Python 3.14, because uv's own Python 3.14 segfaults on
+Gadi. It is installed once for the project at `/g/data/no50/rainflow/python/py314` by
+[`prepare_python.pbs`](../../scripts/nci/prepare_python.pbs), which takes a
+micromamba binary:
+
+```console
+qsub -v NCI_MICROMAMBA=/path/to/micromamba scripts/nci/prepare_python.pbs
+```
+
+Every job script mounts `gdata/no50` (`#PBS -l storage=scratch/no50+gdata/no50`)
+so it can reach the shared environment.
 
 After installation it checks the environment, generates a new explicitly synthetic
 fixture for that job, and validates its inputs. Successful output includes
@@ -210,16 +240,19 @@ checkpoint recovery or A100 speed has yet been verified on Gadi.
 
 ## 5. Run from your own machine with one command
 
-`scripts/nci/remote.py` does sections 2 to 4 for you from a clean local checkout, and
-brings the results back:
+`scripts/nci/remote.py` does sections 2 to 4 for you from a clean local checkout: one
+job per fold on whichever GPU queue has the shorter wait, a scoring job once every fold
+has finished, and an email from PBS when it ends.
 
 ```console
-uv run python -m scripts.nci.remote plan config/models/hgnn.yaml
-uv run python -m scripts.nci.remote run  config/models/hgnn.yaml --label sydney-baseline
+uv run python -m scripts.nci.remote plan   config/models/d09_round_robin_gr.yaml
+uv run python -m scripts.nci.remote submit config/models/d09_round_robin_gr.yaml --label gr
+uv run python -m scripts.nci.remote fetch
 ```
 
-[AUTOMATED_RUNS.md](AUTOMATED_RUNS.md) covers the one-time ssh setup, every command, what
-happens at each step, where everything is kept, and what to do when something fails.
+New teammates start with [ONBOARDING.md](ONBOARDING.md). [AUTOMATED_RUNS.md](AUTOMATED_RUNS.md)
+covers every command, what happens at each step, where everything is kept, and what to
+do when something fails.
 
 ## 6. The Sydney fusion runs (D09), end to end
 
@@ -233,7 +266,7 @@ built on your own machine and uploaded; they are small.
 | Gauge tables | your machine | Component 02, then upload | `database/standard/gauge_hourly.csv`, `stations.csv` |
 | Grid tables | `normal`, 1 CPU, 32 GB | `build_grids.pbs` | `database/standard/{radar,satellite}_{hourly,nodes}.csv`, `grid_report.md` |
 | Graphs | `normal`, 24 CPUs, 96 GB | `build_graphs.pbs` | `database/graphs/d09_round_robin_{g,gr,grs}/` |
-| Training | `dgxa100`, 1 A100 | `train.pbs` | `experiments/nci/<run>/` |
+| Training | `gpuvolta` (1 V100) or `dgxa100` (1 A100); `normal` on CPU | `train_volta.pbs`, `train.pbs`, `train_cpu.pbs` | `experiments/nci/<run>/` |
 
 The three runs are G, G+R and G+R+S on the round-robin split
 ([DEC-03](../DECISIONS.md#dec-03)), configured in `config/graphs/d09_round_robin_*.yaml`

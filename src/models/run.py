@@ -51,6 +51,24 @@ HISTORY_COLUMNS = (
 # physical_mm feeds the model raw millimetres (inherited). zscore_train scales the
 # rainfall input per node type on each fold's training graph (paper sec 4.3; D08.2).
 RAINFALL_SCALES = ("physical_mm", "zscore_train")
+# Settings a resumed run must share with the run that stopped.
+RESUME_SETTINGS = (
+    "model_seed",
+    "hidden_channels",
+    "num_layers",
+    "dropout",
+    "learning_rate",
+    "weight_decay",
+    "loss",
+    "weighted_loss_alpha",
+    "batch_size",
+    "epochs",
+    "early_stop_patience",
+    "input_rainfall_scale",
+    "deterministic",
+    "graphs_dir",
+    "split_file",
+)
 
 
 def read_settings(path):
@@ -312,7 +330,32 @@ def copy_upstream_reports(directory, settings):
     settings["data_scope"]["upstream_reports"] = copied
 
 
-def run(settings, output_dir=None, predict_from=None):
+def check_resume(previous, settings):
+    """A last.pt continues only the run that wrote it: same inputs, same settings."""
+    if previous.get("format") != "component06-last-v1":
+        raise ValueError("--resume needs a last.pt written by Component 06")
+    saved = {name: value["sha256"] for name, value in previous["inputs"].items()}
+    now = {
+        name: value["sha256"]
+        for name, value in settings["provenance"]["inputs"].items()
+    }
+    if saved != now:
+        raise ValueError("--resume: input hashes differ from the run being resumed")
+    for key in (*RESUME_SETTINGS, "input_layers"):
+        if previous["settings"].get(key) != settings.get(key):
+            raise ValueError(f"--resume: setting differs from the stopped run: {key}")
+
+
+def save_atomically(data, path):
+    # A job stopped mid-write must not leave a half-written checkpoint behind.
+    partial = path.with_name(path.name + ".partial")
+    torch.save(data, partial)
+    os.replace(partial, path)
+
+
+def run(settings, output_dir=None, predict_from=None, resume=False):
+    """Train, predict and score one run. resume=True continues a stopped run in
+    output_dir from its last.pt, as if it had never stopped."""
     settings = dict(settings)
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
     directory = Path(
@@ -320,10 +363,16 @@ def run(settings, output_dir=None, predict_from=None):
         or settings.get("output_dir")
         or f"experiments/{settings.get('method', 'unknown')}_{stamp}"
     )
-    directory.mkdir(parents=True, exist_ok=False)
+    if resume:
+        if predict_from:
+            raise ValueError("--resume continues training; it cannot --predict-from")
+        if not (directory / "last.pt").is_file():
+            raise FileNotFoundError(f"--resume needs {directory / 'last.pt'}")
+    else:
+        directory.mkdir(parents=True, exist_ok=False)
     report_path = directory / "report.md"
     report_path.write_text("# Model run\n\nStatus: RUNNING\n")
-    history, checkpoints = [], {}
+    history, checkpoints, lasts = [], {}, {}
     try:
         gauge, split, stations = read_inputs(settings)
         settings["data_scope"] = measure_tables(gauge, stations, split)
@@ -333,6 +382,15 @@ def run(settings, output_dir=None, predict_from=None):
             if settings["device"] == "cuda" and settings["deterministic"]:
                 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         settings["provenance"] = provenance(settings)
+        if resume:
+            previous = torch.load(
+                directory / "last.pt", map_location="cpu", weights_only=True
+            )
+            check_resume(previous, settings)
+            lasts = dict(previous["folds"])
+            for index in sorted(lasts):
+                history.extend(lasts[index]["history"])
+                checkpoints[index] = lasts[index]["best"]
         write_config(directory, settings)
         tables = []
         checkpoint_input = None
@@ -417,9 +475,10 @@ def run(settings, output_dir=None, predict_from=None):
                 # settings it ran with.
                 write_config(directory, settings)
 
-                def save_progress(row, best, index=index):
+                def save_progress(row, best, last, index=index):
                     history.append(row)
                     checkpoints[index] = best
+                    lasts[index] = last
                     pd.DataFrame(history, columns=HISTORY_COLUMNS).to_csv(
                         directory / "history.csv", index=False
                     )
@@ -431,6 +490,15 @@ def run(settings, output_dir=None, predict_from=None):
                             "inputs": settings["provenance"]["inputs"],
                         },
                         directory / "best.pt",
+                    )
+                    save_atomically(
+                        {
+                            "format": "component06-last-v1",
+                            "folds": lasts,
+                            "settings": settings,
+                            "inputs": settings["provenance"]["inputs"],
+                        },
+                        directory / "last.pt",
                     )
                     print(
                         f"fold={index} epoch={row['epoch']}/{settings['epochs']} "
@@ -462,7 +530,9 @@ def run(settings, output_dir=None, predict_from=None):
                     model = restore_model(checkpoint, settings)
                     checkpoints[index] = checkpoint
                 else:
-                    model, _, _ = train_fold(graphs, index, settings, save_progress)
+                    model, _, _ = train_fold(
+                        graphs, index, settings, save_progress, lasts.get(index)
+                    )
                 if subset is not None:
                     continue
                 predicted = predict_fold(model, graphs["test"], index, settings)
@@ -602,6 +672,11 @@ def main(argv=None):
         help="train only these folds, e.g. 0,2 (no scoring; see combine_folds)",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue a stopped run in --output-dir from its last.pt",
+    )
+    parser.add_argument(
         "--model-seed",
         type=int,
         help="replace seeds_file's model_seed for this run (recorded in config.yaml)",
@@ -619,7 +694,9 @@ def main(argv=None):
         if args.check_inputs:
             print(json.dumps(check_inputs(settings)))
         else:
-            print(run(settings, args.output_dir, args.predict_from))
+            if args.resume and args.output_dir is None:
+                raise ValueError("--resume needs the stopped run's --output-dir")
+            print(run(settings, args.output_dir, args.predict_from, args.resume))
     except Exception as error:  # noqa: BLE001 -- CLI reports errors already preserved in report.md
         print(f"{type(error).__name__}: {error}", file=sys.stderr)
         return 1

@@ -43,7 +43,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-10](#iss-10) | Spatial-block cross-validation decision unresolved | Material | _unassigned_ | Closed |
 | [ISS-12](#iss-12) | Plausibility caps, tolerance and coverage threshold need a client decision | Material | _unassigned_ | Blocked |
 | [ISS-14](#iss-14) | Inherited-baseline graph fingerprint test missing | Material | Component 04 | Open |
-| [ISS-15](#iss-15) | No `.gitattributes`; NCI guard tests fail on Windows checkouts | Material | _unassigned_ | Open |
+| [ISS-15](#iss-15) | No `.gitattributes`; NCI guard tests fail on Windows checkouts | Material | _unassigned_ | Closed |
 | [ISS-16](#iss-16) | Failed raw downloads are excluded but not reported | Material | Component 02 | Open |
 | [ISS-18](#iss-18) | Component 03 split summary and plot are not produced | Material | Component 03 | Open |
 | [ISS-19](#iss-19) | Component 03 has no component README | Material | Component 03 | Open |
@@ -62,6 +62,7 @@ somewhere else, move it here and leave the id behind.
 | [ISS-37](#iss-37) | Satellite "no value" cells make half of a dry daytime hour invalid | Material | _unassigned_ | Closed |
 | [ISS-38](#iss-38) | D09.2 within-grid topology and coincident-node weighting remain | Material | D09 | Closed |
 | [ISS-39](#iss-39) | A run folder does not say which period, region or nodes it covers | Material | Component 06 | Closed |
+| [ISS-40](#iss-40) | Teammates cannot run Gadi experiments without hand-written jobs and one person's setup | Material | Component 06 | Open |
 | [ISS-13](#iss-13) | `train_homo.py` and `train_st.py` cannot import | Immaterial | _unassigned_ | Open |
 | [ISS-17](#iss-17) | `ruff check .` reports 692 findings in inherited files | Immaterial | _unassigned_ | Open |
 | [ISS-23](#iss-23) | The paper's exact 75-station Sydney list is unavailable | Immaterial | _unassigned_ | Open |
@@ -637,6 +638,37 @@ canonical, split, graph and grid reports are copied to the run's `inputs/` folde
 the configured period and region travel with it; a missing one is named. The configured
 period and region are still not known to Component 06 itself (ISS-32).
 
+<a id="iss-40"></a>
+
+### ISS-40 — Teammates cannot run Gadi experiments without hand-written jobs and one person's setup
+**Severity:** Material · **Owner:** Component 06 · **Status:** Open
+
+Gadi runs so far were submitted by hand from one person's scratch checkout. Six gaps
+stop the rest of the team from running experiments the same way:
+
+1. The locked torch (CUDA 13) does not run on the V100s of `gpuvolta`, the larger GPU
+   pool. A second, unlocked environment was built by hand to use it.
+2. Each checkout builds a private environment of about 30,000 files. Project scratch
+   allows 202,000 files and was at 198,975 on 2026-10-19.
+3. `scripts/nci/remote.py` submits one job for all five folds, cannot submit one job
+   per fold or join and score them, and has never run against Gadi.
+4. Inputs are uploaded per user, and each teammate would upload the same tables again.
+5. Walltime is fixed, not set from measured time per epoch, and a fold that runs out of
+   walltime is lost.
+6. There is no setup guide or check for a new teammate's account, key and quota.
+
+**Closes when:** a teammate with an NCI account in no50 can follow one guide, submit a
+committed config with one command as one job per fold on whichever queue suits, and
+fetch the scored run, using shared environment and tables, with no file edited by
+hand on Gadi.
+
+**Progress, 2026-10-19.** Gaps 1 to 6 are addressed on `feature/gadi-fold-jobs`: one
+CUDA 12.6 environment shared on `/g/data`, tables published once
+(`config/nci/datasets.yaml`), one job per fold with a shared graph cache and a scoring
+job, walltimes from measured epoch times, `resume` from `last.pt`, and
+`docs/nci/ONBOARDING.md` with `doctor`. A one-epoch run went from `submit` to `fetch`
+on Gadi with every job exiting 0. Still to show: a teammate's own run.
+
 <a id="iss-13"></a>
 
 ### ISS-13 — `train_homo.py` and `train_st.py` cannot import
@@ -673,7 +705,7 @@ Nothing replaced it. Shared graph code is currently unprotected against silent b
 <a id="iss-15"></a>
 
 ### ISS-15 — No `.gitattributes`; NCI guard tests fail on Windows checkouts
-**Severity:** Material · **Owner:** _unassigned_ · **Status:** Open
+**Severity:** Material · **Owner:** _unassigned_ · **Status:** Closed 2026-10-19
 
 The repository has no `.gitattributes`, so Git converts `scripts/nci/*.sh` and `*.pbs` to
 CRLF on Windows. Bash then reads `set -o pipefail<CR>` and aborts before any assertion:
@@ -689,6 +721,13 @@ green suite and a broken NCI path.
 
 **Closes when:** a `.gitattributes` pins `*.sh` and `*.pbs` to LF and the guards pass on a
 fresh Windows clone.
+
+**Closed 2026-10-19** by `fix: keep shell and PBS scripts at LF on every checkout
+(ISS-15)`. `.gitattributes` sets `*.sh` and `*.pbs` to `text eol=lf`. A clone made with
+Windows' conversion turned on (`core.autocrlf=true`) checked `README.md` out with CRLF
+and every `scripts/nci/*.sh` and `*.pbs` with LF, and `bash -n` parses them. This was
+checked on macOS with Git's Windows conversion setting, not on a Windows machine; reopen
+if a Windows clone still fails the guards.
 
 <a id="iss-16"></a>
 

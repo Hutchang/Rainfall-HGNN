@@ -1,22 +1,28 @@
-"""Run Component 06 training on NCI Gadi from a clean local checkout.
+"""Run Component 06 experiments on NCI Gadi from a clean local checkout.
 
-    uv run python -m scripts.nci.remote plan   config/models/hgnn.yaml
-    uv run python -m scripts.nci.remote run    config/models/hgnn.yaml --label NAME
-    uv run python -m scripts.nci.remote submit config/models/hgnn.yaml --label NAME
-    uv run python -m scripts.nci.remote status experiments/nci/<run>
-    uv run python -m scripts.nci.remote fetch  experiments/nci/<run>
+    uv run python -m scripts.nci.remote plan   config/models/<run>.yaml
+    uv run python -m scripts.nci.remote submit config/models/<run>.yaml --label NAME
+    uv run python -m scripts.nci.remote status [experiments/nci/<run> ...]
+    uv run python -m scripts.nci.remote fetch  [experiments/nci/<run> ...]
+    uv run python -m scripts.nci.remote doctor
 
 Code travels as a git bundle of the committed revision, so Gadi runs exactly that
-commit. Inputs git does not carry (Component 02 tables, the Component 03 split,
-Component 04 graphs) are uploaded once into a folder named by their fingerprints and
-reused by later runs. Nothing on Gadi is overwritten and results land in a new local
-folder. SSH must already log in without a password prompt; see docs/nci/README.md.
+commit. Tables are never uploaded: they are published once on Gadi
+(scripts/nci/publish_tables.pbs) and listed in config/nci/datasets.yaml. Graphs are
+built on Gadi into a cache the project shares, named by everything that decides them,
+and reused by later runs. Every fold trains as its own job, on the GPU queue with the
+shorter wait unless you choose one, with a walltime estimated from measured epoch
+times. A scoring job joins the folds and scores every method once all five have
+finished, and PBS emails you when it ends. Nothing on Gadi is overwritten. SSH must
+already log in without a password prompt; see docs/nci/ONBOARDING.md.
 """
 
 import argparse
 import hashlib
 import io
 import json
+import math
+import os
 import re
 import shlex
 import shutil
@@ -25,22 +31,17 @@ import sys
 import tarfile
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
-from src.models.run import (
-    INPUT_KEYS,
-    file_digest,
-    input_paths,
-    read_settings,
-    validate_settings,
-)
+from src.models.run import read_settings, validate_settings
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = Path("config/nci/remote.yaml")
+DATASETS = Path("config/nci/datasets.yaml")
 RUNS_DIR = Path("experiments/nci")
 CONFIG_KEYS = (
     "project",
@@ -48,14 +49,35 @@ CONFIG_KEYS = (
     "transfer_host",
     "ssh",
     "scratch_root",
-    "inputs_root",
-    "job",
-    "su_per_cpu_hour",
+    "shared_root",
+    "graph_cache",
+    "queues",
+    "graph_job",
+    "score_job",
+    "epoch_seconds_per_1000_hours",
+    "walltime_margin",
     "poll_seconds",
 )
-JOB_KEYS = ("queue", "ncpus", "ngpus", "mem", "jobfs", "walltime")
+QUEUE_KEYS = ("ncpus", "ngpus", "mem", "jobfs", "su_per_cpu_hour", "device")
+JOB_KEYS = ("queue", "ncpus", "mem", "jobfs", "walltime", "su_per_cpu_hour")
+GPU_QUEUES = ("gpuvolta", "dgxa100")
+FOLDS = range(5)
+ROLES = ("train", "validation", "test")
+LAYERS = ("raingauge", "radar", "satellite")
+TABLE_KEYS = ("gauge_file", "stations_file")
+COMMITTED_KEYS = ("split_file", "seeds_file")
+# Code a graph set depends on, besides its config, split, seeds and tables.
+GRAPH_CODE = ("src/graph", "src/canonical", "src/study", "uv.lock")
 SIZE_UNITS = {"B": 1, "KiB": 2**10, "MiB": 2**20, "GiB": 2**30, "TiB": 2**40}
 SU_UNITS = {"SU": 1, "KSU": 1e3, "MSU": 1e6}
+ENVIRONMENT_FILES = 32000  # files a new shared environment adds to gdata
+GRAPH_BYTES = 15 * 2**30  # the largest graph set so far (G+R+S, 2021-2022) is 12 GB
+# When the plan warns: a run that could use more than this share of the SU left, a
+# filesystem fuller than this, a queue with more than this many jobs waiting for
+# each one running.
+SU_SHARE_WARNING = 0.25
+QUOTA_WARNING = 0.9
+QUEUE_WARNING = 2
 JOB_STATES = {
     "Q": "queued",
     "H": "held",
@@ -64,33 +86,40 @@ JOB_STATES = {
     "E": "exiting",
     "F": "finished",
 }
-LOG_KEYS = {"prepare": "prepare_log", "train": "log"}  # job name -> remote_paths key
 
-# Read-only facts about the remote side, printed as key=value then three raw reports.
-# env_lock is the uv.lock the shared environment was last built from: the shared
-# checkout only moves to a revision when that revision's environment job is sent.
+# Read-only facts about the remote side: key=value lines, one `dataset` line per table
+# folder, then the raw lquota, nci_account and queue reports.
 PROBE = r"""
-repo=$1 inputs=$2 revision=$3 project=$4
+repo=$1 revision=$2 env=$3 graph=$4 project=$5
+shift 5
 git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 \
     && echo repo=present || echo repo=absent
 echo "repo_head=$(git -C "$repo" rev-parse HEAD 2>/dev/null)"
 git -C "$repo" cat-file -e "$revision^{commit}" 2>/dev/null \
     && echo has_revision=yes || echo has_revision=no
-[[ -f $inputs/COMPLETE ]] && echo inputs=present || echo inputs=absent
-[[ -x $repo/.venv/bin/python ]] && echo venv=present || echo venv=absent
-[[ -f $repo/uv.lock ]] \
-    && echo "env_lock=$(sha256sum < "$repo/uv.lock" | cut -d' ' -f1)" \
-    || echo env_lock=
+[[ -f $env/READY ]] && echo env=ready || echo env=absent
+complete=yes
+[[ -f $graph/READY ]] || complete=no
+for fold in 0 1 2 3 4; do
+    for role in train validation test; do
+        [[ -f $graph/fold-$fold/$role.pt ]] || complete=no
+    done
+done
+[[ $complete == yes ]] && echo graph=ready || echo graph=absent
+for folder in "$@"; do
+    if [[ -f $folder/READY && -f $folder/SHA256SUMS ]]; then
+        echo "dataset $folder $(sha256sum < "$folder/SHA256SUMS" | cut -d' ' -f1)" \
+            "$(awk '{print $2}' "$folder/SHA256SUMS" | tr '\n' ' ')"
+    else
+        echo "dataset $folder missing"
+    fi
+done
 echo '--- lquota'
 lquota
 echo '--- nci_account'
 nci_account -P "$project"
-echo '--- jobs'
-if ids=$(qselect -u "$(id -un)" 2>&1); then
-    if [[ -n $ids ]]; then qstat -f -F json $ids || true; else echo '{"Jobs": {}}'; fi
-else
-    echo "qselect failed: $ids"
-fi
+echo '--- queues'
+qstat -Q gpuvolta-exec dgxa100-exec normal-exec
 """
 
 
@@ -106,21 +135,36 @@ def quote(*parts):
     return " ".join(shlex.quote(str(part)) for part in parts)
 
 
+def single_value(name, value):
+    if re.search(r"[\s,=+]", str(value)):
+        raise BlockedError(f"{name} must be a single qsub value, got {value!r}")
+
+
 def load_remote_config(path):
     with Path(path).open() as stream:
         cfg = yaml.safe_load(stream)
     if not isinstance(cfg, dict):
         raise BlockedError(f"{path} must contain a YAML mapping")
     missing = [key for key in CONFIG_KEYS if key not in cfg]
-    missing += [f"job.{key}" for key in JOB_KEYS if key not in cfg.get("job", {})]
     if missing:
         raise BlockedError(f"{path} is missing {', '.join(missing)}")
-    for key in JOB_KEYS:
-        if re.search(r"[\s,=+]", str(cfg["job"][key])):
-            raise BlockedError(
-                f"job.{key} must be a single qsub value, got {cfg['job'][key]!r}"
-            )
-    walltime_hours(cfg["job"]["walltime"])
+    for queue, profile in cfg["queues"].items():
+        single_value("queue name", queue)
+        for key in QUEUE_KEYS:
+            if key not in profile:
+                raise BlockedError(f"{path}: queues.{queue} is missing {key}")
+        for key in ("ncpus", "ngpus", "mem", "jobfs"):
+            single_value(f"queues.{queue}.{key}", profile[key])
+        if profile["device"] not in ("cpu", "cuda"):
+            raise BlockedError(f"queues.{queue}.device must be cpu or cuda")
+        walltime_hours(profile.get("max_walltime", "48:00:00"))
+    for job in ("graph_job", "score_job"):
+        for key in JOB_KEYS:
+            if key not in cfg[job]:
+                raise BlockedError(f"{path}: {job} is missing {key}")
+            if key != "su_per_cpu_hour":
+                single_value(f"{job}.{key}", cfg[job][key])
+        walltime_hours(cfg[job]["walltime"])
     return cfg
 
 
@@ -130,6 +174,11 @@ def walltime_hours(text):
         raise BlockedError(f"walltime must be HH:MM:SS, got {text!r}")
     hours, minutes, seconds = map(int, match.groups())
     return hours + minutes / 60 + seconds / 3600
+
+
+def format_walltime(hours):
+    minutes = round(hours * 60)
+    return f"{minutes // 60:02d}:{minutes % 60:02d}:00"
 
 
 def su_estimate(job, rate):
@@ -157,22 +206,8 @@ def committed_revision(root=ROOT):
     return git("rev-parse", "HEAD", root=root)
 
 
-def is_tracked(path, root=ROOT):
-    result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "--", str(path)],
-        cwd=root,
-        capture_output=True,
-        check=False,
-    )
-    return result.returncode == 0
-
-
-def committed_digest(path, revision, root=ROOT):
-    """sha256 and size of a file as committed, which is what Gadi checks out.
-
-    The working copy can differ without git calling it edited: on Windows git
-    checks text files out with CRLF line endings but commits them with LF.
-    """
+def committed_bytes(path, revision, root=ROOT):
+    """A file exactly as committed, which is what Gadi checks out."""
     result = subprocess.run(
         ["git", "cat-file", "blob", f"{revision}:{path}"],
         cwd=root,
@@ -180,84 +215,170 @@ def committed_digest(path, revision, root=ROOT):
         check=False,
     )
     if result.returncode:
+        raise BlockedError(f"{path} is not committed at {revision[:12]}")
+    return result.stdout
+
+
+def committed_text(path, revision, root=ROOT):
+    return committed_bytes(path, revision, root).decode()
+
+
+def object_id(path, revision, root=ROOT):
+    """git's id for a committed file or folder; it changes with any content."""
+    try:
+        return git("rev-parse", f"{revision}:{path}", root=root)
+    except BlockedError:
+        raise BlockedError(f"{path} is not committed at {revision[:12]}") from None
+
+
+def load_datasets(revision, root=ROOT):
+    """Published table folders, keyed by the folder configs read on your machine."""
+    entries = yaml.safe_load(committed_text(DATASETS.as_posix(), revision, root))
+    datasets = (entries or {}).get("datasets") or {}
+    for key, entry in datasets.items():
+        if (
+            not isinstance(entry, dict)
+            or not str(entry.get("path", "")).startswith("/g/data/")
+            or not re.fullmatch(r"[0-9a-f]{64}", str(entry.get("sha256sums", "")))
+            or type(entry.get("hours")) is not int
+            or entry["hours"] < 1
+        ):
+            raise BlockedError(
+                f"{DATASETS}: {key} needs path (under /g/data), sha256sums and hours, "
+                "as printed by scripts/nci/publish_tables.pbs"
+            )
+    return datasets
+
+
+def dataset_for(folder, datasets):
+    key = Path(folder).as_posix()
+    if key not in datasets:
         raise BlockedError(
-            f"git cat-file failed for {path}: "
-            + result.stderr.decode(errors="replace").strip()
+            f"{key} is not published on Gadi. Publish it once with "
+            "scripts/nci/publish_tables.pbs and add the printed entry to "
+            f"{DATASETS} under {key}; published: {', '.join(datasets) or 'none'}"
         )
-    return hashlib.sha256(result.stdout).hexdigest(), len(result.stdout)
+    return key, datasets[key]
 
 
-@dataclass(frozen=True)
-class Input:
-    label: str
-    local: str
-    remote: str  # under the inputs folder, or under the checkout when tracked
-    sha256: str
-    size: int
-    tracked: bool
-
-
-def plan_inputs(settings, root=ROOT, revision="HEAD"):
-    """Lists every file that the model config reads. Files committed to git ride
-    along with the code when we upload the git bundle.
-
-    Stops if any files are missing.
-    """
-    paths = input_paths(settings)
-    missing = [
-        f"{label}: {path}"
-        for label, path in paths.items()
-        if not (root / path).is_file()
-    ]
-    if missing:
-        raise BlockedError("missing input files:\n  " + "\n  ".join(missing))
-    inputs = []
-    for label, path in paths.items():
-        local = root / path
-        tracked = is_tracked(path, root)
-        if tracked:
-            remote = Path(path).as_posix()
-        elif label.startswith("fold-"):
-            remote = f"graphs/{label}.pt"
-        else:
-            remote = f"{label}/{local.name}"
-        sha256, size = (
-            committed_digest(remote, revision, root)
-            if tracked
-            else (file_digest(local), local.stat().st_size)
-        )
-        inputs.append(Input(label, str(local), remote, sha256, size, tracked))
-    if len({item.tracked for item in inputs if item.label.startswith("fold-")}) > 1:
+def find_graph_config(graphs_dir, revision, root=ROOT):
+    """The committed config/graphs/*.yaml whose output_dir is graphs_dir."""
+    names = git("ls-tree", "--name-only", revision, "config/graphs/", root=root)
+    found = []
+    for name in names.splitlines():
+        if name.endswith(".yaml"):
+            config = yaml.safe_load(committed_text(name, revision, root)) or {}
+            if Path(str(config.get("output_dir", ""))) == Path(graphs_dir):
+                found.append((name, config))
+    if len(found) != 1:
         raise BlockedError(
-            "graphs_dir is partly tracked by git; track all of it or none"
+            f"graphs_dir {graphs_dir} must be the output_dir of exactly one committed "
+            f"config/graphs/*.yaml; found {len(found)}"
         )
-    return inputs
+    return found[0]
 
 
-def inputs_fingerprint(inputs):
-    lines = sorted(
-        f"{item.remote} {item.sha256}" for item in inputs if not item.tracked
+def layer_key(settings):
+    chosen = settings.get("input_layers", ["raingauge"])
+    return "+".join(layer for layer in LAYERS if layer in chosen)
+
+
+@dataclass
+class Inputs:
+    """Where a run's inputs are on Gadi and what decides its graphs."""
+
+    tables: dict  # model config key -> path on Gadi
+    datasets: dict  # local folder -> datasets.yaml entry
+    graph_config: str
+    graph_settings: dict
+    graph_fingerprint: str
+    hours: int
+
+
+def plan_inputs(settings, revision, root=ROOT):
+    """Resolve the model config's inputs without reading any data on this machine."""
+    datasets = load_datasets(revision, root)
+    used, tables = {}, {}
+    for key in TABLE_KEYS:
+        folder, entry = dataset_for(Path(settings[key]).parent, datasets)
+        used[folder] = entry
+        tables[key] = f"{entry['path']}/{Path(settings[key]).name}"
+    for key in COMMITTED_KEYS:
+        object_id(settings[key], revision, root)
+    graph_config, graph_settings = find_graph_config(
+        settings["graphs_dir"], revision, root
     )
-    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+    if Path(str(graph_settings.get("split_file"))) != Path(settings["split_file"]):
+        raise BlockedError(
+            f"{graph_config} builds graphs for {graph_settings.get('split_file')} but "
+            f"the model config scores {settings['split_file']}"
+        )
+    data_dir, data = dataset_for(graph_settings.get("data_dir", ""), datasets)
+    used[data_dir] = data
+    parts = [
+        object_id(graph_config, revision, root),
+        object_id(settings["split_file"], revision, root),
+        object_id(settings["seeds_file"], revision, root),
+        data["sha256sums"],
+        *(object_id(path, revision, root) for path in GRAPH_CODE),
+    ]
+    fingerprint = hashlib.sha256("\n".join(parts).encode()).hexdigest()
+    return Inputs(
+        tables, used, graph_config, graph_settings, fingerprint, data["hours"]
+    )
 
 
-def remote_settings(settings, inputs, inputs_dir, output_dir):
-    """Rewrites the model config for Gadi, pointing uploaded inputs at the Gadi
-    input folder and output at the run folder.
-    """
-    result = dict(settings)
-    by_label = {item.label: item for item in inputs}
-    for key in INPUT_KEYS:
-        if not by_label[key].tracked:
-            result[key] = f"{inputs_dir}/{by_label[key].remote}"
-    if "fold-0/train" in by_label and not by_label["fold-0/train"].tracked:
-        result["graphs_dir"] = f"{inputs_dir}/graphs"
-    result["device"] = "cuda"
-    result["output_dir"] = output_dir
-    return result
+def epoch_seconds(cfg, queue, layers):
+    """(seconds per epoch per 1,000 hours, whether it was measured for these layers)."""
+    known = cfg["epoch_seconds_per_1000_hours"].get(queue, {})
+    if layers in known:
+        return float(known[layers]), True
+    if not known:
+        raise BlockedError(f"no epoch timings for queue {queue} in remote.yaml")
+    return 1.5 * max(map(float, known.values())), False
 
 
-def remote_paths(cfg, user, run_id, fingerprint):
+def fold_walltime(cfg, queue, layers, hours, epochs):
+    """Hours for one fold to run every epoch, capped at the queue's limit."""
+    seconds, _ = epoch_seconds(cfg, queue, layers)
+    estimate = epochs * seconds * hours / 1000 / 3600 * cfg["walltime_margin"] + 0.25
+    estimate = max(0.5, math.ceil(estimate * 4) / 4)
+    limit = walltime_hours(cfg["queues"][queue].get("max_walltime", "48:00:00"))
+    return min(estimate, limit), estimate > limit
+
+
+def parse_queue_load(text):
+    """{queue: (queued, running)} from `qstat -Q <queue>-exec ...`."""
+    load = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 7 and parts[0].endswith("-exec") and parts[5].isdigit():
+            load[parts[0].removesuffix("-exec")] = (int(parts[5]), int(parts[6]))
+    return load
+
+
+def choose_queue(requested, load, cfg):
+    """The asked-for queue, or for `auto` the GPU queue with the fewest jobs queued
+    for each one running."""
+    if requested != "auto":
+        if requested not in cfg["queues"]:
+            raise BlockedError(
+                f"queue {requested} is not in remote.yaml; "
+                f"choose from {', '.join(cfg['queues'])} or auto"
+            )
+        return requested
+    candidates = [queue for queue in GPU_QUEUES if queue in cfg["queues"]]
+    if not candidates:
+        raise BlockedError("remote.yaml lists no GPU queue for --queue auto")
+    return min(
+        candidates,
+        key=lambda queue: (
+            (load.get(queue, (0, 0))[0] + 1) / (load.get(queue, (0, 0))[1] + 1)
+        ),
+    )
+
+
+def remote_paths(cfg, user, run_id):
     """Decides where everything lives on Gadi."""
     fill = {"project": cfg["project"], "user": user}
     scratch = cfg["scratch_root"].format(**fill)
@@ -271,9 +392,9 @@ def remote_paths(cfg, user, run_id, fingerprint):
         "code": f"{run}/code",
         "config": f"{run}/run.yaml",
         "output": f"{run}/output",
-        "log": f"{run}/pbs.log",
-        "prepare_log": f"{run}/prepare.log",
-        "inputs": f"{cfg['inputs_root'].format(**fill)}/{fingerprint[:16]}",
+        "logs": f"{run}/logs",
+        "shared": cfg["shared_root"].format(**fill),
+        "graph_cache": cfg["graph_cache"].format(**fill),
     }
 
 
@@ -292,29 +413,38 @@ def storage_directive(*paths):
     return "+".join(found)
 
 
-def qsub_command(cfg, script, variables, storage, log, depend=None):
-    job = cfg["job"]
-    resources = ",".join(
-        f"{key}={job[key]}" for key in ("ncpus", "ngpus", "mem", "jobfs", "walltime")
-    )
+def qsub_command(project, job, script, variables, storage, log, after=(), **flags):
+    """flags: name (-N) and mail (-m), both optional."""
+    resources = [
+        f"{key}={job[key]}"
+        for key in ("ncpus", "ngpus", "mem", "jobfs", "walltime")
+        if key in job and not (key == "ngpus" and int(job[key]) == 0)
+    ]
     for name, value in variables.items():
-        if re.search(r"[,\s'\"]", value):
+        if re.search(r"[,\s'\"]", str(value)):
             raise BlockedError(f"{name}={value!r} cannot be passed through qsub -v")
     command = [
         "qsub",
         "-P",
-        cfg["project"],
+        project,
         "-q",
         str(job["queue"]),
         "-l",
-        f"{resources},storage={storage}",
+        ",".join([*resources, f"storage={storage}"]),
         "-o",
         log,
-        "-v",
-        ",".join(f"{name}={value}" for name, value in variables.items()),
     ]
-    if depend:
-        command += ["-W", f"depend=afterok:{depend}"]
+    if flags.get("name"):
+        command += ["-N", flags["name"]]
+    if flags.get("mail"):
+        command += ["-m", flags["mail"]]
+    if variables:
+        command += [
+            "-v",
+            ",".join(f"{name}={value}" for name, value in variables.items()),
+        ]
+    if after:
+        command += ["-W", "depend=afterok:" + ":".join(after)]
     return [*command, script]
 
 
@@ -363,10 +493,7 @@ def parse_available_su(text):
 
 
 def parse_qstat(text, job_id):
-    """(state letter, exit status or None) from `qstat -xf -F json`.
-
-    qstat is the command on Gadi showing the state of batch jobs.
-    """
+    """(state letter, exit status or None) from `qstat -xf -F json`."""
     job = json.loads(text).get("Jobs", {}).get(job_id)
     if job is None:
         raise BlockedError(f"qstat has no record of {job_id}")
@@ -384,40 +511,38 @@ def parse_exit_status(text):
 def parse_probe(text):
     head, _, rest = text.partition("--- lquota\n")
     quota, _, rest = rest.partition("--- nci_account\n")
-    account, _, jobs = rest.partition("--- jobs\n")
-    facts = dict(line.split("=", 1) for line in head.splitlines() if "=" in line)
-    return facts, quota, account, jobs
+    account, _, queues = rest.partition("--- queues\n")
+    facts, datasets = {}, {}
+    for line in head.splitlines():
+        if line.startswith("dataset "):
+            _, folder, digest, *files = line.split()
+            datasets[folder] = None if digest == "missing" else (digest, set(files))
+        elif "=" in line:
+            key, value = line.split("=", 1)
+            facts[key] = value
+    return facts, datasets, quota, account, queues
 
 
-def jobs_using(text, root):
-    """Your unfinished jobs submitted from under root, from `qstat -f -F json`.
-
-    The runner sends environment jobs from its shared checkout and training jobs
-    from each run's code folder, both under root, and all of them use the one
-    environment in root/repo/.venv.
-    """
-    try:
-        jobs = json.loads(text)["Jobs"]
-    except (json.JSONDecodeError, KeyError):
-        raise BlockedError("could not list your jobs on Gadi:\n" + text) from None
-    found = []
-    for job_id, job in jobs.items():
-        variables = job.get("Variable_List")
-        if not isinstance(variables, dict) or "PBS_O_WORKDIR" not in variables:
-            raise BlockedError(f"qstat does not show where {job_id} was submitted from")
-        folder = variables["PBS_O_WORKDIR"]
-        if job.get("job_state") != "F" and folder.startswith(f"{root}/"):
-            found.append(job_id)
-    return sorted(found)
-
-
-def environment_busy(jobs):
-    return (
-        "this revision needs Gadi's shared environment built or rebuilt (it is "
-        "missing, or was built from a different uv.lock), but these jobs use it and "
-        f"have not finished: {', '.join(jobs)}. Wait for them to finish or qdel "
-        "them, then submit again"
-    )
+def dataset_problems(inputs, found):
+    """What is wrong with the published table folders this run reads, if anything."""
+    problems = []
+    for folder, entry in inputs.datasets.items():
+        state = found.get(entry["path"])
+        if state is None:
+            problems.append(
+                f"{entry['path']} ({folder}) is not published on Gadi, or is "
+                "incomplete; run scripts/nci/publish_tables.pbs"
+            )
+        elif state[0] != entry["sha256sums"]:
+            problems.append(
+                f"{entry['path']} holds different tables from those {DATASETS} names"
+            )
+    for key, path in inputs.tables.items():
+        folder, name = path.rsplit("/", 1)
+        state = found.get(folder)
+        if state and name not in state[1]:
+            problems.append(f"{key}: {path} is not in the published folder")
+    return problems
 
 
 def code_footprint(revision, root=ROOT):
@@ -464,8 +589,9 @@ def write_tar(stream, files):
 class Ssh:
     """Commands on Gadi through the local ssh client. It never asks for passwords."""
 
-    def __init__(self, cfg):
-        self.base = [str(part) for part in cfg["ssh"]]
+    def __init__(self, cfg, user):
+        # -l: log in as the NCI username the user gave, whatever ~/.ssh/config says.
+        self.base = [*(str(part) for part in cfg["ssh"]), "-l", user]
 
     def _argv(self, host, command):
         # bash explicitly: the remote login shell may not be bash
@@ -498,21 +624,6 @@ class Ssh:
             host, command, result.returncode, result.stderr.decode(errors="replace")
         )
 
-    def send_tar(self, host, command, files):
-        with tempfile.TemporaryFile() as errors:
-            with subprocess.Popen(
-                self._argv(host, command), stdin=subprocess.PIPE, stderr=errors
-            ) as process:
-                write_tar(process.stdin, files)
-                process.stdin.close()
-            errors.seek(0)
-            self._check(
-                host,
-                command,
-                process.returncode,
-                errors.read().decode(errors="replace"),
-            )
-
     def receive_tar(self, host, command, destination):
         with tempfile.TemporaryFile() as errors:
             with subprocess.Popen(
@@ -529,113 +640,283 @@ class Ssh:
 
 
 @dataclass
+class Job:
+    name: str  # prepare, graph, fold-0 ... fold-4, score
+    script: str
+    job: dict  # queue and resources; empty for prepare, which uses its own
+    variables: dict
+    after: list  # names of jobs that must succeed first
+    su: float
+
+
+@dataclass
 class Plan:
     model_config: str
     settings: dict
     revision: str
-    inputs: list
-    fingerprint: str
     user: str
     facts: dict
+    inputs: Inputs
+    env_dir: str
+    graph_dir: str
+    queue: str
+    queue_load: dict
+    walltime: str
+    capped: bool
+    measured: bool
+    jobs: list
     su_estimate: float
     su_available: float
-    upload_bytes: int
-    needs_setup: bool  # environment missing, or built from another uv.lock
-    busy: list  # unfinished jobs using the shared environment
+    warnings: list
 
 
-def make_plan(model_config, cfg, ssh, root=ROOT):
+def plan_warnings(rows, estimate, available, queue, load):
+    """What could go wrong even though Gadi can take the run."""
+    warnings = []
+    if available and estimate > SU_SHARE_WARNING * available:
+        warnings.append(
+            f"this run can use {estimate:.0f} of the {available:.0f} SU the project "
+            f"has left ({estimate / available:.0%}); everyone shares that balance"
+        )
+    for fs, row in sorted(rows.items()):
+        if row["files"] > QUOTA_WARNING * row["file_quota"]:
+            warnings.append(
+                f"{fs} holds {row['files']:,} of the {row['file_quota']:,} files it "
+                "may; any job that writes fails once it is full"
+            )
+        if row["used"] > QUOTA_WARNING * row["quota"]:
+            warnings.append(f"{fs} is {row['used'] / row['quota']:.0%} full by size")
+    queued, running = load.get(queue, (0, 0))
+    if queued > QUEUE_WARNING * max(running, 1):
+        warnings.append(
+            f"{queue} has {queued} jobs waiting for {running} running, so the folds "
+            "may wait a long time; --queue chooses another queue"
+        )
+    return warnings
+
+
+def train_script(profile):
+    """train.pbs asks for a GPU in its header, and a qsub -l without ngpus does not
+    take that away, so CPU folds go through train_cpu.pbs, which asks for none."""
+    if profile["device"] == "cpu":
+        return "scripts/nci/train_cpu.pbs"
+    return "scripts/nci/train.pbs"
+
+
+def fold_dir(output, fold):
+    return f"{output}/fold-{fold}"
+
+
+def plan_jobs(cfg, settings, inputs, paths, env_dir, graph_dir, facts, queue, walltime):
+    """Every job the run needs, in submission order. Paths are this run's on Gadi."""
+    jobs, before = [], []
+    if facts["env"] != "ready":
+        # prepare_environment.pbs asks for 1 copyq CPU for 30 minutes at 2 SU/hour.
+        jobs.append(
+            Job("prepare", "scripts/nci/prepare_environment.pbs", {}, {}, [], 1)
+        )
+        before = ["prepare"]
+    if facts["graph"] != "ready":
+        data = next(
+            entry["path"]
+            for folder, entry in inputs.datasets.items()
+            if folder == Path(inputs.graph_settings["data_dir"]).as_posix()
+        )
+        job = cfg["graph_job"]
+        jobs.append(
+            Job(
+                "graph",
+                "scripts/nci/build_graph.pbs",
+                job,
+                {
+                    "NCI_GRAPH_CONFIG": inputs.graph_config,
+                    "NCI_DATA_DIR": data,
+                    "NCI_SPLIT_FILE": settings["split_file"],
+                    "NCI_SEEDS": settings["seeds_file"],
+                    "NCI_GRAPH_DIR": graph_dir,
+                },
+                list(before),
+                su_estimate(job, job["su_per_cpu_hour"]),
+            )
+        )
+        before = [*before, "graph"]
+    profile = dict(cfg["queues"][queue], queue=queue, walltime=walltime)
+    for fold in FOLDS:
+        variables = {
+            "NCI_MODEL_CONFIG": paths["config"],
+            "NCI_OUTPUT_DIR": fold_dir(paths["output"], fold),
+            "NCI_FOLDS": str(fold),
+        }
+        if profile["device"] == "cpu":
+            variables["NCI_DEVICE"] = "cpu"
+        jobs.append(
+            Job(
+                f"fold-{fold}",
+                train_script(profile),
+                profile,
+                variables,
+                list(before),
+                su_estimate(profile, profile["su_per_cpu_hour"]),
+            )
+        )
+    job = cfg["score_job"]
+    jobs.append(
+        Job(
+            "score",
+            "scripts/nci/score.pbs",
+            job,
+            {
+                "NCI_MODEL_CONFIG": paths["config"],
+                "NCI_FOLD_RUNS": ":".join(fold_dir(paths["output"], f) for f in FOLDS),
+                "NCI_OUTPUT_DIR": paths["output"],
+            },
+            [f"fold-{fold}" for fold in FOLDS],
+            su_estimate(job, job["su_per_cpu_hour"]),
+        )
+    )
+    return jobs
+
+
+def make_plan(model_config, cfg, ssh, root=ROOT, queue="auto"):
     """Run every check before actually making changes. If everything passes,
-    return a Plan object which `describe` prints and `submit` carries out;
-    otherwise raise BlockedError saying what to fix."""
+    return a Plan which `describe` prints and `submit` carries out; otherwise
+    raise BlockedError saying what to fix."""
     settings = read_settings(root / model_config)
+    if settings.get("method") != "hgnn":
+        raise BlockedError(
+            "only hgnn configs are sent to Gadi; IDW and network mean are scored "
+            "with every HGNN run"
+        )
     validate_settings(dict(settings, device="cpu"))  # CUDA is checked on the GPU node
     revision = committed_revision(root)
-    inputs = plan_inputs(settings, root, revision)
-    fingerprint = inputs_fingerprint(inputs)
+    inputs = plan_inputs(settings, revision, root)
     user = ssh.run(cfg["login_host"], "id -un").strip()
-    paths = remote_paths(cfg, user, "probe", fingerprint)
-    facts, quota, account, jobs = parse_probe(
+    paths = remote_paths(cfg, user, "probe")
+    # Named as scripts/nci/prepare_environment.pbs names it: sha256sum < uv.lock.
+    lock = hashlib.sha256(committed_bytes("uv.lock", revision, root)).hexdigest()
+    env_dir = f"{paths['shared']}/envs/{lock[:16]}"
+    graph_dir = f"{paths['graph_cache']}/{inputs.graph_fingerprint[:16]}"
+    folders = sorted({entry["path"] for entry in inputs.datasets.values()})
+    facts, found, quota, account, queues = parse_probe(
         ssh.run(
             cfg["login_host"],
             "bash -s -- "
-            + quote(paths["repo"], paths["inputs"], revision, cfg["project"]),
+            + quote(
+                paths["repo"], revision, env_dir, graph_dir, cfg["project"], *folders
+            ),
             data=PROBE.encode(),
         )
     )
-    lock = committed_digest("uv.lock", revision, root)[0]
-    needs_setup = facts["venv"] == "absent" or facts["env_lock"] != lock
-    busy = jobs_using(jobs, paths["root"])
-    rows = parse_lquota(quota, cfg["project"])
-    uploads = [item for item in inputs if not item.tracked]
-    upload_bytes = (
-        sum(item.size for item in uploads) if facts["inputs"] == "absent" else 0
+    load = parse_queue_load(queues)
+    chosen = choose_queue(queue, load, cfg)
+    layers = layer_key(settings)
+    if queue == "auto" and "normal" in cfg["queues"]:
+        # A GPU is not always faster: take the CPU queue when its folds would finish
+        # sooner, as they do for G+R+S.
+        gpu = fold_walltime(cfg, chosen, layers, inputs.hours, settings["epochs"])[0]
+        cpu = fold_walltime(cfg, "normal", layers, inputs.hours, settings["epochs"])[0]
+        if cpu < gpu:
+            chosen = "normal"
+    hours, capped = fold_walltime(cfg, chosen, layers, inputs.hours, settings["epochs"])
+    walltime = format_walltime(hours)
+    jobs = plan_jobs(
+        cfg, settings, inputs, paths, env_dir, graph_dir, facts, chosen, walltime
     )
-    upload_files = len(uploads) + 8 if upload_bytes else 0  # files plus their folders
+    rows = parse_lquota(quota, cfg["project"])
     code_bytes, code_files = code_footprint(revision, root)
     problems = [
+        *dataset_problems(inputs, found),
         headroom_problem(
             rows,
-            storage_directive(paths["inputs"]).split("/")[0],
-            upload_bytes,
-            upload_files,
+            "scratch",
+            code_bytes + (GRAPH_BYTES if facts["graph"] != "ready" else 0),
+            code_files + 100,
         ),
-        headroom_problem(rows, "scratch", code_bytes, code_files),
     ]
-    estimate = su_estimate(cfg["job"], cfg["su_per_cpu_hour"])
+    if facts["env"] != "ready":
+        problems.append(headroom_problem(rows, "gdata", 6 * 2**30, ENVIRONMENT_FILES))
+    estimate = sum(job.su for job in jobs)
     available = parse_available_su(account)
     if estimate > available:
-        problems.append(f"the job can cost {estimate:.0f} SU; {available:.0f} SU left")
-    if needs_setup and busy:
-        problems.append(environment_busy(busy))
+        problems.append(f"the run can cost {estimate:.0f} SU; {available:.0f} SU left")
     problems = [problem for problem in problems if problem]
     if problems:
         raise BlockedError("Gadi cannot take this run:\n  " + "\n  ".join(problems))
+    warnings = plan_warnings(rows, estimate, available, chosen, load)
     return Plan(
         str(model_config),
         settings,
         revision,
-        inputs,
-        fingerprint,
         user,
         facts,
+        inputs,
+        env_dir,
+        graph_dir,
+        chosen,
+        load,
+        walltime,
+        capped,
+        epoch_seconds(cfg, chosen, layers)[1],
+        jobs,
         estimate,
         available,
-        upload_bytes,
-        needs_setup,
-        busy,
+        warnings,
     )
 
 
 def describe(plan, cfg):
-    job = cfg["job"]
-    uploads = [item for item in plan.inputs if not item.tracked]
-    tracked = [item.label for item in plan.inputs if item.tracked]
+    profile = cfg["queues"][plan.queue]
+    load = ", ".join(
+        f"{queue} {queued} queued / {running} running"
+        for queue, (queued, running) in sorted(plan.queue_load.items())
+    )
     lines = [
-        f"Revision: {plan.revision} (as a git bundle)",
+        f"Revision: {plan.revision}",
         f"Gadi user: {plan.user}; project {cfg['project']}",
-        f"Inputs fingerprint: {plan.fingerprint[:16]}",
-        "Inputs to upload:" if plan.upload_bytes else "Inputs: already on Gadi",
+        "Tables (published on Gadi):",
+        *(f"  {key}: {path}" for key, path in plan.inputs.tables.items()),
+        f"Graphs: {plan.inputs.graph_config} -> {plan.graph_dir} "
+        + (
+            "(built by an earlier run)"
+            if plan.facts["graph"] == "ready"
+            else "(built first, by a CPU job)"
+        ),
+        f"Environment: {plan.env_dir} "
+        + ("(ready)" if plan.facts["env"] == "ready" else "(built first, by copyq)"),
+        f"Queues now: {load or 'unknown'}",
+        f"Folds: 5 jobs on {plan.queue}, each {profile['ncpus']} CPUs, "
+        f"{profile['ngpus']} GPU, {profile['mem']} memory, walltime {plan.walltime} "
+        f"for {plan.settings['epochs']} epochs over {plan.inputs.hours} hours",
     ]
-    if plan.upload_bytes:
-        lines += [
-            f"  {item.label}: {item.local} ({item.size / 2**20:.1f} MiB)"
-            for item in uploads
-        ]
-        lines.append(f"  total {plan.upload_bytes / 2**20:.1f} MiB")
+    if not plan.measured:
+        lines.append(
+            f"  No measured epoch time for {layer_key(plan.settings)} on {plan.queue}; "
+            "the walltime is 1.5 times its slowest measured layer set."
+        )
+    if plan.capped:
+        lines.append(
+            f"  WARNING: every epoch would need more than {plan.walltime}, the "
+            "queue's limit; a fold stopped by it cannot be scored."
+        )
     lines += [
-        f"With the code: {', '.join(tracked) or 'none'}",
-        f"Job: {job['queue']}, {job['ncpus']} CPUs, {job['ngpus']} GPU, {job['mem']} "
-        f"memory, walltime {job['walltime']}",
-        f"Most it can cost: {plan.su_estimate:.1f} SU "
+        "Then one CPU job joins the folds and scores every method; PBS emails you "
+        "when it ends, or if any job is aborted.",
+        "Jobs: " + ", ".join(job.name for job in plan.jobs),
+        *(f"WARNING: {warning}" for warning in plan.warnings),
+        f"Most it can cost: {plan.su_estimate:.0f} SU "
         f"({plan.su_available:.0f} SU left)",
     ]
-    if plan.needs_setup:
-        lines.append(
-            "Environment missing or built from another uv.lock: a copyq preparation "
-            "job runs first (1 CPU, up to 30 minutes, extra SU)."
-        )
     return "\n".join(lines)
+
+
+def remote_settings(settings, inputs, graph_dir, device):
+    """The model config with its tables and graphs pointed at their places on Gadi.
+    Committed files (split, seeds) keep their paths: jobs run in the checkout."""
+    result = dict(settings, **inputs.tables)
+    result["graphs_dir"] = graph_dir
+    result["device"] = device
+    result.pop("output_dir", None)
+    return result
 
 
 def write_state(run_dir, state):
@@ -700,116 +981,214 @@ def ship_code(plan, cfg, ssh, paths, root=ROOT):
     )
 
 
-def ship_inputs(plan, cfg, ssh, paths, run_id):
-    """Upload to a partial folder, verify checksums on Gadi, then publish read-only."""
-    uploads = [item for item in plan.inputs if not item.tracked]
-    if plan.facts["inputs"] == "present" or not uploads:
-        return
-    sums = "".join(f"{item.sha256}  {item.remote}\n" for item in uploads).encode()
-    partial = f"{paths['inputs']}.partial-{run_id}"
-    ssh.send_tar(
-        cfg["transfer_host"],
-        f"mkdir -p {quote(partial)} && tar -xf - -C {quote(partial)} && "
-        f"cd {quote(partial)} && sha256sum --check --quiet SHA256SUMS && "
-        f"touch COMPLETE && chmod -R a-w . && mv -T {quote(partial, paths['inputs'])}",
-        [(sums, "SHA256SUMS"), *((item.local, item.remote) for item in uploads)],
-    )
-
-
-def submit(plan, cfg, ssh, run_dir, login_check=True, root=ROOT):
-    """Upload, check out the revision, check inputs on the login node, then qsub."""
+def submit(plan, cfg, ssh, run_dir, root=ROOT):
+    """Upload the code and run config, then queue every job with its dependencies."""
     login = cfg["login_host"]
     run_id = run_dir.name
-    paths = remote_paths(cfg, plan.user, run_id, plan.fingerprint)
-    settings = remote_settings(
-        plan.settings, plan.inputs, paths["inputs"], paths["output"]
+    paths = remote_paths(cfg, plan.user, run_id)
+    device = cfg["queues"][plan.queue]["device"]
+    config_text = yaml.safe_dump(
+        remote_settings(plan.settings, plan.inputs, plan.graph_dir, device),
+        sort_keys=False,
     )
-    config_text = yaml.safe_dump(settings, sort_keys=False)
     (run_dir / "run.yaml").write_text(config_text)
+    logs = {job.name: f"{paths['logs']}/{job.name}.log" for job in plan.jobs}
     state = {
         "run": run_id,
         "created_utc": datetime.now(UTC).isoformat(),
         "status": "UPLOADING",
         "model_config": plan.model_config,
         "revision": plan.revision,
+        "nci_user": plan.user,
         "login_host": login,
         "transfer_host": cfg["transfer_host"],
         "remote": paths,
-        "inputs_fingerprint": plan.fingerprint,
-        "inputs": [asdict(item) for item in plan.inputs],
-        "job": cfg["job"],
+        "queue": plan.queue,
+        "walltime": plan.walltime,
+        "graph_dir": plan.graph_dir,
+        "env_dir": plan.env_dir,
         "su_estimate": plan.su_estimate,
+        "storage": storage_directive(
+            paths["run"], paths["shared"] + "/", paths["graph_cache"] + "/"
+        ),
+        "layers": layer_key(plan.settings),
+        "hours": plan.inputs.hours,
+        "epochs": plan.settings["epochs"],
+        "logs": logs,
+        "after": {job.name: job.after for job in plan.jobs},
         "jobs": {},
     }
     write_state(run_dir, state)
     try:
         ssh.run(
             cfg["transfer_host"],
-            f"mkdir -p {quote(paths['runs'])} && "
-            f"mkdir {quote(paths['run'])} && "
-            f"cat > {quote(paths['config'])}",
+            f"mkdir -p {quote(paths['runs'])} && mkdir {quote(paths['run'])} && "
+            f"mkdir {quote(paths['logs'])} && cat > {quote(paths['config'])}",
             config_text.encode(),
         )
         ship_code(plan, cfg, ssh, paths, root)
-        ship_inputs(plan, cfg, ssh, paths, run_id)
         code = quote(paths["code"])
+        # The checkout links straight to this lock's environment, so a later run that
+        # relinks the shared checkout never changes what this run's jobs import.
         ssh.run(
             login,
             f"git -C {quote(paths['repo'])} worktree add --quiet --detach "
             f"{code} {quote(plan.revision)} && "
-            f"ln -s {quote(paths['repo'] + '/.venv', paths['code'] + '/.venv')}",
+            f"ln -s {quote(plan.env_dir, paths['code'] + '/.venv')}",
         )
-        ready = ssh.run(
-            login,
-            f"cd {code} && [[ -x .venv/bin/python ]] && "
-            ".venv/bin/python -B scripts/nci/check_environment.py "
-            ">/dev/null 2>&1 && echo ready || echo prepare",
-        ).strip()
-        storage = storage_directive(paths["run"], paths["inputs"])
-        if ready == "ready" and login_check:
-            ssh.run(
-                login,
-                f"cd {code} && .venv/bin/python -B -m src.models.run "
-                f"{quote(paths['config'])} --check-inputs --device cpu",
-            )
-        # A changed uv.lock rebuilds even when the check passes (say, only a dev
-        # tool changed), so the shared checkout's uv.lock keeps naming the
-        # environment's. The plan refused a rebuild while jobs use it; a failed
-        # or unfinished environment job can still leave the check failing here.
-        if ready != "ready" or plan.needs_setup:
-            if plan.busy:
-                raise BlockedError(environment_busy(plan.busy))
-            state["jobs"]["prepare"] = ssh.run(
-                login,
-                f"git -C {quote(paths['repo'])} checkout --quiet --detach "
-                f"{quote(plan.revision)} && cd {quote(paths['repo'])} && "
-                f"qsub -o {quote(paths['prepare_log'])} "
-                "scripts/nci/prepare_environment.pbs",
-            ).strip()
-            write_state(run_dir, state)  # on record before the next step can fail
-        command = qsub_command(
+        storage = state["storage"]
+        name = short_name(run_id)
+        # The plan's jobs name a placeholder run; these name this run's folders.
+        jobs = plan_jobs(
             cfg,
-            "scripts/nci/train.pbs",
-            {"NCI_MODEL_CONFIG": paths["config"], "NCI_OUTPUT_DIR": paths["output"]},
-            storage,
-            paths["log"],
-            state["jobs"].get("prepare"),
+            plan.settings,
+            plan.inputs,
+            paths,
+            plan.env_dir,
+            plan.graph_dir,
+            plan.facts,
+            plan.queue,
+            plan.walltime,
         )
-        state["jobs"]["train"] = ssh.run(
-            login, f"cd {code} && {quote(*command)}"
-        ).strip()
+        for job in jobs:
+            after = [state["jobs"][previous] for previous in job.after]
+            if job.name == "prepare":
+                command = (
+                    f"git -C {quote(paths['repo'])} checkout --quiet --detach "
+                    f"{quote(plan.revision)} && cd {quote(paths['repo'])} && "
+                    f"qsub -o {quote(logs['prepare'])} -m a "
+                    "scripts/nci/prepare_environment.pbs"
+                )
+            else:
+                command = f"cd {code} && " + quote(
+                    *qsub_command(
+                        cfg["project"],
+                        job.job,
+                        job.script,
+                        job.variables,
+                        storage,
+                        logs[job.name],
+                        after,
+                        name=f"{name}-{job.name}",
+                        mail="ae" if job.name == "score" else "a",
+                    )
+                )
+            state["jobs"][job.name] = ssh.run(login, command).strip()
+            write_state(run_dir, state)  # on record before the next step can fail
     except BaseException as error:
         state.update(status="SUBMIT_FAILED", error=str(error) or type(error).__name__)
         write_state(run_dir, state)
-        prepare = state["jobs"].get("prepare")
-        if prepare and isinstance(error, BlockedError):
+        if state["jobs"] and isinstance(error, BlockedError):
+            ids = " ".join(state["jobs"].values())
             raise BlockedError(
-                f"{error}\nThe environment job {prepare} was already submitted and "
-                "stays on Gadi; the next run reuses what it builds. Cancel it with "
-                f"qdel {prepare} if you do not want it."
+                f"{error}\nThese jobs were already submitted and stay on Gadi: "
+                f"{ids}. Cancel them with qdel {ids} if you do not want them."
             ) from error
         raise
     state["status"] = "SUBMITTED"
+    write_state(run_dir, state)
+    return state
+
+
+def short_name(run_id):
+    """The run's label, or "run", for PBS job names: <label>-fold-0 and so on."""
+    return (run_id.split("_", 2)[2] if run_id.count("_") >= 2 else "run")[:8]
+
+
+def resume(run_dir, cfg, ssh, queue=None):
+    """Resubmit the folds of a finished run that did not succeed, then a new scoring
+    job. A fold that saved last.pt carries on where it stopped; one that never
+    started runs from the beginning. Returns the updated state."""
+    run_dir = Path(run_dir)
+    state = read_state(run_dir)
+    if state.get("status") not in ("SUBMITTED", "RESUMED"):
+        raise BlockedError(f"{run_dir} was never fully submitted; submit it again")
+    if (run_dir / "results").exists():
+        raise BlockedError(f"{run_dir} was already fetched; submit a new run instead")
+    exits, last = {}, {}
+    poll(ssh, state, exits, last, lambda text: None)
+    waiting = [name for name in state["jobs"] if name not in exits]
+    if waiting:
+        raise BlockedError(f"wait for {', '.join(waiting)} to finish first")
+    for name in ("prepare", "graph"):
+        if name in exits and exits[name] != 0:
+            raise BlockedError(
+                f"the {name} job failed (log: {state['logs'][name]}); fix what it "
+                "reports and submit a new run"
+            )
+    folds = [f"fold-{fold}" for fold in FOLDS if exits.get(f"fold-{fold}") != 0]
+    if not folds and exits.get("score") == 0:
+        raise BlockedError("every job succeeded; fetch the run instead")
+    queue = queue or state["queue"]
+    if queue not in cfg["queues"]:
+        raise BlockedError(f"queue {queue} is not in remote.yaml")
+    hours, _ = fold_walltime(
+        cfg, queue, state["layers"], state["hours"], state["epochs"]
+    )
+    profile = dict(cfg["queues"][queue], queue=queue, walltime=format_walltime(hours))
+    output, code = state["remote"]["output"], state["remote"]["code"]
+    saved = ssh.run(
+        state["login_host"],
+        " ; ".join(
+            f"[[ -f {quote(fold_dir(output, name[5:]) + '/last.pt')} ]] && echo {name}"
+            for name in folds
+        )
+        + " ; true",
+    ).split()
+    attempt = len(state.get("previous", [])) + 2
+    state.setdefault("previous", []).append(dict(state["jobs"]))
+    jobs = {name: job for name, job in state["jobs"].items() if name not in folds}
+    jobs.pop("score", None)
+    name = short_name(state["run"])
+    for fold in folds:
+        variables = {
+            "NCI_MODEL_CONFIG": state["remote"]["config"],
+            "NCI_OUTPUT_DIR": fold_dir(output, fold[5:]),
+            "NCI_FOLDS": fold[5:],
+        }
+        if profile["device"] == "cpu":
+            variables["NCI_DEVICE"] = "cpu"
+        if fold in saved:
+            variables["NCI_RESUME"] = "1"
+        state["logs"][fold] = f"{state['remote']['logs']}/{fold}.{attempt}.log"
+        state["after"][fold] = []
+        command = qsub_command(
+            cfg["project"],
+            profile,
+            train_script(profile),
+            variables,
+            state["storage"],
+            state["logs"][fold],
+            name=f"{name}-{fold}",
+            mail="a",
+        )
+        jobs[fold] = ssh.run(
+            state["login_host"], f"cd {quote(code)} && {quote(*command)}"
+        ).strip()
+        state["jobs"] = {**jobs}
+        write_state(run_dir, state)
+    job = cfg["score_job"]
+    state["logs"]["score"] = f"{state['remote']['logs']}/score.{attempt}.log"
+    command = qsub_command(
+        cfg["project"],
+        job,
+        "scripts/nci/score.pbs",
+        {
+            "NCI_MODEL_CONFIG": state["remote"]["config"],
+            "NCI_FOLD_RUNS": ":".join(fold_dir(output, f) for f in FOLDS),
+            "NCI_OUTPUT_DIR": output,
+        },
+        state["storage"],
+        state["logs"]["score"],
+        [jobs[fold] for fold in folds],
+        name=f"{name}-score",
+        mail="ae",
+    )
+    state["after"]["score"] = folds
+    jobs["score"] = ssh.run(
+        state["login_host"], f"cd {quote(code)} && {quote(*command)}"
+    ).strip()
+    state.update(jobs=jobs, status="RESUMED", queue=queue)
     write_state(run_dir, state)
     return state
 
@@ -821,7 +1200,7 @@ def job_state(ssh, state, name):
     still there after qstat has forgotten the job. qstat answers until then.
     """
     job_id = state["jobs"][name]
-    log = state["remote"][LOG_KEYS[name]]
+    log = state["logs"][name]
     tail = ssh.run(state["login_host"], f"tail -n 30 {quote(log)} 2>/dev/null || true")
     exit_status = parse_exit_status(tail)
     if exit_status is not None:
@@ -838,6 +1217,28 @@ def job_state(ssh, state, name):
         ) from error
 
 
+def poll(ssh, state, finished, last, say):
+    """One look at every unfinished job; updates finished and last in place."""
+    for name in state["jobs"]:
+        if name in finished:
+            continue
+        try:
+            letter, exit_status = job_state(ssh, state, name)
+        except ConnectionLostError:
+            raise
+        except BlockedError:
+            # PBS deletes a job whose dependency failed, so it never runs or logs.
+            if any(finished.get(dep, 0) != 0 for dep in state["after"].get(name, [])):
+                finished[name] = None
+                continue
+            raise
+        if last.get(name) != letter:
+            say(f"{name} {state['jobs'][name]}: {JOB_STATES.get(letter, letter)}")
+            last[name] = letter
+        if letter == "F":
+            finished[name] = exit_status
+
+
 def wait(ssh, state, poll_seconds, sleep=time.sleep, say=print, retries=3):
     """Poll until every job has finished; returns {job name: exit status}.
 
@@ -847,22 +1248,7 @@ def wait(ssh, state, poll_seconds, sleep=time.sleep, say=print, retries=3):
     finished, last, failures = {}, {}, 0
     while len(finished) < len(state["jobs"]):
         try:
-            for name in state["jobs"]:
-                if name in finished:
-                    continue
-                try:
-                    letter, exit_status = job_state(ssh, state, name)
-                except BlockedError:
-                    if name == "train" and finished.get("prepare", 0) != 0:
-                        finished[name] = None  # PBS drops a job whose dependency failed
-                        continue
-                    raise
-                if last.get(name) != letter:
-                    job_id = state["jobs"][name]
-                    say(f"{name} {job_id}: {JOB_STATES.get(letter, letter)}")
-                    last[name] = letter
-                if letter == "F":
-                    finished[name] = exit_status
+            poll(ssh, state, finished, last, say)
         except ConnectionLostError:
             failures += 1
             if failures > retries:
@@ -879,40 +1265,56 @@ def wait(ssh, state, poll_seconds, sleep=time.sleep, say=print, retries=3):
 
 
 def verdict(results, exits):
-    if exits.get("prepare") not in (None, 0):
-        return f"FAILED: environment preparation exited {exits['prepare']}"
-    if exits.get("train") != 0:
-        return f"FAILED: training job exit status {exits.get('train')}"
-    report = results / "output" / "report.md"
-    if not (results / "output" / "predictions.csv").is_file() or not report.is_file():
-        return "FAILED: predictions.csv or report.md missing"
-    if re.search(r"^Status: (FAILED|RUNNING)", report.read_text(), re.MULTILINE):
+    for name, code in exits.items():
+        if code != 0:
+            return f"FAILED: {name} job exit status {code}"
+    report = results / "output" / "scored" / "report.md"
+    if not report.is_file():
+        return "FAILED: output/scored/report.md missing"
+    if re.search(
+        r"^Status: (FAILED|RUNNING|PARTIAL)", report.read_text(), re.MULTILINE
+    ):
         return "FAILED: report.md does not show a completed run"
     return "DONE"
 
 
-def fetch(run_dir, ssh, poll_seconds, sleep=time.sleep, say=print):
-    """Wait for the jobs to finish, then download the run folder into <run>/results/."""
-    run_dir = Path(run_dir)
-    state = read_state(run_dir)
-    results = run_dir / "results"
-    if results.exists():
-        # refuse overwrite if results already exist for that specific run_dir.
-        # A download that stops partway is left in results.partial (below) and
-        # redone by the next fetch, so results/ only ever holds a whole download.
-        raise BlockedError(f"{results} already exists; results are never overwritten")
-    exits = wait(ssh, state, poll_seconds, sleep, say)
-    partial = run_dir / "results.partial"
-    shutil.rmtree(partial, ignore_errors=True)  # an earlier download that broke off
+def download(ssh, state, run_dir, with_predictions):
+    results, partial = run_dir / "results", run_dir / "results.partial"
+    # A download that stops partway is left in results.partial and redone next time,
+    # so results/ only ever holds a whole download.
+    shutil.rmtree(partial, ignore_errors=True)
     partial.mkdir()
-    remote = state["remote"]["run"]
+    exclude = "" if with_predictions else "--exclude=predictions.csv "
     ssh.receive_tar(
         state["transfer_host"],
-        f"cd {quote(remote)} && tar -cf - $(ls -d output pbs.log "
-        "prepare.log run.yaml 2>/dev/null)",
+        f"cd {quote(state['remote']['run'])} && tar -cf - {exclude}"
+        "$(ls -d output logs run.yaml 2>/dev/null)",
         partial,
     )
     partial.rename(results)
+    return results
+
+
+def fetch(run_dir, ssh, poll_seconds, block=False, with_predictions=False, **hooks):
+    """Download a finished run into <run>/results/; hooks: sleep and say.
+
+    Without block, a run with unfinished jobs is left alone and reported."""
+    run_dir = Path(run_dir)
+    state = read_state(run_dir)
+    if (run_dir / "results").exists():
+        raise BlockedError(
+            f"{run_dir / 'results'} already exists; results are never overwritten"
+        )
+    say = hooks.get("say", print)
+    if block:
+        exits = wait(ssh, state, poll_seconds, hooks.get("sleep", time.sleep), say)
+    else:
+        exits, last = {}, {}
+        poll(ssh, state, exits, last, lambda text: None)
+        waiting = [name for name in state["jobs"] if name not in exits]
+        if waiting:
+            return dict(state, status=f"WAITING: {', '.join(waiting)} not finished")
+    results = download(ssh, state, run_dir, with_predictions)
     state.update(
         exits=exits,
         status=verdict(results, exits),
@@ -922,65 +1324,198 @@ def fetch(run_dir, ssh, poll_seconds, sleep=time.sleep, say=print):
     return state
 
 
+def unfetched_runs(root):
+    base = root / RUNS_DIR
+    if not base.is_dir():
+        return []
+    return sorted(
+        path
+        for path in base.iterdir()
+        if (path / "state.json").is_file()
+        and not (path / "results").exists()
+        and read_state(path).get("status") in ("SUBMITTED", "RESUMED")
+    )
+
+
+DOCTOR = r"""
+project=$1 shared=$2
+echo "user=$(id -un)"
+id -nG | tr ' ' '\n' | grep -qx "$project" && echo member=yes || echo member=no
+[[ -r $shared/python/py314/bin/python3.14 ]] && echo python=yes || echo python=no
+echo '--- lquota'
+lquota
+echo '--- nci_account'
+nci_account -P "$project"
+"""
+
+
+def doctor(cfg, ssh, say=print):
+    """Check a teammate's setup from their machine; returns the problems found."""
+    problems = []
+    try:
+        facts, _, quota, account, _ = parse_probe(
+            ssh.run(
+                cfg["login_host"],
+                "bash -s -- "
+                + quote(
+                    cfg["project"], cfg["shared_root"].format(project=cfg["project"])
+                ),
+                data=DOCTOR.encode(),
+            )
+        )
+    except ConnectionLostError as error:
+        return [
+            f"{error}\nSSH could not log in without a password. Check the NCI "
+            "username you gave and that your SSH key is on Gadi; see "
+            "docs/nci/ONBOARDING.md, step 2"
+        ]
+    say(f"Gadi user: {facts.get('user')}")
+    try:
+        ssh.run(cfg["transfer_host"], "true")
+    except ConnectionLostError as error:
+        problems.append(
+            f"{error}\n{cfg['transfer_host']} carries uploads and downloads; log in "
+            f"to it once with `ssh {cfg['transfer_host']} hostname` to check and "
+            "accept its host key"
+        )
+    if facts.get("member") != "yes":
+        problems.append(
+            f"you are not in project {cfg['project']}; ask its lead on MyNCI"
+        )
+    if facts.get("python") != "yes":
+        problems.append(
+            "the shared Python is missing or unreadable; tell the project lead"
+        )
+    try:
+        say(f"SU left in {cfg['project']}: {parse_available_su(account):.0f}")
+    except BlockedError as error:
+        problems.append(str(error))
+    rows = parse_lquota(quota, cfg["project"])
+    for fs, row in sorted(rows.items()):
+        say(f"{fs}: {row['files']} of {row['file_quota']} files used")
+        if row["files"] > 0.95 * row["file_quota"]:
+            problems.append(f"{fs} is nearly out of files; runs may fail to write")
+    try:
+        git("rev-parse", "HEAD", root=ROOT)
+    except BlockedError as error:
+        problems.append(str(error))
+    return problems
+
+
+def nci_username(given, ask, runs=()):
+    """The NCI username to log in as: the one runs were submitted with, else
+    --user, else $NCI_USERNAME, else asked for."""
+    saved = {read_state(run).get("nci_user") for run in runs}
+    if len(saved) == 1 and None not in saved:
+        return saved.pop()
+    name = given or os.environ.get("NCI_USERNAME") or ask("NCI username: ")
+    name = name.strip()
+    if not re.fullmatch(r"[a-z][a-z0-9]{1,15}", name):
+        raise BlockedError(
+            f"{name!r} is not an NCI username (lower-case letters and digits, "
+            "such as ab1234)"
+        )
+    return name
+
+
 def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
-    """
-    1. reads the command and config/nci/remote.yaml, then opens the SSH helper
-    2. status / fetch: loads saved run state and either shows the job states or
-       calls `fetch`
-    3. plan / submit / run: makes and prints the plan; submit and run then ask
-       to go ahead and call `submit`, and run also waits and calls `fetch`
-    """
     root = root or ROOT
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--remote-config", type=Path, default=DEFAULT_CONFIG)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--user",
+        help="your NCI username; asked for when neither this nor $NCI_USERNAME "
+        "gives it",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("plan", "submit", "run"):
-        sub = commands.add_parser(name)
+    for name in ("plan", "submit"):
+        sub = commands.add_parser(name, parents=[common])
         sub.add_argument("model_config", type=Path)
-        if name != "plan":
+        sub.add_argument(
+            "--queue",
+            default="auto",
+            help="gpuvolta, dgxa100, normal, or auto: the GPU queue with the "
+            "shorter wait",
+        )
+        if name == "submit":
             sub.add_argument("--label")
             sub.add_argument("--yes", action="store_true", help="skip the confirmation")
             sub.add_argument(
-                "--skip-login-check",
-                action="store_true",
-                help="do not run --check-inputs on the login node",
+                "--wait", action="store_true", help="wait for the jobs, then fetch"
             )
-    for name in ("status", "fetch"):
-        commands.add_parser(name).add_argument("run_dir", type=Path)
+    status = commands.add_parser("status", parents=[common])
+    status.add_argument("run_dirs", type=Path, nargs="*")
+    fetch_parser = commands.add_parser("fetch", parents=[common])
+    fetch_parser.add_argument("run_dirs", type=Path, nargs="*")
+    fetch_parser.add_argument("--wait", action="store_true")
+    fetch_parser.add_argument(
+        "--with-predictions",
+        action="store_true",
+        help="also download predictions.csv (hundreds of MB per run)",
+    )
+    resume_parser = commands.add_parser("resume", parents=[common])
+    resume_parser.add_argument("run_dir", type=Path)
+    resume_parser.add_argument("--queue", help="run the remaining folds on this queue")
+    commands.add_parser("doctor", parents=[common])
     args = parser.parse_args(argv)
     run_dir = None
     try:
         cfg = load_remote_config(root / args.remote_config)
-        ssh = ssh_factory(cfg)
+        runs = []
         if args.command in ("status", "fetch"):
-            run_dir = args.run_dir
-            if args.command == "status":
-                # just read job state, don't fetch
-                state = read_state(run_dir)
-                for name, job_id in state["jobs"].items():
-                    letter, exit_status = job_state(ssh, state, name)
-                    print(
-                        f"{name} {job_id}: {JOB_STATES.get(letter, letter)}"
-                        + ("" if exit_status is None else f", exit {exit_status}")
-                    )
-                return 0
-            print(fetch(run_dir, ssh, cfg["poll_seconds"])["status"])
+            runs = args.run_dirs or unfetched_runs(root)
+        elif args.command == "resume":
+            runs = [args.run_dir]
+        ssh = ssh_factory(cfg, nci_username(args.user, confirm, runs))
+        if args.command == "resume":
+            state = resume(args.run_dir, cfg, ssh, args.queue)
+            print(f"Resubmitted {state['jobs']}")
             return 0
-        plan = make_plan(args.model_config, cfg, ssh, root)
+        if args.command == "doctor":
+            problems = doctor(cfg, ssh)
+            for problem in problems:
+                print(f"PROBLEM: {problem}")
+            print("Ready to submit." if not problems else "Fix the problems above.")
+            return 1 if problems else 0
+        if args.command in ("status", "fetch"):
+            if not runs:
+                print("No submitted runs waiting to be fetched.")
+            for run_dir in runs:
+                if args.command == "status":
+                    state = read_state(run_dir)
+                    print(f"{run_dir}:")
+                    for name, job_id in state["jobs"].items():
+                        letter, exit_status = job_state(ssh, state, name)
+                        print(
+                            f"  {name} {job_id}: {JOB_STATES.get(letter, letter)}"
+                            + ("" if exit_status is None else f", exit {exit_status}")
+                        )
+                else:
+                    result = fetch(
+                        run_dir,
+                        ssh,
+                        cfg["poll_seconds"],
+                        args.wait,
+                        args.with_predictions,
+                    )
+                    print(f"{run_dir}: {result['status']}")
+            return 0
+        plan = make_plan(args.model_config, cfg, ssh, root, args.queue)
         print(describe(plan, cfg))
         if args.command == "plan":
             print("Plan only: nothing was uploaded or submitted.")
             return 0
-        if not args.yes and confirm("Type yes to upload and submit: ").strip() != "yes":
+        if not args.yes and confirm("Type yes to submit: ").strip() != "yes":
             print("Cancelled: nothing was uploaded or submitted.")
             return 1
         run_dir = new_run_dir(root / RUNS_DIR, args.label, datetime.now())
-        state = submit(plan, cfg, ssh, run_dir, not args.skip_login_check, root)
+        state = submit(plan, cfg, ssh, run_dir, root)
         print(f"Submitted {state['jobs']}; run folder {run_dir}")
-        if args.command == "run":
-            print(fetch(run_dir, ssh, cfg["poll_seconds"])["status"])
+        if args.wait:
+            print(fetch(run_dir, ssh, cfg["poll_seconds"], block=True)["status"])
         return 0
     except BlockedError as error:
         print(f"BLOCKED: {error}", file=sys.stderr)
@@ -990,8 +1525,8 @@ def main(argv=None, ssh_factory=Ssh, confirm=input, root=None):
     except KeyboardInterrupt:
         if run_dir is not None:
             print(
-                f"\nStopped waiting; jobs keep running on Gadi. Resume with: "
-                f"python -m scripts.nci.remote fetch {run_dir}",
+                f"\nStopped waiting; jobs keep running on Gadi. Fetch later with: "
+                f"uv run python -m scripts.nci.remote fetch {run_dir}",
                 file=sys.stderr,
             )
         return 130

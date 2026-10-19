@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Once per project: install the conda-forge Python 3.14 every shared environment runs on,
+# at $NCI_SHARED_ROOT/python/py314 (default /g/data/no50/rainflow). uv's own Python 3.14
+# builds segfault on Gadi (see scripts/nci/prepare_environment.pbs). Teammates never run
+# this; prepare_environment.pbs refuses to start until the interpreter exists.
+#   qsub -v NCI_MICROMAMBA=/path/to/micromamba scripts/nci/prepare_python.pbs
+#PBS -P no50
+#PBS -q copyq
+#PBS -N rainflow-python
+#PBS -l ncpus=1
+#PBS -l mem=8GB
+#PBS -l jobfs=10GB
+#PBS -l walltime=00:30:00
+#PBS -l storage=scratch/no50+gdata/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} || -z ${PBS_JOBFS:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS copyq.\n' >&2
+    exit 1
+fi
+micromamba=${NCI_MICROMAMBA:?pass a micromamba binary with qsub -v NCI_MICROMAMBA=...}
+version=${NCI_PYTHON_VERSION:-3.14.8}
+shared=${NCI_SHARED_ROOT:-/g/data/no50/rainflow}
+target=$shared/python/py314
+if [[ -e $target ]]; then
+    printf 'BLOCKED: %s already exists; it is never replaced in place.\n' "$target" >&2
+    exit 1
+fi
+umask 027
+mkdir -p "$shared/python"
+# The package cache goes to the job's own disk, not to scratch's file quota.
+export MAMBA_ROOT_PREFIX=$PBS_JOBFS/mamba
+"$micromamba" create --yes --prefix "$target" --channel conda-forge \
+    --override-channels "python=$version"
+"$target/bin/python3.14" -c "import sys; print('Python', sys.version)"
+chmod -R a-w "$target"
+printf 'PYTHON_STATUS=READY %s/bin/python3.14\n' "$target"

@@ -22,6 +22,7 @@ decision. [CURRENT_STATE.md](CURRENT_STATE.md) says whether the code applies it 
 | [DEC-01](#dec-01) | Keep radar; drop hours that have no radar, for every method | 2026-10-11 |
 | [DEC-02](#dec-02) | Satellite hour = mean of the 10-minute images that have a value, if at least 3 of 6 do | 2026-10-11 |
 | [DEC-03](#dec-03) | Sydney uses the round-robin split | 2026-10-11 |
+| [DEC-04](#dec-04) | Sydney 2022 is the baseline; 2021-2022 and raw radar are extensions | 2026-10-19 |
 
 ---
 
@@ -138,3 +139,33 @@ same site, which every method predicts almost for free.
 **Changes.** D08's Gap 1 and the Component 03 README now name round-robin as Sydney's
 split. `sydney_5fold_round_robin.json` has to be built from the real `stations.csv` and
 committed before results are reported (rules 5 and 6). D08.7 still scores both splits.
+
+<a id="dec-04"></a>
+
+### DEC-04 — Sydney 2022 is the baseline; 2021-2022 and raw radar are extensions
+**Date:** 2026-10-19 · **Decided by:** project lead
+
+**Decision.** The baseline Sydney experiments are G, G+R and G+R+S on 2022 alone:
+`config/models/d09_2022_round_robin_{g,gr,grs}.yaml`, reading the tables built by
+`config/canonical/standard_2022.yaml` (published on Gadi as `sydney-2022`) and the 2022
+round-robin split `config/splits/sydney_5fold_round_robin_2022.json` (DEC-03). Every
+other Sydney experiment is an extension of that baseline and is reported against it:
+
+- **2021-2022**: the same sources over two years
+  (`config/models/d09_round_robin_*.yaml`, tables published as `sydney-2021-2022`).
+- **Raw radar**: G+R with radar computed from level-2 reflectivity instead of the
+  gauge-corrected product (`feature/raw-radar-level2`, built on the 2022 tables), so
+  the radar has not seen the gauges it is tested on.
+- Ablations of model settings run on 2022 unless they say otherwise.
+
+**Why.** It is the closest we can come to the paper's Sydney testbed (§4.1): 2022 at
+hourly resolution, gauge-corrected Rainfields 3 radar at about 5 km and Himawari CRRPh
+satellite at 2 km, with the paper's graph and model settings (§4.3).
+
+**Cost.** It still differs from the paper: 128 gauges over about 100 by 100 km against
+the paper's 75 over about 70 by 55 km, because the paper's station list is not available
+(ISS-23), and folds follow DEC-03 rather than the paper's text. One year gives each fold
+half the training hours of 2021-2022.
+
+**Changes.** Results tables lead with the 2022 runs. Extensions name the baseline run
+they are compared with.

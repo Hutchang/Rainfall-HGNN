@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Publish a folder of Component 02 tables to the project's shared data on Gadi, so every
+# teammate's runs read them in place and nobody uploads them again. The copy goes to
+# $NCI_SHARED_ROOT/data/<NCI_NAME>-<fingerprint>/ (default /g/data/no50/rainflow) with
+# SHA256SUMS and READY, and is then made read-only. The fingerprint is taken from the
+# checksums, so the same tables always land in the same folder and a published folder
+# is never changed. The job prints the entry to add to config/nci/datasets.yaml.
+#   qsub -v NCI_SOURCE=/scratch/no50/<you>/<checkout>/database/standard,NCI_NAME=sydney-2021-2022 scripts/nci/publish_tables.pbs
+#PBS -P no50
+#PBS -q copyq
+#PBS -N rainflow-publish
+#PBS -l ncpus=1
+#PBS -l mem=4GB
+#PBS -l jobfs=1GB
+#PBS -l walltime=02:00:00
+#PBS -l storage=scratch/no50+gdata/no50
+#PBS -l wd
+#PBS -j oe
+set -euo pipefail
+
+if [[ -z ${PBS_JOBID:-} ]]; then
+    printf 'BLOCKED: submit this script through PBS copyq.\n' >&2
+    exit 1
+fi
+source=${NCI_SOURCE:?pass the table folder with qsub -v NCI_SOURCE=...}
+name=${NCI_NAME:?pass a dataset name with qsub -v NCI_NAME=...}
+if [[ ! $name =~ ^[a-z0-9][a-z0-9.-]*$ ]]; then
+    printf 'BLOCKED: NCI_NAME may use lower-case letters, digits, "." and "-" only.\n' >&2
+    exit 1
+fi
+if [[ ! -f $source/gauge_hourly.csv || ! -f $source/stations.csv ]]; then
+    printf 'BLOCKED: %s has no gauge_hourly.csv and stations.csv.\n' "$source" >&2
+    exit 1
+fi
+shared=${NCI_SHARED_ROOT:-/g/data/no50/rainflow}
+umask 027
+mkdir -p "$shared/data"
+
+cd "$source"
+# Every file directly in the folder; sub-folders are not tables.
+mapfile -t files < <(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)
+sums=$(sha256sum -- "${files[@]}")
+fingerprint=$(printf '%s\n' "$sums" | sha256sum | cut -c1-16)
+target="$shared/data/$name-$fingerprint"
+if [[ -f $target/READY ]]; then
+    printf 'Already published, kept as is: %s\n' "$target"
+else
+    partial="$target.partial-${PBS_JOBID%%.*}"
+    mkdir "$partial"
+    cp -p -- "${files[@]}" "$partial/"
+    printf '%s\n' "$sums" > "$partial/SHA256SUMS"
+    (cd "$partial" && sha256sum --check --quiet SHA256SUMS)
+    touch "$partial/READY"
+    chmod -R a-w "$partial"
+    mv -T "$partial" "$target"
+    printf 'Published %s files to %s\n' "${#files[@]}" "$target"
+fi
+# Distinct hours in the gauge table, which the run planner uses to estimate walltime.
+hours=$(tail -n +2 "$target/gauge_hourly.csv" | cut -d, -f2 | LC_ALL=C sort -u | wc -l)
+printf '\nAdd this to config/nci/datasets.yaml, under the folder your configs read:\n'
+printf '  path: %s\n  sha256sums: %s\n  hours: %s\n' \
+    "$target" "$(sha256sum < "$target/SHA256SUMS" | cut -d' ' -f1)" "$hours"
+printf 'PUBLISH_STATUS=READY %s\n' "$target"

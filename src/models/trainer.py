@@ -22,6 +22,30 @@ def seed_everything(seed, deterministic=True):
     torch.backends.cudnn.deterministic = deterministic
 
 
+def rng_state():
+    """Every random generator training draws from, in a form torch.load reads back
+    with weights_only=True."""
+    name, keys, position, has_gauss, gauss = np.random.get_state()
+    return {
+        "python": random.getstate(),
+        "numpy": [name, keys.tolist(), position, has_gauss, gauss],
+        "torch": torch.get_rng_state(),
+        "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+    }
+
+
+def set_rng_state(state):
+    version, internal, gauss = state["python"]
+    random.setstate((version, tuple(internal), gauss))
+    name, keys, position, has_gauss, gauss = state["numpy"]
+    np.random.set_state(
+        (name, np.array(keys, dtype=np.uint32), position, has_gauss, gauss)
+    )
+    torch.set_rng_state(state["torch"])
+    if state["cuda"]:
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
 def model_spec(graph, settings):
     return {
         "in_channels_dict": {
@@ -110,7 +134,9 @@ def validation_loss(model, graph, settings):
     return total / count
 
 
-def train_fold(graphs, fold_index, settings, on_epoch=None):
+def train_fold(graphs, fold_index, settings, on_epoch=None, resume=None):
+    """Train one fold; on_epoch(row, best, last) runs after every epoch, and
+    resume continues from a `last` it was given."""
     seed_everything(settings["model_seed"], settings["deterministic"])
     spec = model_spec(graphs["train"], settings)
     model = GNNInductiveHetero(**spec).to(settings["device"])
@@ -123,8 +149,21 @@ def train_fold(graphs, fold_index, settings, on_epoch=None):
         lr=settings["learning_rate"],
         weight_decay=settings["weight_decay"],
     )
-    best, stale, history = None, 0, []
-    for epoch in range(1, settings["epochs"] + 1):
+    best, stale, history, start = None, 0, [], 1
+    if resume is not None:
+        # Carry on from the end of the last finished epoch, exactly as if training
+        # had never stopped: same weights, optimizer moments, early-stopping count
+        # and random draws.
+        if resume["model_spec"] != spec:
+            raise ValueError(f"fold {fold_index}: saved model shape differs from now")
+        model.load_state_dict(resume["state_dict"])
+        optimizer.load_state_dict(resume["optimizer"])
+        best, stale, history = resume["best"], resume["stale"], list(resume["history"])
+        start = resume["epoch"] + 1
+        if history and history[-1]["early_stop_status"] == "TRIGGERED":
+            start = settings["epochs"] + 1
+        set_rng_state(resume["rng"])
+    for epoch in range(start, settings["epochs"] + 1):
         train = train_epoch(model, graphs["train"], optimizer, settings)
         validation = validation_loss(model, graphs["validation"], settings)
         improved = best is None or validation < best["val_loss"]
@@ -158,7 +197,24 @@ def train_fold(graphs, fold_index, settings, on_epoch=None):
         }
         history.append(row)
         if on_epoch:
-            on_epoch(row, best)
+            on_epoch(
+                row,
+                best,
+                {
+                    "fold": fold_index,
+                    "epoch": epoch,
+                    "model_spec": spec,
+                    "state_dict": {
+                        key: value.detach().cpu().clone()
+                        for key, value in model.state_dict().items()
+                    },
+                    "optimizer": optimizer.state_dict(),
+                    "best": best,
+                    "stale": stale,
+                    "history": list(history),
+                    "rng": rng_state(),
+                },
+            )
         if triggered:
             break
     model.load_state_dict(best["state_dict"])
