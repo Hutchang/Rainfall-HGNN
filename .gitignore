@@ -231,3 +231,4 @@ __marimo__/
 /rainflow-smoke.o*
 
 report/
+config/splits/*.md
