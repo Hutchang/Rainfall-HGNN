@@ -41,6 +41,8 @@ from training.logic_hetero import (
     weighted_mse,
 )
 
+from training.loss import binary_rainfall_loss
+
 # Feature indices 0.._DATA_FEATURE_DIM-1 are zeroed during leave-one-out masking.
 _DATA_FEATURE_DIM = 2
 
@@ -84,6 +86,7 @@ def train_epoch_st(
     optimizer,
     device,
     weighted_loss_alpha: float = 0.0,
+    task: str = 'regression',
 ):
     """
     Leave-one-out training epoch for the spatio-temporal model.
@@ -150,7 +153,14 @@ def train_epoch_st(
 
             out = model(x_dict, x_context_dict, edge_index_dict, edge_attr_dict)
 
-            if weighted_loss_alpha > 0.0:
+            if task == 'classification':
+                loss = binary_rainfall_loss(
+                    out["raingauge"][valid_idx],
+                    y[valid_idx],
+                    threshold=0.5,
+                    pos_weight_val=9.0
+                )
+            elif weighted_loss_alpha > 0.0:
                 loss = weighted_mse(
                     out["raingauge"][valid_idx],
                     y[valid_idx],
@@ -182,6 +192,7 @@ def validate_st(
     dataloader,
     device,
     weighted_loss_alpha: float = 0.0,
+    task: str = 'regression',
 ):
     """
     Validation loop — evaluates on split nodes that have real data at time t.
@@ -225,7 +236,14 @@ def validate_st(
             out = model(x_dict, x_context_dict, edge_index_dict, edge_attr_dict)
             out["raingauge"] = out["raingauge"].clamp(min=0.0)  # rainfall >= 0
 
-            if weighted_loss_alpha > 0.0:
+            if task == 'classification':
+                loss = binary_rainfall_loss(
+                    out["raingauge"][eval_mask],
+                    y[eval_mask],
+                    threshold=0.5,
+                    pos_weight_val=9.0
+                )
+            elif weighted_loss_alpha > 0.0:
                 loss = weighted_mse(
                     out["raingauge"][eval_mask],
                     y[eval_mask],
@@ -252,6 +270,7 @@ def test_model_st(
     fold: int = 0,
     experiment_name: str = "test",
     rain_threshold: float = 0.5,
+    task: str = 'regression',
 ):
     """
     Test loop — same outputs as test_model in logic_hetero.py so experiments
@@ -301,9 +320,24 @@ def test_model_st(
             x_dict["raingauge"] = x_masked
 
             out = model(x_dict, x_context_dict, edge_index_dict, edge_attr_dict)
-            out["raingauge"] = out["raingauge"].clamp(min=0.0)  # rainfall >= 0
 
-            all_preds.append(out["raingauge"][eval_mask].detach().cpu())
+            # ----- Compute test loss & prepare evaluations -----
+            if task == 'classification':
+                loss = binary_rainfall_loss(
+                    out["raingauge"][eval_mask],
+                    y[eval_mask],
+                    threshold=0.5,
+                    pos_weight_val=9.0
+                )
+                # Convert logits to probabilities [0, 1] for metrics
+                out_eval = torch.sigmoid(out["raingauge"])
+            else:
+                out_eval = out["raingauge"].clamp(min=0.0)  # rainfall >= 0
+                loss = F.mse_loss(out_eval[eval_mask], y[eval_mask])
+
+            epoch_losses.append(loss.item())
+
+            all_preds.append(out_eval[eval_mask].detach().cpu())
             all_targets.append(y[eval_mask].detach().cpu())
             all_station_ids.append(
                 (eval_mask.nonzero(as_tuple=False).squeeze(-1) % num_nodes).cpu()

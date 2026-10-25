@@ -17,6 +17,8 @@ from sklearn.metrics import (
 
 from src.utils import read_config
 
+from training.loss import binary_rainfall_loss
+
 config = read_config("config.yaml")
 
 # Number of data features per raingauge node (rainfall value + validity flag).
@@ -32,6 +34,7 @@ def train_epoch(
     scheduler=None,
     weighted_loss_alpha: float = 0.0,
     stats: dict = None,
+    task: str = 'regression',
 ):
     """
     Corrected training loop with gradient debugging.
@@ -91,7 +94,14 @@ def train_epoch(
             out = model(x_dict, edge_index_dict, edge_attr_dict)
 
             # Compute loss ONLY on masked node
-            if weighted_loss_alpha > 0.0:
+            if task == 'classification':
+                loss = binary_rainfall_loss(
+                    out["raingauge"][indices_to_mask],
+                    y[indices_to_mask],
+                    threshold=0.5,
+                    pos_weight_val=9.0
+                )
+            elif weighted_loss_alpha > 0.0:
                 loss = weighted_mse(
                     out["raingauge"][indices_to_mask],
                     y[indices_to_mask],
@@ -121,6 +131,7 @@ def validate(
     device,
     weighted_loss_alpha: float = 0.0,
     stats: dict = None,
+    task: str = 'regression',
 ):
     """
     Validation loop for PyG batched graph data (inductive setting).
@@ -172,7 +183,14 @@ def validate(
             out = model(x_dict, edge_index_dict, edge_attr_dict)  # [B*N, out_channels]
             out["raingauge"] = out["raingauge"].clamp(min=0.0)
 
-            if weighted_loss_alpha > 0.0:
+            if task == 'classification':
+                loss = binary_rainfall_loss(
+                    out["raingauge"][val_mask],
+                    y[val_mask],
+                    threshold=0.5,
+                    pos_weight_val=9.0
+                )
+            elif weighted_loss_alpha > 0.0:
                 loss = weighted_mse(
                     out["raingauge"][val_mask], y[val_mask], alpha=weighted_loss_alpha
                 )
@@ -195,6 +213,7 @@ def test_model(
     experiment_name="test",
     rain_threshold=0.5,
     stats: dict = None,
+    task: str = 'regression',
 ):
     """
     Test loop following the SAME structure as validate():
@@ -253,15 +272,26 @@ def test_model(
             x_dict["raingauge"] = x_masked
 
             # ----- Model forward -----
-            out = model(x_dict, edge_index, edge_attr_dict)
-            out["raingauge"] = out["raingauge"].clamp(min=0.0)  # rainfall >= 0
+            preds_raw = model(x_dict, edge_index, edge_attr_dict)
 
-            # ----- Compute test loss -----
-            loss = F.mse_loss(out["raingauge"][mask], y[mask])
+            # ----- Compute test loss & prepare evaluations -----
+            if task == 'classification':
+                loss = binary_rainfall_loss(
+                    preds_raw["raingauge"][mask],
+                    y[mask],
+                    threshold=0.5,
+                    pos_weight_val=9.0
+                )
+                # Convert logits to probabilities [0, 1] for metrics
+                out_eval = torch.sigmoid(preds_raw["raingauge"])
+            else:
+                out_eval = preds_raw["raingauge"].clamp(min=0.0)  # rainfall >= 0
+                loss = F.mse_loss(out_eval[mask], y[mask])
+
             epoch_losses.append(loss.item())
 
             # ----- Collect outputs -----
-            all_preds.append(out["raingauge"][mask].detach().cpu())
+            all_preds.append(out_eval[mask].detach().cpu())
             all_targets.append(y[mask].detach().cpu())
             all_station_ids.append(
                 (mask.nonzero(as_tuple=False).squeeze() % num_nodes).cpu()
